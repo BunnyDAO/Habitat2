@@ -4,13 +4,77 @@ import { Pool } from 'pg';
 // Load environment variables
 config();
 
-interface TokenPrice {
-    value: number;
-    updateUnixTime: number;
-    price5m: number;
-    price1h: number;
-    price6h: number;
-    price24h: number;
+// API constants
+const BIRDEYE_API_BASE = 'https://public-api.birdeye.so';
+
+// Interface definitions
+interface TokenListData {
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    logoURI?: string;
+    liquidity: number;
+    mc: number;
+    price: number;
+    v24hUSD: number;
+    v24hChangePercent: number;
+}
+
+interface TokenListResponse {
+    success: boolean;
+    message?: string;
+    data: {
+        updateUnixTime: number;
+        updateTime: string;
+        tokens: TokenListData[];
+    };
+}
+
+interface TokenPriceResponse {
+    success: boolean;
+    message?: string;
+    data: {
+        value: number;
+        updateUnixTime: number;
+        updateHumanTime: string;
+        priceChange24h: number;
+        priceInNative: number;
+    };
+}
+
+interface RequestOptions {
+    headers: {
+        'X-API-KEY': string;
+        'X-CHAIN': string;
+        'Accept': string;
+    };
+}
+
+// Helper function to add delay between requests
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper function to fetch data with retries and rate limiting
+async function fetchWithRetry<T>(url: string, options: RequestOptions, retries = 3): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      
+      console.log('Raw API Response:', JSON.stringify(data, null, 2));
+      
+      if (!data.success) {
+        throw new Error(`API request failed: ${data.message || 'Unknown error'} - Raw response: ${JSON.stringify(data)}`);
+      }
+      
+      return data;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      console.log(`Retry ${i + 1} failed:`, error);
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
+  throw new Error('Max retries reached');
 }
 
 async function main() {
@@ -28,6 +92,7 @@ async function main() {
     }
     
     console.log('Environment variables configured');
+    console.log('Using Birdeye API Key:', birdeyeApiKey.substring(0, 8) + '...');
 
     // Initialize database connection
     const pool = new Pool({
@@ -47,140 +112,134 @@ async function main() {
     }
 
     try {
-        // First, add has_market column if it doesn't exist
+        // First, add new columns if they don't exist
         await pool.query(`
             ALTER TABLE token_prices 
-            ADD COLUMN IF NOT EXISTS has_market BOOLEAN DEFAULT false
+            ADD COLUMN IF NOT EXISTS has_market BOOLEAN DEFAULT false,
+            ADD COLUMN IF NOT EXISTS volume_24h_usd NUMERIC,
+            ADD COLUMN IF NOT EXISTS liquidity_usd NUMERIC,
+            ADD COLUMN IF NOT EXISTS market_cap_usd NUMERIC,
+            ADD COLUMN IF NOT EXISTS price_change_24h_percent NUMERIC,
+            ADD COLUMN IF NOT EXISTS total_supply NUMERIC,
+            ADD COLUMN IF NOT EXISTS circulating_supply NUMERIC
         `);
 
-        // Get tokens that either have a market or haven't been checked yet
-        const tokensResult = await pool.query(`
-            SELECT t.mint_address 
-            FROM tokens t
-            LEFT JOIN token_prices tp ON t.mint_address = tp.mint_address
-            WHERE tp.has_market IS NULL OR tp.has_market = true
-            ORDER BY tp.has_market DESC NULLS LAST
-        `);
+        // Get a few well-known tokens first as a test
+        const testTokens = [
+            'So11111111111111111111111111111111111111112', // SOL
+            'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+            'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
+        ];
+
+        console.log('\nTesting with known tokens first:');
         
-        const mintAddresses = tokensResult.rows.map(row => row.mint_address);
-        console.log(`Found ${mintAddresses.length} tokens to check`);
-
-        // Process tokens in batches of 100
-        const batchSize = 100;
-        let successCount = 0;
-        let noMarketCount = 0;
-        let errorCount = 0;
-
-        for (let i = 0; i < mintAddresses.length; i += batchSize) {
-            const batch = mintAddresses.slice(i, i + batchSize);
-            const batchNumber = Math.floor(i / batchSize) + 1;
-            const totalBatches = Math.ceil(mintAddresses.length / batchSize);
-            
-            console.log(`Processing batch ${batchNumber} of ${totalBatches} (${batch.length} tokens)`);
-
-            // Process each token in the batch
-            for (const mintAddress of batch) {
-                try {
-                    // Fetch price data from Birdeye
-                    const response = await fetch(`https://public-api.birdeye.so/public/price?address=${mintAddress}`, {
-                        headers: {
-                            'X-API-KEY': birdeyeApiKey,
-                            'Accept': 'application/json'
-                        }
-                    });
-
-                    if (response.status === 404) {
-                        // Token has no market data
-                        await pool.query(`
-                            INSERT INTO token_prices (mint_address, has_market, last_updated)
-                            VALUES ($1, false, NOW())
-                            ON CONFLICT (mint_address) DO UPDATE
-                            SET has_market = false, last_updated = NOW()
-                        `, [mintAddress]);
-                        noMarketCount++;
-                        continue;
-                    }
-
-                    if (!response.ok) {
-                        throw new Error(`Birdeye API error: ${response.status} - ${response.statusText}`);
-                    }
-
-                    const data = await response.json();
-                    
-                    if (data.success && data.data) {
-                        const priceData: TokenPrice = data.data;
-                        
-                        // Update token_prices table
-                        await pool.query(`
-                            INSERT INTO token_prices (
-                                mint_address,
-                                current_price_usd,
-                                price_5m_usd,
-                                price_1h_usd,
-                                price_6h_usd,
-                                price_24h_usd,
-                                has_market,
-                                last_updated
-                            )
-                            VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
-                            ON CONFLICT (mint_address) DO UPDATE
-                            SET 
-                                current_price_usd = EXCLUDED.current_price_usd,
-                                price_5m_usd = EXCLUDED.price_5m_usd,
-                                price_1h_usd = EXCLUDED.price_1h_usd,
-                                price_6h_usd = EXCLUDED.price_6h_usd,
-                                price_24h_usd = EXCLUDED.price_24h_usd,
-                                has_market = true,
-                                last_updated = NOW()
-                        `, [
-                            mintAddress,
-                            priceData.value,
-                            priceData.price5m,
-                            priceData.price1h,
-                            priceData.price6h,
-                            priceData.price24h
-                        ]);
-
-                        successCount++;
-                    } else {
-                        console.warn(`No price data available for token: ${mintAddress}`);
-                        errorCount++;
-                    }
-
-                    // Add a small delay to respect rate limits (5 requests per second)
-                    await new Promise(resolve => setTimeout(resolve, 200));
-
-                } catch (error) {
-                    if (error instanceof Error && !error.message.includes('404')) {
-                        console.error(`Error processing token ${mintAddress}:`, error);
-                        errorCount++;
-                    }
+        // First get the token list to get market data
+        const tokenListResponse = await fetchWithRetry<TokenListResponse>(
+            `${BIRDEYE_API_BASE}/defi/tokenlist`,
+            {
+                headers: {
+                    'X-API-KEY': birdeyeApiKey,
+                    'X-CHAIN': 'solana',
+                    'Accept': 'application/json'
                 }
             }
+        );
 
-            console.log(`Batch ${batchNumber} complete - Success: ${successCount}, No Market: ${noMarketCount}, Errors: ${errorCount}`);
+        const tokenList = tokenListResponse.data.tokens;
+        console.log('Token list fetched, processing test tokens...');
+
+        for (const testToken of testTokens) {
+            try {
+                console.log(`\nFetching data for ${testToken}...`);
+                
+                // Fetch price data
+                const priceResponse = await fetchWithRetry<TokenPriceResponse>(
+                    `${BIRDEYE_API_BASE}/defi/price?address=${testToken}`,
+                    {
+                        headers: {
+                            'X-API-KEY': birdeyeApiKey,
+                            'X-CHAIN': 'solana',
+                            'Accept': 'application/json'
+                        }
+                    }
+                );
+
+                const priceData = priceResponse.data;
+                console.log('Price data response:', JSON.stringify(priceData, null, 2));
+
+                // Find token in token list for market data
+                const marketData = tokenList.find(t => t.address === testToken);
+                if (!marketData) {
+                    console.log(`No market data found for token ${testToken}`);
+                    continue;
+                }
+
+                console.log('Market data found:', JSON.stringify(marketData, null, 2));
+
+                // Update token in database
+                const updateResult = await pool.query(`
+                    INSERT INTO token_prices (
+                        mint_address,
+                        current_price_usd,
+                        volume_24h_usd,
+                        liquidity_usd,
+                        market_cap_usd,
+                        price_change_24h_percent,
+                        has_market,
+                        last_updated
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+                    ON CONFLICT (mint_address) DO UPDATE
+                    SET 
+                        current_price_usd = EXCLUDED.current_price_usd,
+                        volume_24h_usd = EXCLUDED.volume_24h_usd,
+                        liquidity_usd = EXCLUDED.liquidity_usd,
+                        market_cap_usd = EXCLUDED.market_cap_usd,
+                        price_change_24h_percent = EXCLUDED.price_change_24h_percent,
+                        has_market = true,
+                        last_updated = NOW()
+                    RETURNING *
+                `, [
+                    testToken,
+                    priceData.value,
+                    marketData.v24hUSD,
+                    marketData.liquidity,
+                    marketData.mc,
+                    priceData.priceChange24h // Using the price change from price API as it's more accurate
+                ]);
+
+                console.log('Database update result:', updateResult.rows[0]);
+            } catch (error) {
+                console.error(`Error testing token ${testToken}:`, error);
+            }
+            // Add delay between test requests
+            await delay(1000);
         }
 
-        // Print final statistics
-        const stats = await pool.query(`
+        // Check the database state for test tokens
+        console.log('\nVerifying database state for test tokens:');
+        const verifyResult = await pool.query(`
             SELECT 
-                COUNT(*) as total_tokens,
-                COUNT(*) FILTER (WHERE has_market = true) as tokens_with_market,
-                COUNT(*) FILTER (WHERE has_market = false) as tokens_without_market,
-                COUNT(*) FILTER (WHERE current_price_usd IS NOT NULL) as tokens_with_price
+                mint_address, 
+                current_price_usd, 
+                price_5m_usd,
+                price_1h_usd,
+                price_6h_usd,
+                price_24h_usd,
+                volume_24h_usd,
+                liquidity_usd,
+                market_cap_usd,
+                price_change_24h_percent,
+                total_supply,
+                circulating_supply,
+                has_market,
+                last_updated
             FROM token_prices
-        `);
-        
-        console.log('\nFinal Statistics:');
-        console.log(`Total tokens processed: ${successCount + noMarketCount + errorCount}`);
-        console.log(`Tokens with price updates: ${successCount}`);
-        console.log(`Tokens without markets: ${noMarketCount}`);
-        console.log(`Errors: ${errorCount}`);
-        console.log('\nDatabase Status:');
-        console.log(`Total tokens: ${stats.rows[0].total_tokens}`);
-        console.log(`Tokens with active markets: ${stats.rows[0].tokens_with_market}`);
-        console.log(`Tokens without markets: ${stats.rows[0].tokens_without_market}`);
-        console.log(`Tokens with current prices: ${stats.rows[0].tokens_with_price}`);
+            WHERE mint_address = ANY($1)
+        `, [testTokens]);
+
+        console.log('Current database state for test tokens:');
+        console.table(verifyResult.rows);
 
     } catch (error) {
         console.error('Fatal error during price update:', error);
