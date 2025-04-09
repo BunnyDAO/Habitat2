@@ -9,7 +9,8 @@
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "start:partitions": "ts-node src/scripts/manage_partitions.ts",
-    "init-db": "ts-node src/database/init-db.ts"
+    "update-tokens": "ts-node src/scripts/update-token-data.ts",
+    "update-prices": "ts-node src/scripts/update-token-prices.ts"
   },
   "keywords": [],
   "author": "",
