@@ -1,0 +1,7 @@
+[33mcommit d22f810e0f5e8a0d3cf3db240878a7c2905b71b1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Ryan Beaty <Ryan.Beaty@radiantvs.com>
+Date:   Sun Mar 16 22:37:30 2025 -0700
+
+    Add hover menu with details and actions to strategy badges
+
+src/App.tsx

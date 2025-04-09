@@ -1,0 +1,113 @@
+import express from 'express';
+import cors from 'cors';
+import { createClient } from 'redis';
+import { HeliusService } from './services/helius.service';
+import { TokenBalance } from './types';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3001;
+
+// Initialize Redis client with authentication
+const redisClient = createClient({
+  url: `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
+  password: process.env.REDIS_PASSWORD // Add password from env
+});
+
+redisClient.on('error', (err) => console.error('Redis Client Error:', err));
+redisClient.connect().then(() => {
+  console.log('Connected to Redis successfully');
+}).catch(err => {
+  console.error('Failed to connect to Redis:', err);
+});
+
+// Initialize services after Redis is connected
+const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '', redisClient);
+
+// Configure CORS
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'solana-client'],
+  credentials: true
+}));
+
+app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', redis: redisClient.isOpen ? 'connected' : 'disconnected' });
+});
+
+// Wallet balances endpoint
+app.get('/api/wallet/:address/balances', async (req, res) => {
+  try {
+    const { address } = req.params;
+    console.log('Fetching balances for address:', address);
+    const balances = await heliusService.getWalletBalances(address);
+    console.log('Retrieved balances:', JSON.stringify(balances, null, 2));
+    res.json(balances);
+  } catch (error) {
+    console.error('Error fetching wallet balances:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet balances' });
+  }
+});
+
+// Add RPC endpoint to handle web3.js requests
+app.post('/', async (req, res) => {
+  try {
+    const { method, params } = req.body;
+    console.log('Received RPC request:', { method, params });
+    
+    if (method === 'getBalance') {
+      const [address] = params;
+      console.log('Fetching balance for address:', address);
+      const balances = await heliusService.getWalletBalances(address);
+      const solBalance = balances.find((b: TokenBalance) => b.mint === 'So11111111111111111111111111111111111111112');
+      
+      console.log('Retrieved balances:', JSON.stringify(balances, null, 2));
+      console.log('SOL balance:', solBalance);
+      
+      if (solBalance) {
+        res.json({
+          jsonrpc: '2.0',
+          result: solBalance.balance,
+          id: req.body.id
+        });
+      } else {
+        res.json({
+          jsonrpc: '2.0',
+          result: 0,
+          id: req.body.id
+        });
+      }
+    } else {
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32601,
+          message: 'Method not found'
+        },
+        id: req.body.id
+      });
+    }
+  } catch (error) {
+    console.error('Error handling RPC request:', error);
+    res.status(500).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Internal error'
+      },
+      id: req.body.id
+    });
+  }
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+}); 
