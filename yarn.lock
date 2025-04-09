@@ -3968,6 +3968,11 @@
 "@types/lodash@^4.14.136":
   "version" "4.17.15"
 
+"@types/luxon@~3.3.0":
+  "integrity" "sha512-jYvz8UMLDgy3a5SkGJne8H7VA7zPV2Lwohjx0V8V31+SqAjNmurWMkk9cQhfvlcnXWudBpK9xPM1n4rljOcHYQ=="
+  "resolved" "https://registry.npmjs.org/@types/luxon/-/luxon-3.3.8.tgz"
+  "version" "3.3.8"
+
 "@types/ms@*":
   "version" "2.1.0"
 
@@ -5375,6 +5380,14 @@
   "integrity" "sha512-dcKFX3jn0MpIaXjisoRvexIJVEKzaq7z2rZKxf+MSr9TkdmHmsU4m2lcLojrj/FHl8mk5VxMmYA+ftRkP/3oKQ=="
   "resolved" "https://registry.npmjs.org/create-require/-/create-require-1.1.1.tgz"
   "version" "1.1.1"
+
+"cron@^3.0.0":
+  "integrity" "sha512-2aFNFH+kwHUlqJlc1M4sP6/l+gZjBYaoHrhPRkTkg80DlA68ueyhRDfWnMAMulg/+mE9F8cGtfwL8wedr4jfqQ=="
+  "resolved" "https://registry.npmjs.org/cron/-/cron-3.0.0.tgz"
+  "version" "3.0.0"
+  dependencies:
+    "@types/luxon" "~3.3.0"
+    "luxon" "~3.3.0"
 
 "cross-fetch@^3.1.4", "cross-fetch@^3.1.5":
   "version" "3.2.0"
@@ -7111,6 +7124,11 @@
   "integrity" "sha512-28vvUnnKQ/dBwiCQtwJw7QauYnE7yd2Cyp4tTTJpvglX4EMpbflcdBgrgToX2j71B3YvugK/NH3BGUk+E/p/Fw=="
   "resolved" "https://registry.npmjs.org/lucide-react/-/lucide-react-0.469.0.tgz"
   "version" "0.469.0"
+
+"luxon@~3.3.0":
+  "integrity" "sha512-An0UCfG/rSiqtAIiBPO0Y9/zAnHUZxAMiCpTd5h2smgsj7GGmcenvrvww2cqNA8/4A5ZrD1gJpHN2mIHZQF+Mg=="
+  "resolved" "https://registry.npmjs.org/luxon/-/luxon-3.3.0.tgz"
+  "version" "3.3.0"
 
 "make-dir@^2.0.0", "make-dir@^2.1.0":
   "integrity" "sha512-LS9X+dc8KLxXCb8dni79fLIIUA5VyZoyjSMCwTluaXA0o27cCK0bhXkpgw+sTXVpPy/lSO57ilRixqk0vDmtRA=="

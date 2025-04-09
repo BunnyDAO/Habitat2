@@ -3,6 +3,11 @@ DROP VIEW IF EXISTS wallet_portfolio_view;
 DROP TABLE IF EXISTS wallet_balances CASCADE;
 DROP TABLE IF EXISTS token_prices CASCADE;
 DROP TABLE IF EXISTS tokens CASCADE;
+DROP TABLE IF EXISTS transactions_archive CASCADE;
+DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS strategies CASCADE;
+DROP TABLE IF EXISTS trading_wallets CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
 
 -- Create tokens table for metadata
 CREATE TABLE IF NOT EXISTS tokens (
@@ -76,4 +81,166 @@ SELECT
         as portfolio_percentage
 FROM wallet_balances wb
 JOIN tokens t ON wb.mint_address = t.mint_address
-LEFT JOIN token_prices tp ON wb.mint_address = tp.mint_address; 
+LEFT JOIN token_prices tp ON wb.mint_address = tp.mint_address;
+
+-- Create users table
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    main_wallet_pubkey VARCHAR(44) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create trading_wallets table
+CREATE TABLE trading_wallets (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    wallet_pubkey VARCHAR(44) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create strategies table
+CREATE TABLE strategies (
+    id SERIAL PRIMARY KEY,
+    trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    strategy_type VARCHAR(50) NOT NULL,
+    config JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create main transactions table with partitioning support
+CREATE TABLE transactions (
+    id SERIAL,
+    trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
+    signature VARCHAR(88) NOT NULL,
+    type VARCHAR(10) NOT NULL,
+    amount DECIMAL(20, 9) NOT NULL,
+    token_mint VARCHAR(44) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, timestamp),
+    UNIQUE (signature, timestamp)  -- Include timestamp in unique constraint
+) PARTITION BY RANGE (timestamp);
+
+-- Create partitions for transactions table (example: monthly partitions)
+CREATE TABLE transactions_y2023m01 PARTITION OF transactions
+    FOR VALUES FROM ('2023-01-01') TO ('2023-02-01');
+CREATE TABLE transactions_y2023m02 PARTITION OF transactions
+    FOR VALUES FROM ('2023-02-01') TO ('2023-03-01');
+-- Add more partitions as needed...
+
+-- Create archive table for old transactions (without inheritance)
+CREATE TABLE transactions_archive (
+    id SERIAL,
+    trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
+    signature VARCHAR(88) NOT NULL,
+    type VARCHAR(10) NOT NULL,
+    amount DECIMAL(20, 9) NOT NULL,
+    token_mint VARCHAR(44) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    archived_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, timestamp),
+    UNIQUE (signature, timestamp)
+);
+
+-- Create indexes for archive table
+CREATE INDEX idx_transactions_archive_timestamp ON transactions_archive(timestamp);
+CREATE INDEX idx_transactions_archive_trading_wallet_id ON transactions_archive(trading_wallet_id);
+CREATE INDEX idx_transactions_archive_strategy_id ON transactions_archive(strategy_id);
+CREATE INDEX idx_transactions_archive_token_mint ON transactions_archive(token_mint);
+CREATE INDEX idx_transactions_archive_type ON transactions_archive(type);
+
+-- Create materialized view for daily transaction summaries
+CREATE MATERIALIZED VIEW daily_transaction_summaries AS
+SELECT 
+    trading_wallet_id,
+    DATE_TRUNC('day', timestamp) as day,
+    token_mint,
+    COUNT(*) as transaction_count,
+    SUM(CASE WHEN type = 'buy' THEN amount ELSE 0 END) as total_buy_amount,
+    SUM(CASE WHEN type = 'sell' THEN amount ELSE 0 END) as total_sell_amount,
+    MIN(timestamp) as first_transaction,
+    MAX(timestamp) as last_transaction
+FROM transactions
+GROUP BY trading_wallet_id, DATE_TRUNC('day', timestamp), token_mint;
+
+-- Create function to refresh materialized view
+CREATE OR REPLACE FUNCTION refresh_daily_summaries()
+RETURNS void AS $$
+BEGIN
+    REFRESH MATERIALIZED VIEW CONCURRENTLY daily_transaction_summaries;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create function to archive old transactions
+CREATE OR REPLACE FUNCTION archive_old_transactions(older_than_months INTEGER)
+RETURNS void AS $$
+BEGIN
+    INSERT INTO transactions_archive
+    SELECT * FROM transactions
+    WHERE timestamp < NOW() - (older_than_months || ' months')::INTERVAL;
+    
+    DELETE FROM transactions
+    WHERE timestamp < NOW() - (older_than_months || ' months')::INTERVAL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create function to automatically create new partitions
+CREATE OR REPLACE FUNCTION create_transaction_partition(partition_date DATE)
+RETURNS void AS $$
+DECLARE
+    partition_name TEXT;
+    partition_start DATE;
+    partition_end DATE;
+BEGIN
+    partition_name := 'transactions_y' || 
+                     TO_CHAR(partition_date, 'YYYY') || 'm' || 
+                     TO_CHAR(partition_date, 'MM');
+    
+    partition_start := DATE_TRUNC('month', partition_date);
+    partition_end := partition_start + INTERVAL '1 month';
+    
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I PARTITION OF transactions
+         FOR VALUES FROM (%L) TO (%L)',
+        partition_name,
+        partition_start,
+        partition_end
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create triggers for updated_at
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_trading_wallets_updated_at
+    BEFORE UPDATE ON trading_wallets
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_strategies_updated_at
+    BEFORE UPDATE ON strategies
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column(); 
