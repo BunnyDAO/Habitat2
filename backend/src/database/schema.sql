@@ -9,8 +9,15 @@ DROP TABLE IF EXISTS strategies CASCADE;
 DROP TABLE IF EXISTS trading_wallets CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
+-- Create users table first
+CREATE TABLE users (
+    main_wallet_pubkey VARCHAR(44) PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create tokens table for metadata
-CREATE TABLE IF NOT EXISTS tokens (
+CREATE TABLE tokens (
     mint_address TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     symbol TEXT NOT NULL,
@@ -19,22 +26,22 @@ CREATE TABLE IF NOT EXISTS tokens (
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create token_prices table with comprehensive market data
-CREATE TABLE IF NOT EXISTS token_prices (
+-- Create token_prices table
+CREATE TABLE token_prices (
     mint_address TEXT PRIMARY KEY REFERENCES tokens(mint_address),
     current_price_usd DECIMAL(20, 10),
     price_5m_usd DECIMAL(20, 10),
     price_1h_usd DECIMAL(20, 10),
     price_6h_usd DECIMAL(20, 10),
     price_24h_usd DECIMAL(20, 10),
-    price_change_5m DECIMAL(10, 4),  -- Percentage change
+    price_change_5m DECIMAL(10, 4),
     price_change_1h DECIMAL(10, 4),
     price_change_6h DECIMAL(10, 4),
     price_change_24h DECIMAL(10, 4),
     volume_24h_usd DECIMAL(24, 2),
     liquidity_usd DECIMAL(24, 2),
     market_cap_usd DECIMAL(24, 2),
-    market_cap_fdv_usd DECIMAL(24, 2), -- Fully diluted valuation
+    market_cap_fdv_usd DECIMAL(24, 2),
     total_supply DECIMAL(30, 0),
     circulating_supply DECIMAL(30, 0),
     token_age_days INTEGER,
@@ -44,8 +51,33 @@ CREATE TABLE IF NOT EXISTS token_prices (
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create wallet_balances table for raw balances
-CREATE TABLE IF NOT EXISTS wallet_balances (
+-- Create trading_wallets table
+CREATE TABLE trading_wallets (
+    id SERIAL,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
+    wallet_pubkey VARCHAR(44) NOT NULL,
+    name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE (wallet_pubkey)
+);
+
+-- Create strategies table
+CREATE TABLE strategies (
+    id SERIAL PRIMARY KEY,
+    trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
+    strategy_type VARCHAR(50) NOT NULL,
+    config JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create wallet_balances table
+CREATE TABLE wallet_balances (
     id SERIAL PRIMARY KEY,
     wallet_address TEXT NOT NULL,
     mint_address TEXT REFERENCES tokens(mint_address),
@@ -54,13 +86,14 @@ CREATE TABLE IF NOT EXISTS wallet_balances (
     UNIQUE(wallet_address, mint_address)
 );
 
--- Create indexes for better query performance
+-- Create indexes
 CREATE INDEX IF NOT EXISTS idx_wallet_balances_wallet ON wallet_balances(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_wallet_balances_mint ON wallet_balances(mint_address);
 CREATE INDEX IF NOT EXISTS idx_token_prices_updated ON token_prices(last_updated);
 CREATE INDEX IF NOT EXISTS idx_token_prices_volume ON token_prices(volume_24h_usd);
 CREATE INDEX IF NOT EXISTS idx_token_prices_mcap ON token_prices(market_cap_usd);
 CREATE INDEX IF NOT EXISTS idx_token_prices_liquidity ON token_prices(liquidity_usd);
+CREATE INDEX IF NOT EXISTS idx_trading_wallets_main_wallet ON trading_wallets(main_wallet_pubkey);
 
 -- Create view for portfolio calculations
 CREATE OR REPLACE VIEW wallet_portfolio_view AS
@@ -83,45 +116,12 @@ FROM wallet_balances wb
 JOIN tokens t ON wb.mint_address = t.mint_address
 LEFT JOIN token_prices tp ON wb.mint_address = tp.mint_address;
 
--- Create users table
-CREATE TABLE users (
-    main_wallet_pubkey VARCHAR(44) PRIMARY KEY,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create trading_wallets table
-CREATE TABLE trading_wallets (
-    id SERIAL,
-    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
-    wallet_pubkey VARCHAR(44) UNIQUE NOT NULL,
-    name VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id)
-);
-
--- Create strategies table
-CREATE TABLE strategies (
-    id SERIAL PRIMARY KEY,
-    trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
-    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
-    wallet_pubkey VARCHAR(44) NOT NULL,
-    strategy_type VARCHAR(50) NOT NULL,
-    config JSONB NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    name VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
-);
-
 -- Create main transactions table with partitioning support
 CREATE TABLE transactions (
     id SERIAL,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
     main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
-    wallet_pubkey VARCHAR(44) NOT NULL,
+    wallet_pubkey VARCHAR(44) REFERENCES trading_wallets(wallet_pubkey) ON DELETE CASCADE,
     strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
     signature VARCHAR(88) NOT NULL,
     type VARCHAR(10) NOT NULL,
@@ -131,8 +131,7 @@ CREATE TABLE transactions (
     details JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, timestamp),
-    UNIQUE (signature, timestamp),  -- Include timestamp in unique constraint
-    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
+    UNIQUE (signature, timestamp)
 ) PARTITION BY RANGE (timestamp);
 
 -- Create partitions for transactions table (example: monthly partitions)
@@ -147,7 +146,7 @@ CREATE TABLE transactions_archive (
     id SERIAL,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
     main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
-    wallet_pubkey VARCHAR(44) NOT NULL,
+    wallet_pubkey VARCHAR(44) REFERENCES trading_wallets(wallet_pubkey) ON DELETE CASCADE,
     strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
     signature VARCHAR(88) NOT NULL,
     type VARCHAR(10) NOT NULL,
@@ -158,8 +157,7 @@ CREATE TABLE transactions_archive (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     archived_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, timestamp),
-    UNIQUE (signature, timestamp),
-    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
+    UNIQUE (signature, timestamp)
 );
 
 -- Create indexes for archive table
