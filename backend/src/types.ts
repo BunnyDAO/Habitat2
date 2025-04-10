@@ -5,6 +5,9 @@ export interface TokenBalance {
   name?: string;
   symbol?: string;
   logoURI?: string;
+  uiAmount?: number;
+  usdValue?: number;
+  lastUpdated?: string;
 }
 
 export interface HeliusTokenAccount {

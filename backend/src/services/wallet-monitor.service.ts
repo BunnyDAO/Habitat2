@@ -90,16 +90,43 @@ export class WalletMonitorService {
       try {
         await client.query('BEGIN');
 
-        // Update wallet_balances table
+        // Update wallet_balances table with new columns
         for (const balance of balances) {
+          const uiAmount = balance.balance / Math.pow(10, balance.decimals);
+          
+          // Get current token price
+          const priceResult = await client.query(`
+            SELECT current_price_usd 
+            FROM token_prices 
+            WHERE mint_address = $1
+          `, [balance.mint]);
+          
+          const currentPrice = priceResult.rows[0]?.current_price_usd || 0;
+          const usdValue = uiAmount * currentPrice;
+
           await client.query(`
-            INSERT INTO wallet_balances (wallet_address, mint_address, amount, last_updated)
-            VALUES ($1, $2, $3, NOW())
+            INSERT INTO wallet_balances (
+              wallet_address, 
+              mint_address, 
+              amount, 
+              ui_amount,
+              usd_value,
+              last_updated
+            )
+            VALUES ($1, $2, $3, $4, $5, NOW())
             ON CONFLICT (wallet_address, mint_address) 
             DO UPDATE SET 
               amount = EXCLUDED.amount,
+              ui_amount = EXCLUDED.ui_amount,
+              usd_value = EXCLUDED.usd_value,
               last_updated = NOW()
-          `, [walletAddress, balance.mint, balance.balance]);
+          `, [
+            walletAddress, 
+            balance.mint, 
+            balance.balance,
+            uiAmount,
+            usdValue
+          ]);
         }
 
         await client.query('COMMIT');
@@ -107,11 +134,8 @@ export class WalletMonitorService {
         // Cache the wallet portfolio view result in Redis
         if (this.redisClient?.isOpen) {
           const portfolioResult = await client.query(`
-            SELECT wb.*, t.symbol, t.name, t.logo_uri, tp.current_price_usd
-            FROM wallet_balances wb
-            LEFT JOIN tokens t ON wb.mint_address = t.mint_address
-            LEFT JOIN token_prices tp ON wb.mint_address = tp.mint_address
-            WHERE wb.wallet_address = $1
+            SELECT * FROM wallet_portfolio_view
+            WHERE wallet_address = $1
           `, [walletAddress]);
 
           await this.redisClient.setEx(
