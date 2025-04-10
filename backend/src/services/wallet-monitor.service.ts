@@ -1,13 +1,15 @@
 import { Pool } from 'pg';
 import { createClient } from 'redis';
 import dotenv from 'dotenv';
+import { HeliusService } from './helius.service';
+import { TokenBalance } from '../types';
 
 dotenv.config();
 
 export class WalletMonitorService {
   private pool: Pool;
   private redisClient: ReturnType<typeof createClient> | null;
-  private heliusApiKey: string;
+  private heliusService: HeliusService;
   private activeWallets: Set<string>;
   private updateInterval: number;
   private isRunning: boolean;
@@ -20,7 +22,7 @@ export class WalletMonitorService {
   ) {
     this.pool = pool;
     this.redisClient = redisClient;
-    this.heliusApiKey = heliusApiKey;
+    this.heliusService = new HeliusService(heliusApiKey, redisClient);
     this.updateInterval = updateInterval;
     this.activeWallets = new Set();
     this.isRunning = false;
@@ -35,11 +37,11 @@ export class WalletMonitorService {
     this.isRunning = true;
     console.log('Starting wallet monitor service...');
 
+    // Initial population of active wallets from database
+    await this.updateActiveWallets();
+
     while (this.isRunning) {
       try {
-        // Get list of active wallets from database
-        await this.updateActiveWallets();
-        
         // Update balances for each wallet
         for (const wallet of this.activeWallets) {
           await this.updateWalletBalances(wallet);
@@ -62,14 +64,15 @@ export class WalletMonitorService {
 
   private async updateActiveWallets() {
     try {
-      // Get wallets that have been active in the last 24 hours
+      // Get all trading wallets from the database
       const result = await this.pool.query(`
-        SELECT DISTINCT wallet_address 
-        FROM wallet_balances 
-        WHERE last_updated > NOW() - INTERVAL '24 hours'
+        SELECT DISTINCT tw.wallet_pubkey 
+        FROM trading_wallets tw
+        JOIN users u ON tw.main_wallet_pubkey = u.main_wallet_pubkey
       `);
       
-      this.activeWallets = new Set(result.rows.map(row => row.wallet_address));
+      this.activeWallets = new Set(result.rows.map(row => row.wallet_pubkey));
+      console.log(`Found ${this.activeWallets.size} active trading wallets`);
     } catch (error) {
       console.error('Error updating active wallets:', error);
     }
@@ -79,81 +82,16 @@ export class WalletMonitorService {
     console.log(`Updating balances for wallet: ${walletAddress}`);
     
     try {
-      // Get SOL balance
-      const solResponse = await fetch('https://api.mainnet-beta.solana.com', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: '1',
-          method: 'getBalance',
-          params: [walletAddress],
-        }),
-      });
-
-      if (!solResponse.ok) {
-        throw new Error(`SOL balance API error: ${solResponse.statusText}`);
-      }
-
-      const solData = await solResponse.json();
-      const solBalance = solData.result.value;
-
-      // Get token accounts
-      const tokenResponse = await fetch('https://api.mainnet-beta.solana.com', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: '1',
-          method: 'getTokenAccountsByOwner',
-          params: [
-            walletAddress,
-            {
-              programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
-            },
-            {
-              encoding: 'jsonParsed'
-            }
-          ],
-        }),
-      });
-
-      if (!tokenResponse.ok) {
-        throw new Error(`Token accounts API error: ${tokenResponse.statusText}`);
-      }
-
-      const tokenData = await tokenResponse.json();
+      // Get balances using HeliusService
+      const balances: TokenBalance[] = await this.heliusService.getWalletBalances(walletAddress);
       
       // Start a transaction
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
 
-        // Insert SOL balance
-        await client.query(`
-          INSERT INTO wallet_balances (wallet_address, mint_address, amount, last_updated)
-          VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (wallet_address, mint_address) 
-          DO UPDATE SET 
-            amount = EXCLUDED.amount,
-            last_updated = NOW()
-        `, [
-          walletAddress,
-          'So11111111111111111111111111111111111111112',
-          solBalance / 1e9 // Convert lamports to SOL
-        ]);
-
-        // Process token accounts
-        for (const item of tokenData.result.value) {
-          const tokenInfo = item.account.data.parsed.info;
-          const amount = tokenInfo.tokenAmount.uiAmount;
-          const mintAddress = tokenInfo.mint;
-
-          // Insert or update balance
+        // Update wallet_balances table
+        for (const balance of balances) {
           await client.query(`
             INSERT INTO wallet_balances (wallet_address, mint_address, amount, last_updated)
             VALUES ($1, $2, $3, NOW())
@@ -161,7 +99,7 @@ export class WalletMonitorService {
             DO UPDATE SET 
               amount = EXCLUDED.amount,
               last_updated = NOW()
-          `, [walletAddress, mintAddress, amount]);
+          `, [walletAddress, balance.mint, balance.balance]);
         }
 
         await client.query('COMMIT');

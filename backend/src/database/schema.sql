@@ -85,38 +85,43 @@ LEFT JOIN token_prices tp ON wb.mint_address = tp.mint_address;
 
 -- Create users table
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    main_wallet_pubkey VARCHAR(44) UNIQUE NOT NULL,
+    main_wallet_pubkey VARCHAR(44) PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create trading_wallets table
 CREATE TABLE trading_wallets (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    id SERIAL,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
     wallet_pubkey VARCHAR(44) UNIQUE NOT NULL,
     name VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
 );
 
 -- Create strategies table
 CREATE TABLE strategies (
     id SERIAL PRIMARY KEY,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
+    wallet_pubkey VARCHAR(44) NOT NULL,
     strategy_type VARCHAR(50) NOT NULL,
     config JSONB NOT NULL,
     is_active BOOLEAN DEFAULT true,
     name VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
 );
 
 -- Create main transactions table with partitioning support
 CREATE TABLE transactions (
     id SERIAL,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
+    wallet_pubkey VARCHAR(44) NOT NULL,
     strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
     signature VARCHAR(88) NOT NULL,
     type VARCHAR(10) NOT NULL,
@@ -126,7 +131,8 @@ CREATE TABLE transactions (
     details JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, timestamp),
-    UNIQUE (signature, timestamp)  -- Include timestamp in unique constraint
+    UNIQUE (signature, timestamp),  -- Include timestamp in unique constraint
+    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
 ) PARTITION BY RANGE (timestamp);
 
 -- Create partitions for transactions table (example: monthly partitions)
@@ -140,6 +146,8 @@ CREATE TABLE transactions_y2023m02 PARTITION OF transactions
 CREATE TABLE transactions_archive (
     id SERIAL,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
+    main_wallet_pubkey VARCHAR(44) REFERENCES users(main_wallet_pubkey) ON DELETE CASCADE,
+    wallet_pubkey VARCHAR(44) NOT NULL,
     strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
     signature VARCHAR(88) NOT NULL,
     type VARCHAR(10) NOT NULL,
@@ -150,7 +158,8 @@ CREATE TABLE transactions_archive (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     archived_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, timestamp),
-    UNIQUE (signature, timestamp)
+    UNIQUE (signature, timestamp),
+    FOREIGN KEY (trading_wallet_id, wallet_pubkey) REFERENCES trading_wallets(id, wallet_pubkey)
 );
 
 -- Create indexes for archive table

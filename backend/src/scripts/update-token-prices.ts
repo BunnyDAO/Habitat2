@@ -43,6 +43,16 @@ interface TokenPriceResponse {
     };
 }
 
+interface PriceHistoryResponse {
+    success: boolean;
+    data: {
+        items: Array<{
+            unixTime: number;
+            value: number;
+        }>;
+    };
+}
+
 interface RequestOptions {
     headers: {
         'X-API-KEY': string;
@@ -54,7 +64,7 @@ interface RequestOptions {
 // Helper function to add delay between requests
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper function to fetch data with retries and rate limiting
+// Helper function to fetch data with retries and exponential backoff
 async function fetchWithRetry<T>(url: string, options: RequestOptions, retries = 3): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
@@ -64,6 +74,13 @@ async function fetchWithRetry<T>(url: string, options: RequestOptions, retries =
       console.log('Raw API Response:', JSON.stringify(data, null, 2));
       
       if (!data.success) {
+        if (data.message === 'Too many requests') {
+          // Exponential backoff for rate limiting
+          const backoffTime = Math.pow(2, i + 1) * 1000; // 2s, 4s, 8s
+          console.log(`Rate limited. Waiting ${backoffTime/1000}s before retry...`);
+          await delay(backoffTime);
+          continue;
+        }
         throw new Error(`API request failed: ${data.message || 'Unknown error'} - Raw response: ${JSON.stringify(data)}`);
       }
       
@@ -71,7 +88,8 @@ async function fetchWithRetry<T>(url: string, options: RequestOptions, retries =
     } catch (error) {
       if (i === retries - 1) throw error;
       console.log(`Retry ${i + 1} failed:`, error);
-      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      const backoffTime = Math.pow(2, i + 1) * 1000;
+      await delay(backoffTime);
     }
   }
   throw new Error('Max retries reached');
@@ -176,11 +194,63 @@ async function main() {
 
                 console.log('Market data found:', JSON.stringify(marketData, null, 2));
 
-                // Update token in database
+                // Fetch price history data
+                const timeframes = [
+                    { type: '1h', column: 'price_1h_usd' },
+                    { type: '24h', column: 'price_24h_usd' }
+                ];
+
+                const historicalPrices: Record<string, number> = {};
+                
+                for (const timeframe of timeframes) {
+                    try {
+                        // Ensure we wait at least 1 second between requests
+                        await delay(1100); // 1.1s to be safe
+                        
+                        const timeFromValue = Math.floor(Date.now() / 1000) - (timeframe.type === '1h' ? 3600 : 86400);
+                        const queryParams = new URLSearchParams({
+                            address: testToken,
+                            address_type: 'token',
+                            type: timeframe.type,
+                            time_from: timeFromValue.toString()
+                        });
+
+                        const historyResponse = await fetchWithRetry<PriceHistoryResponse>(
+                            `${BIRDEYE_API_BASE}/defi/history_price?${queryParams}`,
+                            {
+                                headers: {
+                                    'X-API-KEY': birdeyeApiKey,
+                                    'X-CHAIN': 'solana',
+                                    'Accept': 'application/json'
+                                }
+                            }
+                        );
+                        
+                        if (historyResponse.success && historyResponse.data.items.length > 0) {
+                            // Get the oldest price in the timeframe
+                            const oldestPrice = historyResponse.data.items[0]?.value;
+                            if (oldestPrice) {
+                                historicalPrices[timeframe.column] = oldestPrice;
+                                console.log(`Got ${timeframe.type} historical price for ${testToken}:`, oldestPrice);
+                            }
+                        } else {
+                            console.log(`No historical price data available for ${timeframe.type} timeframe`);
+                        }
+                    } catch (error) {
+                        console.log(`Failed to fetch ${timeframe.type} historical price:`, error);
+                    }
+                }
+
+                // Skip metadata for now since we have market cap from token list
+                // We can add it back if you need the supply information specifically
+
+                // Update token in database with available data
                 const updateResult = await pool.query(`
                     INSERT INTO token_prices (
                         mint_address,
                         current_price_usd,
+                        price_1h_usd,
+                        price_24h_usd,
                         volume_24h_usd,
                         liquidity_usd,
                         market_cap_usd,
@@ -188,10 +258,12 @@ async function main() {
                         has_market,
                         last_updated
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW())
                     ON CONFLICT (mint_address) DO UPDATE
                     SET 
                         current_price_usd = EXCLUDED.current_price_usd,
+                        price_1h_usd = EXCLUDED.price_1h_usd,
+                        price_24h_usd = EXCLUDED.price_24h_usd,
                         volume_24h_usd = EXCLUDED.volume_24h_usd,
                         liquidity_usd = EXCLUDED.liquidity_usd,
                         market_cap_usd = EXCLUDED.market_cap_usd,
@@ -202,10 +274,12 @@ async function main() {
                 `, [
                     testToken,
                     priceData.value,
+                    historicalPrices['price_1h_usd'],
+                    historicalPrices['price_24h_usd'],
                     marketData.v24hUSD,
                     marketData.liquidity,
                     marketData.mc,
-                    priceData.priceChange24h // Using the price change from price API as it's more accurate
+                    priceData.priceChange24h
                 ]);
 
                 console.log('Database update result:', updateResult.rows[0]);
@@ -222,16 +296,12 @@ async function main() {
             SELECT 
                 mint_address, 
                 current_price_usd, 
-                price_5m_usd,
                 price_1h_usd,
-                price_6h_usd,
                 price_24h_usd,
                 volume_24h_usd,
                 liquidity_usd,
                 market_cap_usd,
                 price_change_24h_percent,
-                total_supply,
-                circulating_supply,
                 has_market,
                 last_updated
             FROM token_prices

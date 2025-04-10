@@ -4,12 +4,19 @@ import { createClient } from 'redis';
 import { HeliusService } from './services/helius.service';
 import { TokenBalance } from './types';
 import dotenv from 'dotenv';
+import { Pool } from 'pg';
+import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// Initialize database connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 // Initialize Redis client with authentication
 const redisClient = createClient({
@@ -30,12 +37,15 @@ const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '', redisC
 // Configure CORS
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000'],
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS', 'DELETE'],
   allowedHeaders: ['Content-Type', 'solana-client'],
   credentials: true
 }));
 
 app.use(express.json());
+
+// Register routes
+app.use('/api/trading-wallets', createTradingWalletsRouter(pool));
 
 // Health check endpoint
 app.get('/health', (req, res) => {

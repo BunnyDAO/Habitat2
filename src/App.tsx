@@ -25,6 +25,7 @@ import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon 
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
+import { tradingWalletService } from './services/tradingWalletService';
 
 // Add SelectedToken interface
 interface SelectedToken {
@@ -770,9 +771,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
-  const saveTradingWallet = (newWallet: TradingWallet) => {
+  const saveTradingWallet = async (newWallet: TradingWallet) => {
     if (!wallet.publicKey) return;
     
+    // Save to localStorage
     const storedWallets = localStorage.getItem('tradingWallets');
     const allWallets: StoredTradingWallets = storedWallets ? JSON.parse(storedWallets) : {};
     const ownerAddress = wallet.publicKey.toString();
@@ -785,6 +787,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
     setTradingWallets(allWallets[ownerAddress]);
     setSelectedTradingWallet(newWallet);  // Auto-select newly created wallet
+
+    // Save to database
+    try {
+      const pool = getDatabasePool();
+      const tradingWalletService = new TradingWalletService(pool);
+      await tradingWalletService.saveTradingWallet(ownerAddress, newWallet);
+    } catch (error) {
+      console.error('Error saving trading wallet to database:', error);
+      // Don't throw the error - we still want to keep the wallet in localStorage
+    }
   };
 
   const generateTradingWallet = () => {
@@ -2420,7 +2432,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     setShowDeleteDialog(true);
   };
 
-  const confirmDeleteWallet = () => {
+  const confirmDeleteWallet = async () => {
     if (!walletToDelete || !wallet.publicKey) return;
 
     // Remove the wallet from tradingWallets
@@ -2432,6 +2444,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     const allWallets: StoredTradingWallets = storedWallets ? JSON.parse(storedWallets) : {};
     allWallets[wallet.publicKey.toString()] = updatedWallets;
     localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+    
+    // Delete from database
+    try {
+      const pool = getDatabasePool();
+      const tradingWalletService = new TradingWalletService(pool);
+      await tradingWalletService.deleteTradingWallet(walletToDelete.publicKey);
+    } catch (error) {
+      console.error('Error deleting trading wallet from database:', error);
+      // Don't throw the error - we still want to remove the wallet from localStorage
+    }
     
     // If the deleted wallet was selected, clear the selection or select another wallet
     if (selectedTradingWallet?.publicKey === walletToDelete.publicKey) {

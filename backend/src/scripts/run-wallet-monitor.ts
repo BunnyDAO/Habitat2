@@ -61,10 +61,6 @@ async function main() {
         5000 // Update every 5 seconds
     );
 
-    // Add a test wallet to monitor (this is BunnyDAO's treasury wallet)
-    console.log('Adding test wallet to monitor...');
-    await service.addWallet('DaoSrx3wBdRM5oHzwC4synAe8GkMB46tXgBwQmxsgWqc');
-
     // Handle shutdown gracefully
     process.on('SIGINT', async () => {
         console.log('Received SIGINT. Shutting down...');
