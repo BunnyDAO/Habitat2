@@ -774,7 +774,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const saveTradingWallet = async (newWallet: TradingWallet) => {
     if (!wallet.publicKey) return;
     
-    // Save to localStorage
+    // Save to localStorage (including sensitive data)
     const storedWallets = localStorage.getItem('tradingWallets');
     const allWallets: StoredTradingWallets = storedWallets ? JSON.parse(storedWallets) : {};
     const ownerAddress = wallet.publicKey.toString();
@@ -788,11 +788,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     setTradingWallets(allWallets[ownerAddress]);
     setSelectedTradingWallet(newWallet);  // Auto-select newly created wallet
 
-    // Save to database
+    // Save to database (excluding sensitive data)
     try {
-      const pool = getDatabasePool();
-      const tradingWalletService = new TradingWalletService(pool);
-      await tradingWalletService.saveTradingWallet(ownerAddress, newWallet);
+      const dbWallet = {
+        publicKey: newWallet.publicKey,
+        name: newWallet.name,
+        createdAt: Date.now()
+      };
+      await tradingWalletService.saveWallet(ownerAddress, dbWallet);
     } catch (error) {
       console.error('Error saving trading wallet to database:', error);
       // Don't throw the error - we still want to keep the wallet in localStorage
@@ -2433,49 +2436,32 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   };
 
   const confirmDeleteWallet = async () => {
-    if (!walletToDelete || !wallet.publicKey) return;
+    if (!walletToDelete) return;
 
-    // Remove the wallet from tradingWallets
-    const updatedWallets = tradingWallets.filter(w => w.publicKey !== walletToDelete.publicKey);
-    setTradingWallets(updatedWallets);
-    
-    // Update localStorage
+    // Delete from localStorage
     const storedWallets = localStorage.getItem('tradingWallets');
-    const allWallets: StoredTradingWallets = storedWallets ? JSON.parse(storedWallets) : {};
-    allWallets[wallet.publicKey.toString()] = updatedWallets;
-    localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
-    
-    // Delete from database
-    try {
-      const pool = getDatabasePool();
-      const tradingWalletService = new TradingWalletService(pool);
-      await tradingWalletService.deleteTradingWallet(walletToDelete.publicKey);
-    } catch (error) {
-      console.error('Error deleting trading wallet from database:', error);
-      // Don't throw the error - we still want to remove the wallet from localStorage
-    }
-    
-    // If the deleted wallet was selected, clear the selection or select another wallet
-    if (selectedTradingWallet?.publicKey === walletToDelete.publicKey) {
-      if (updatedWallets.length > 0) {
-        setSelectedTradingWallet(updatedWallets[0]);
-      } else {
-        setSelectedTradingWallet(null);
+    if (storedWallets && wallet.publicKey) {
+      const allWallets: StoredTradingWallets = JSON.parse(storedWallets);
+      const ownerAddress = wallet.publicKey.toString();
+      
+      if (allWallets[ownerAddress]) {
+        allWallets[ownerAddress] = allWallets[ownerAddress].filter(
+          w => w.publicKey !== walletToDelete.publicKey
+        );
+        localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+        setTradingWallets(allWallets[ownerAddress]);
       }
     }
-    
-    // Close the expanded view
-    setExpandedWalletId(null);
-    
-    // Show notification
-    setNotification({
-      message: 'Wallet deleted successfully',
-      type: 'success'
-    });
 
-    // Close the dialog
-    setShowDeleteDialog(false);
+    // Delete from database
+    try {
+      await tradingWalletService.deleteWallet(walletToDelete.publicKey);
+    } catch (error) {
+      console.error('Error deleting trading wallet from database:', error);
+    }
+
     setWalletToDelete(null);
+    setShowDeleteDialog(false);
   };
 
   // Check for wallet name updates periodically
@@ -5134,7 +5120,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
           }}>
             <div style={{ 
               width: '0.75rem', 
-              height: '0.75rem', 
+              height: '0.75rem',
               borderRadius: '50%',
               borderTop: '2px solid #3b82f6',
               borderRight: '2px solid transparent',

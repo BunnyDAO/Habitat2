@@ -16,6 +16,23 @@ const port = process.env.PORT || 3001;
 // Initialize database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+// Add error handler for database connection
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle database client', err);
+});
+
+// Add connection test
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('Error testing database connection:', err);
+  } else {
+    console.log('Successfully connected to database at:', res.rows[0].now);
+  }
 });
 
 // Initialize Redis client with authentication

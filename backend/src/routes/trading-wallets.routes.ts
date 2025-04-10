@@ -6,7 +6,7 @@ const router = express.Router();
 
 export function createTradingWalletsRouter(pool: Pool) {
   // Test database connection on router creation
-  pool.query('SELECT NOW()', (err, res) => {
+  pool.query('SELECT NOW()', (err) => {
     if (err) {
       console.error('Error testing database connection:', err);
     } else {
@@ -60,32 +60,44 @@ export function createTradingWalletsRouter(pool: Pool) {
       await client.query('BEGIN');
       console.log('Started transaction');
 
-      // Insert or get user
-      console.log('Inserting/updating user with address:', ownerAddress);
-      await client.query(`
-        INSERT INTO users (main_wallet_pubkey)
-        VALUES ($1)
-        ON CONFLICT (main_wallet_pubkey) DO UPDATE
-        SET updated_at = NOW()
+      // First check if user exists
+      const userResult = await client.query(`
+        SELECT main_wallet_pubkey FROM users WHERE main_wallet_pubkey = $1
       `, [ownerAddress]);
 
+      if (userResult.rows.length === 0) {
+        // Insert user if not exists
+        console.log('User does not exist, creating new user');
+        await client.query(`
+          INSERT INTO users (main_wallet_pubkey)
+          VALUES ($1)
+        `, [ownerAddress]);
+        console.log('Created new user');
+      }
+
       // Insert trading wallet
-      console.log('Inserting/updating trading wallet:', wallet.publicKey);
-      await client.query(`
+      console.log('Inserting trading wallet:', wallet.publicKey);
+      const result = await client.query(`
         INSERT INTO trading_wallets (main_wallet_pubkey, wallet_pubkey, name, created_at)
         VALUES ($1, $2, $3, to_timestamp($4 / 1000.0))
-        ON CONFLICT (wallet_pubkey) DO UPDATE
-        SET name = EXCLUDED.name,
-            updated_at = NOW()
+        RETURNING id, wallet_pubkey as "publicKey", name, 
+                 EXTRACT(EPOCH FROM created_at) * 1000 as "createdAt"
       `, [ownerAddress, wallet.publicKey, wallet.name || null, wallet.createdAt]);
 
       await client.query('COMMIT');
       console.log('Successfully committed transaction');
-      res.status(200).json({ success: true });
+      console.log('Inserted wallet:', result.rows[0]);
+      res.status(200).json(result.rows[0]);
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Error saving trading wallet:', error);
-      res.status(500).json({ error: 'Failed to save trading wallet' });
+      // Send more detailed error information
+      const err = error as { message?: string; code?: string };
+      res.status(500).json({ 
+        error: 'Failed to save trading wallet',
+        details: err.message || 'Unknown error',
+        code: err.code || 'UNKNOWN'
+      });
     } finally {
       client.release();
       console.log('Released database client');
