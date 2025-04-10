@@ -771,6 +771,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
+  // Add function to generate unique wallet name
+  const generateUniqueWalletName = (baseName: string, existingWallets: TradingWallet[]): string => {
+    if (!existingWallets.some(w => w.name === baseName)) {
+      return baseName;
+    }
+
+    let counter = 1;
+    let newName = `${baseName}'`;
+    while (existingWallets.some(w => w.name === newName)) {
+      counter++;
+      newName = `${baseName}${"'".repeat(counter)}`;
+    }
+    return newName;
+  };
+
   const saveTradingWallet = async (newWallet: TradingWallet) => {
     if (!wallet.publicKey) return;
     
@@ -779,21 +794,28 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     const allWallets: StoredTradingWallets = storedWallets ? JSON.parse(storedWallets) : {};
     const ownerAddress = wallet.publicKey.toString();
     
-    allWallets[ownerAddress] = [...(allWallets[ownerAddress] || []), {
+    // Generate unique name if needed
+    const baseName = newWallet.name || `Trading Wallet ${(allWallets[ownerAddress] || []).length + 1}`;
+    const uniqueName = generateUniqueWalletName(baseName, allWallets[ownerAddress] || []);
+    
+    const walletToSave = {
       ...newWallet,
+      name: uniqueName,
       createdAt: Date.now()
-    }];
+    };
+    
+    allWallets[ownerAddress] = [...(allWallets[ownerAddress] || []), walletToSave];
     
     localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
     setTradingWallets(allWallets[ownerAddress]);
-    setSelectedTradingWallet(newWallet);  // Auto-select newly created wallet
+    setSelectedTradingWallet(walletToSave);  // Auto-select newly created wallet
 
     // Save to database (excluding sensitive data)
     try {
       const dbWallet = {
-        publicKey: newWallet.publicKey,
-        name: newWallet.name,
-        createdAt: Date.now()
+        publicKey: walletToSave.publicKey,
+        name: walletToSave.name,
+        createdAt: walletToSave.createdAt
       };
       await tradingWalletService.saveWallet(ownerAddress, dbWallet);
     } catch (error) {
