@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, ReactElement, useCallback, useMemo } from 'react';
 import './App.css';
-import styles from './styles/Wallet.module.css';
+import walletStyles from './styles/Wallet.module.css';
+import navigationStyles from './styles/Navigation.module.css';
 import { ConnectionProvider, WalletProvider, useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
@@ -329,11 +330,11 @@ type TransactionError = {
 // Add Tooltip component at the top level
 const Tooltip: React.FC<{ content: string; children: React.ReactNode }> = ({ content, children }) => {
   return (
-    <div className={styles.tooltip}>
+    <div className={walletStyles.tooltip}>
       {children}
-      <div className={styles.tooltipContent}>
+      <div className={walletStyles.tooltipContent}>
         {content}
-        <div className={styles.tooltipArrow} />
+        <div className={walletStyles.tooltipArrow} />
       </div>
     </div>
   );
@@ -418,181 +419,51 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
   }, []);
 
   return (
-    <div style={{
-      backgroundColor: '#1e293b',
-      padding: '1rem 2rem',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      borderBottom: '1px solid #2d3748'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div
-            style={{
-              position: 'relative',
-              cursor: 'pointer',
-            }}
-            className="mascot-container"
-          >
-            <img 
-              src="/assets/images/mascot.png" 
-              alt="Lackey Mascot" 
-              className="mascot-image"
-              style={{ 
-                height: '4.2rem', // Increased from 3.5rem to 4.2rem (20% larger)
-                width: 'auto',
-                borderRadius: '1rem',
-                filter: 'drop-shadow(0 0 10px rgba(96, 165, 250, 0.3))',
-                marginTop: '10px', // Added margin to move the logo down
-              }}
-            />
-            <style>
-              {`
-                @keyframes spin {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(360deg); }
-                }
-                @keyframes fadeIn {
-                  0% { opacity: 0; transform: translateY(-10px); }
-                  100% { opacity: 1; transform: translateY(0); }
-                }
-                .mascot-image {
-                  transition: transform 0.3s ease-in-out, filter 0.3s ease-in-out;
-                }
-                .mascot-image:hover {
-                  transform: scale(1.1) rotate(5deg);
-                  filter: drop-shadow(0 0 15px rgba(96, 165, 250, 0.5));
-                }
-              `}
-            </style>
-          </div>
-        <h1 style={{ 
-          color: '#60a5fa', 
-          margin: 0,
-          fontSize: '1.5rem',
-          fontWeight: 'bold'
-        }}>Resonance</h1>
+    <div className={navigationStyles.navigationBar}>
+      <div className={navigationStyles.leftSection}>
+        <div className="mascot-container">
+          <img 
+            src="/assets/images/mascot.png" 
+            alt="Lackey Mascot" 
+            className={navigationStyles.logo}
+          />
         </div>
-        <nav style={{ display: 'flex', gap: '1.5rem' }}>
-          <button
-            onClick={() => onPageChange('dashboard')}
-            style={{
-              backgroundColor: currentPage === 'dashboard' ? '#2563eb' : 'transparent',
-              color: currentPage === 'dashboard' ? 'white' : '#94a3b8',
-              border: 'none',
-              padding: '0.75rem 1.5rem',
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '1rem',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              if (currentPage !== 'dashboard') {
-                e.currentTarget.style.backgroundColor = '#1e40af20';
-                e.currentTarget.style.color = '#e2e8f0';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (currentPage !== 'dashboard') {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#94a3b8';
-              }
-            }}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => onPageChange('whale-tracker')}
-            style={{
-              backgroundColor: currentPage === 'whale-tracker' ? '#2563eb' : 'transparent',
-              color: currentPage === 'whale-tracker' ? 'white' : '#94a3b8',
-              border: 'none',
-              padding: '0.75rem 1.5rem',
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '1rem',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              if (currentPage !== 'whale-tracker') {
-                e.currentTarget.style.backgroundColor = '#1e40af20';
-                e.currentTarget.style.color = '#e2e8f0';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (currentPage !== 'whale-tracker') {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#94a3b8';
-              }
-            }}
-          >
-            Whale Tracker
-          </button>
-          <button
-            onClick={() => onPageChange('graphs')}
-            style={{
-              backgroundColor: currentPage === 'graphs' ? '#2563eb' : 'transparent',
-              color: currentPage === 'graphs' ? 'white' : '#94a3b8',
-              border: 'none',
-              padding: '0.75rem 1.5rem',
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '1rem',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              if (currentPage !== 'graphs') {
-                e.currentTarget.style.backgroundColor = '#1e40af20';
-                e.currentTarget.style.color = '#e2e8f0';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (currentPage !== 'graphs') {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#94a3b8';
-              }
-            }}
-          >
-            Graphs
-          </button>
-        </nav>
+        <h1 className={navigationStyles.brandName}>Resonance</h1>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <div style={{
-          backgroundColor: '#2d3748',
-          padding: '0.5rem 1rem',
-          borderRadius: '0.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem'
-        }}>
+      
+      <nav style={{ display: 'flex', gap: '0.5rem' }}>
+        <button
+          onClick={() => onPageChange('dashboard')}
+          className={`${navigationStyles.navButton} ${currentPage === 'dashboard' ? navigationStyles.navButtonActive : ''}`}
+        >
+          Dashboard
+        </button>
+        <button
+          onClick={() => onPageChange('whale-tracker')}
+          className={`${navigationStyles.navButton} ${currentPage === 'whale-tracker' ? navigationStyles.navButtonActive : ''}`}
+        >
+          Whale Tracker
+        </button>
+        <button
+          onClick={() => onPageChange('graphs')}
+          className={`${navigationStyles.navButton} ${currentPage === 'graphs' ? navigationStyles.navButtonActive : ''}`}
+        >
+          Graphs
+        </button>
+      </nav>
+
+      <div className={navigationStyles.rightSection}>
+        <div className={navigationStyles.priceContainer}>
           <img 
             src="/assets/images/solana.png" 
             alt="Solana Logo" 
-            style={{ 
-              height: '1.25rem',
-              width: 'auto'
-            }}
+            className={navigationStyles.solanaLogo}
           />
-          <span style={{ 
-            color: '#e2e8f0',
-            fontWeight: '500',
-            fontSize: '1rem'
-          }}>
+          <span className={navigationStyles.priceText}>
             ${solPrice.toFixed(2)}
           </span>
-      </div>
-      <WalletButton />
+        </div>
+        <WalletButton />
       </div>
     </div>
   );
@@ -1112,7 +983,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           {tradingWallets.map((tw, index) => (
             <div key={tw.publicKey}>
               <div 
-                className={`${styles.walletItem} ${selectedTradingWallet?.publicKey === tw.publicKey ? styles.active : ''}`}
+                className={`${walletStyles.walletItem} ${selectedTradingWallet?.publicKey === tw.publicKey ? walletStyles.active : ''}`}
                 onClick={() => setSelectedTradingWallet(tw)}
                 onDoubleClick={() => {
                   setExpandedWalletId(expandedWalletId === tw.publicKey ? null : tw.publicKey);
@@ -1219,7 +1090,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 </div>
                 
                 {/* Strategy badges */}
-                <div className={styles.strategyBadgesContainer}>
+                <div className={walletStyles.strategyBadgesContainer}>
                   {jobs.filter(job => job.tradingWalletPublicKey === tw.publicKey && job.isActive).map((job) => {
                     const isPaused = pausedJobs.has(job.id);
                     
@@ -1276,7 +1147,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     return (
                       <div 
                         key={job.id}
-                        className={`${styles.strategyBadge} ${isPaused ? styles.strategyBadgePaused : ''}`}
+                        className={`${walletStyles.strategyBadge} ${isPaused ? walletStyles.strategyBadgePaused : ''}`}
                       >
                         <span role="img" aria-label="Active Strategy" style={{ fontSize: '0.75rem', opacity: isPaused ? 0.7 : 1 }}>
                           {job.type === JobType.WALLET_MONITOR ? (
@@ -1312,8 +1183,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             {job.profitTracking.currentProfit.toFixed(2)}%
                           </span>
                         )}
-                        <div className={styles.strategyMenu}>
-                          <div className={styles.strategyMenuHeader}>
+                        <div className={walletStyles.strategyMenu}>
+                          <div className={walletStyles.strategyMenuHeader}>
                             {strategyInfo.title}
                             {job.profitTracking && (
                               <div style={{
@@ -1337,14 +1208,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               </div>
                             )}
                           </div>
-                          <div className={styles.strategyMenuDetails}>
+                          <div className={walletStyles.strategyMenuDetails}>
                             {strategyInfo.details.map((detail, index) => (
-                              <div key={index} className={styles.strategyMenuDetail}>{detail}</div>
+                              <div key={index} className={walletStyles.strategyMenuDetail}>{detail}</div>
                             ))}
                           </div>
-                          <div className={styles.strategyMenuDivider} />
+                          <div className={walletStyles.strategyMenuDivider} />
                           <button 
-                            className={styles.strategyMenuButton}
+                            className={walletStyles.strategyMenuButton}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleJobPause(job.id);
@@ -1363,7 +1234,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             )}
                           </button>
                           <button 
-                            className={`${styles.strategyMenuButton} ${styles.strategyMenuButtonDanger}`}
+                            className={`${walletStyles.strategyMenuButton} ${walletStyles.strategyMenuButtonDanger}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (confirm('Are you sure you want to delete this strategy?')) {
@@ -1389,7 +1260,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           fundWallet(tw, parseFloat(amount));
                         }
                       }}
-                      className={`${styles.button} ${styles.primary}`}
+                      className={`${walletStyles.button} ${walletStyles.primary}`}
                     >
                       Fund
                     </button>
@@ -1399,7 +1270,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         setExpandedWalletId(expandedWalletId === tw.publicKey ? null : tw.publicKey);
                         setShowPrivateKey(null);
                       }}
-                      className={styles.menuButton}
+                      className={walletStyles.menuButton}
                     >
                       ☰
                     </button>
@@ -1438,19 +1309,19 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         setFundingWallet(tw);
                         setFundingAmount('');
                       }}
-                      className={styles.button}
+                      className={walletStyles.button}
                     >
                       Fund Wallet
                     </button>
                     <button
                       onClick={() => navigator.clipboard.writeText(tw.publicKey)}
-                      className={styles.button}
+                      className={walletStyles.button}
                     >
                       Copy Public Key
                     </button>
                     <button
                       onClick={() => setShowPrivateKey(showPrivateKey === tw.publicKey ? null : tw.publicKey)}
-                      className={`${styles.button} ${showPrivateKey === tw.publicKey ? styles.danger : ''}`}
+                      className={`${walletStyles.button} ${showPrivateKey === tw.publicKey ? walletStyles.danger : ''}`}
                     >
                       {showPrivateKey === tw.publicKey ? 'Hide Private Key' : 'Show Private Key'}
                     </button>
@@ -1479,7 +1350,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         fetchTradingWalletBalances();
                         window.dispatchEvent(new Event('update-balances'));
                       }}
-                      className={styles.button}
+                      className={walletStyles.button}
                     >
                       Return All SOL To Main Wallet
                     </button>
@@ -1487,7 +1358,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       onClick={() => {
                         handleDeleteWallet(tw);
                       }}
-                      className={`${styles.button} ${styles.danger}`}
+                      className={`${walletStyles.button} ${walletStyles.danger}`}
                       style={{ marginLeft: 'auto' }}
                     >
                       Delete Wallet
@@ -1531,7 +1402,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           const privateKeyBytes = new Uint8Array(JSON.parse(privateKeyStr));
                           navigator.clipboard.writeText(bs58.encode(privateKeyBytes));
                         }}
-                        className={styles.button}
+                        className={walletStyles.button}
                       >
                         Copy Private Key
                       </button>
@@ -2556,7 +2427,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   };
 
   return (
-    <div className={styles.container}>
+    <div className={walletStyles.container}>
       <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} />
       {currentPage === 'dashboard' ? (
         <div style={{ padding: '2rem' }}>
@@ -2773,7 +2644,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                             <span style={{ color: '#e2e8f0' }}>{(job as WalletMonitoringJob).name || 'Unnamed Wallet'}</span>
                                             <span style={{ color: '#94a3b8' }}> - </span>
                                             <span 
-                                              className={styles.copyAddress}
+                                              className={walletStyles.copyAddress}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 navigator.clipboard.writeText((job as WalletMonitoringJob).walletAddress);
@@ -2792,7 +2663,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                             <span style={{ color: '#e2e8f0' }}>{tw.name || `Trading Wallet ${tradingWallets.indexOf(tw) + 1}`}</span>
                                             <span style={{ color: '#94a3b8' }}> - </span>
                                             <span 
-                                              className={styles.copyAddress}
+                                              className={walletStyles.copyAddress}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 navigator.clipboard.writeText(tw.publicKey);
@@ -3247,7 +3118,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   }}>
                     Click a wallet to populate the input field above
                   </div>
-                  <div className={styles.savedWalletsContainer}>
+                  <div className={walletStyles.savedWalletsContainer}>
                     {jobs
                       .filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive)
                       .filter(job => {
@@ -3350,12 +3221,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                       }}
                                     />
                                   ) : (
-                                    <div className={styles.walletName}>
-                                      <span className={styles.walletNameText}>
+                                    <div className={walletStyles.walletName}>
+                                      <span className={walletStyles.walletNameText}>
                                         {monitorJob.name || 'Unnamed Wallet'}
                                       </span>
                                       <button
-                                        className={styles.editIcon}
+                                        className={walletStyles.editIcon}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingWalletId(job.id);
@@ -4163,7 +4034,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
             }}>
               <button
                 onClick={() => setFundingWallet(null)}
-                className={`${styles.button} ${styles.secondary}`}
+                className={`${walletStyles.button} ${walletStyles.secondary}`}
               >
                 Cancel
               </button>
@@ -4175,7 +4046,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   setFundingAmount('');
                 }}
                 disabled={!fundingAmount || parseFloat(fundingAmount) <= 0}
-                className={`${styles.button} ${styles.primary}`}
+                className={`${walletStyles.button} ${walletStyles.primary}`}
               >
                 Fund
               </button>
