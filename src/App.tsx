@@ -2381,11 +2381,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   };
 
   const confirmDeleteWallet = async () => {
-    if (!walletToDelete) return;
+    if (!walletToDelete || !wallet.publicKey) return;
 
     // Delete from localStorage
     const storedWallets = localStorage.getItem('tradingWallets');
-    if (storedWallets && wallet.publicKey) {
+    if (storedWallets) {
       const allWallets: StoredTradingWallets = JSON.parse(storedWallets);
       const ownerAddress = wallet.publicKey.toString();
       
@@ -2398,6 +2398,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
     }
 
+    // Remove all jobs associated with this wallet
+    const updatedJobs = jobs.filter(job => job.tradingWalletPublicKey !== walletToDelete.publicKey);
+    setJobs(updatedJobs);
+    
+    // Update jobs in localStorage
+    if (wallet.publicKey) {
+      localStorage.setItem(`jobs_${wallet.publicKey.toString()}`, JSON.stringify(updatedJobs));
+    }
+
     // Delete from database
     try {
       await tradingWalletService.deleteWallet(walletToDelete.publicKey);
@@ -2407,6 +2416,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
     setWalletToDelete(null);
     setShowDeleteDialog(false);
+
+    // Show success notification
+    setNotification({
+      message: 'Trading wallet and associated lackeys deleted successfully',
+      type: 'success'
+    });
   };
 
   // Check for wallet name updates periodically
