@@ -309,10 +309,10 @@ const fetchTokenMetadata = async (mint: string, connection?: Connection): Promis
 // Add interface for trading wallet
 interface TradingWallet {
   publicKey: string;
-  secretKey: number[];
+  secretKey: Uint8Array;
   mnemonic: string;
   name?: string;  // Optional name for the trading wallet
-  createdAt: number;  // Timestamp when wallet was created
+  createdAt: Date;  // Timestamp when wallet was created
 }
 
 interface StoredTradingWallets {
@@ -403,6 +403,7 @@ const WhaleTrackerPage: React.FC<{ onRpcError: () => void; currentEndpoint: stri
 // Navigation Bar Component
 const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) => void }> = ({ currentPage, onPageChange }) => {
   const [solPrice, setSolPrice] = useState<number>(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const priceFeed = PriceFeedService.getInstance();
@@ -431,7 +432,7 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
         <h1 className={navigationStyles.brandName}>Resonance</h1>
       </div>
       
-      <nav style={{ display: 'flex', gap: '0.5rem' }}>
+      <nav className={navigationStyles.navButtons}>
         <button
           onClick={() => onPageChange('dashboard')}
           className={`${navigationStyles.navButton} ${currentPage === 'dashboard' ? navigationStyles.navButtonActive : ''}`}
@@ -465,6 +466,51 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
         </div>
         <WalletButton />
       </div>
+
+      {/* Mobile Menu Button */}
+      <button 
+        className={navigationStyles.mobileMenuButton}
+        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <line x1="3" y1="18" x2="21" y2="18" />
+        </svg>
+      </button>
+
+      {/* Mobile Menu */}
+      {isMobileMenuOpen && (
+        <div className={navigationStyles.mobileMenu}>
+          <button
+            onClick={() => {
+              onPageChange('dashboard');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`${navigationStyles.mobileNavButton} ${currentPage === 'dashboard' ? navigationStyles.navButtonActive : ''}`}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => {
+              onPageChange('whale-tracker');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`${navigationStyles.mobileNavButton} ${currentPage === 'whale-tracker' ? navigationStyles.navButtonActive : ''}`}
+          >
+            Whale Tracker
+          </button>
+          <button
+            onClick={() => {
+              onPageChange('graphs');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`${navigationStyles.mobileNavButton} ${currentPage === 'graphs' ? navigationStyles.navButtonActive : ''}`}
+          >
+            Graphs
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -5,6 +5,7 @@
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #2d3748;
+  position: relative;
 }
 
 .leftSection {
@@ -17,6 +18,11 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+.navButtons {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .logo {
@@ -84,6 +90,54 @@
   font-size: 1rem;
 }
 
+/* Mobile Menu Button */
+.mobileMenuButton {
+  display: none;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 0.5rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.mobileMenuButton:hover {
+  color: #e2e8f0;
+}
+
+/* Mobile Menu */
+.mobileMenu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background-color: #1e293b;
+  padding: 1rem;
+  border-bottom: 1px solid #2d3748;
+  z-index: 1000;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mobileNavButton {
+  background-color: transparent;
+  color: #94a3b8;
+  border: none;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  transition: all 0.2s;
+}
+
+.mobileNavButton:hover {
+  background-color: #1e40af20;
+  color: #e2e8f0;
+}
+
 /* Responsive Design */
 @media (max-width: 1024px) {
   .navigationBar {
@@ -102,6 +156,18 @@
 
   .logo {
     height: 3.5rem;
+  }
+
+  .navButtons {
+    display: none;
+  }
+
+  .mobileMenuButton {
+    display: block;
+  }
+
+  .mobileMenu {
+    display: flex;
   }
 
   .navButton {
