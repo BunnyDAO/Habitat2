@@ -672,6 +672,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         const parsedJobs = JSON.parse(storedJobs);
         setJobs(parsedJobs);
       }
+    } else {
+      // Clear jobs and trading wallets when wallet disconnects
+      setJobs([]);
+      setTradingWallets([]);
+      setSelectedTradingWallet(null);
     }
   }, [wallet.publicKey]);
 
