@@ -4,12 +4,14 @@ import { AnyJob } from '../types/jobs';
 import ExportLackeysModal from './ExportLackeysModal';
 import ImportLackeysModal from './ImportLackeysModal';
 import PasswordModal from './PasswordModal';
+import { PublicKey } from '@solana/web3.js';
 
 interface LackeyImportExportProps {
   jobs: AnyJob[];
   setJobs: (jobs: AnyJob[]) => void;
   walletConnected: boolean;
   walletPublicKey: string;
+  wallet: { publicKey: PublicKey; signMessage: (message: Uint8Array) => Promise<Uint8Array> };
 }
 
 interface FileSaveOptions {
@@ -39,7 +41,8 @@ const LackeyImportExport: React.FC<LackeyImportExportProps> = ({
   jobs,
   setJobs,
   walletConnected,
-  walletPublicKey
+  walletPublicKey,
+  wallet
 }) => {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -53,7 +56,7 @@ const LackeyImportExport: React.FC<LackeyImportExportProps> = ({
 
     try {
       setError(null);
-      const blob = await exportLackeys(jobs, walletPublicKey, password);
+      const blob = await exportLackeys(jobs, walletPublicKey, password, wallet);
       
       // Use the File System Access API if available
       if ('showSaveFilePicker' in window) {
@@ -134,7 +137,7 @@ const LackeyImportExport: React.FC<LackeyImportExportProps> = ({
 
     try {
       setError(null);
-      const { lackeys, savedWallets } = await importLackeys(fileContent, password);
+      const { lackeys, savedWallets } = await importLackeys(fileContent, password, wallet);
       
       // Merge lackeys
       const mergedJobs = mergeLackeys(jobs, lackeys);

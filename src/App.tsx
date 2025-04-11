@@ -2876,6 +2876,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   setJobs={setJobs}
                   walletConnected={!!wallet.publicKey}
                   walletPublicKey={wallet.publicKey?.toString() || ''}
+                  wallet={wallet}
                 />
               </div>
 
