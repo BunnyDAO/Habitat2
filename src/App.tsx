@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, ReactElement, useCallback, useMemo 
 import './App.css';
 import styles from './styles/Wallet.module.css';
 import { ConnectionProvider, WalletProvider, useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import '@solana/wallet-adapter-react-ui/styles.css';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, Transaction, TransactionInstruction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js';
@@ -23,6 +23,7 @@ import { Graphs } from './pages/Graphs';
 import { WalletMonitorIcon } from './components/WalletMonitorIcon';
 import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon } from './components/StrategyIcons';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
+import { WalletButton } from './components/WalletButton';
 import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
@@ -591,7 +592,7 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
             ${solPrice.toFixed(2)}
           </span>
       </div>
-      <WalletMultiButton />
+      <WalletButton />
       </div>
     </div>
   );
