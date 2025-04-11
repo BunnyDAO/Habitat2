@@ -423,35 +423,35 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
     <div className={navigationStyles.navigationBar}>
       <div className={navigationStyles.leftSection}>
         <div className="mascot-container">
-          <img 
-            src="/assets/images/mascot.png" 
-            alt="Lackey Mascot" 
+            <img 
+              src="/assets/images/mascot.png" 
+              alt="Lackey Mascot" 
             className={navigationStyles.logo}
           />
-        </div>
+          </div>
         <h1 className={navigationStyles.brandName}>Resonance</h1>
-      </div>
+        </div>
       
       <nav className={navigationStyles.navButtons}>
-        <button
-          onClick={() => onPageChange('dashboard')}
+          <button
+            onClick={() => onPageChange('dashboard')}
           className={`${navigationStyles.navButton} ${currentPage === 'dashboard' ? navigationStyles.navButtonActive : ''}`}
-        >
-          Dashboard
-        </button>
-        <button
-          onClick={() => onPageChange('whale-tracker')}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => onPageChange('whale-tracker')}
           className={`${navigationStyles.navButton} ${currentPage === 'whale-tracker' ? navigationStyles.navButtonActive : ''}`}
-        >
-          Whale Tracker
-        </button>
-        <button
-          onClick={() => onPageChange('graphs')}
+          >
+            Whale Tracker
+          </button>
+          <button
+            onClick={() => onPageChange('graphs')}
           className={`${navigationStyles.navButton} ${currentPage === 'graphs' ? navigationStyles.navButtonActive : ''}`}
-        >
-          Graphs
-        </button>
-      </nav>
+          >
+            Graphs
+          </button>
+        </nav>
 
       <div className={navigationStyles.rightSection}>
         <div className={navigationStyles.priceContainer}>
@@ -463,8 +463,8 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
           <span className={navigationStyles.priceText}>
             ${solPrice.toFixed(2)}
           </span>
-        </div>
-        <WalletButton />
+      </div>
+      <WalletButton />
       </div>
 
       {/* Mobile Menu Button */}
@@ -2472,23 +2472,55 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     setLevels(prevLevels => prevLevels.filter((_, i) => i !== index));
   };
 
+  // Add handleExportLackeys function
+  const handleExportLackeys = async () => {
+    if (!wallet.publicKey) {
+      setNotification({
+        message: 'Please connect your wallet first',
+        type: 'error'
+      });
+      return;
+    }
+
+    try {
+      const exportData = {
+        lackeys: jobs,
+        savedWallets: tradingWallets,
+        ownerAddress: wallet.publicKey.toString()
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lackeys-${wallet.publicKey.toString().slice(0, 8)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setNotification({
+        message: 'Lackeys exported successfully',
+        type: 'success'
+      });
+    } catch (error) {
+      console.error('Error exporting lackeys:', error);
+      setNotification({
+        message: 'Failed to export lackeys',
+        type: 'error'
+      });
+    }
+  };
+
   return (
     <div className={walletStyles.container}>
       <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} />
       {currentPage === 'dashboard' ? (
         <div style={{ padding: '2rem' }}>
-          <div style={{ 
-            maxWidth: '1600px', 
-            margin: '0 auto',
-            display: 'grid',
-            gridTemplateColumns: '1fr 400px',
-            gap: '2rem'
-          }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}> {/* Reduced from 1rem to 0.75rem */}
-              {/* Title Section */}
-              <div style={{
-                marginBottom: '1rem' // Changed from -1.5rem to 1rem to create space below the title
-              }}>
+          <div className={walletStyles.dashboardLayout}>
+            <div className={walletStyles.mainContent}>
+              {/* Title Section - removed Import/Export buttons */}
+              <div className={walletStyles.titleSection}>
                 <h2 style={{
                   color: '#60a5fa',
                   fontSize: '1.25rem',
@@ -2500,21 +2532,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               </div>
 
               {/* Trading wallet selector */}
-              <div style={{ marginTop: '-0.6rem' }}> {/* Added small marginTop for fine-tuning */}
-              {renderTradingWalletSelector()}
+              <div style={{ marginTop: '-0.6rem' }}>
+                {renderTradingWalletSelector()}
               </div>
 
               {/* Active Jobs Section */}
               <div style={{
                 backgroundColor: '#1e293b',
-                padding: '1.125rem',
-                borderRadius: '0.75rem',
-                border: '1px solid #2d3748'
+                borderRadius: '0.5rem',
+                padding: '1rem'
               }}>
                 <div 
                   style={{
-                  display: 'flex',
-                  alignItems: 'center',
+                    display: 'flex',
+                    alignItems: 'center',
                     gap: '0.75rem',
                     cursor: 'pointer',
                     userSelect: 'none'
@@ -2541,14 +2572,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       fontSize: '0.9375rem'
                     }}>
                       Active Lackeys
-                  <span style={{ 
-                    backgroundColor: '#2563eb',
-                    color: 'white',
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '1rem',
+                      <span style={{ 
+                        backgroundColor: '#2563eb',
+                        color: 'white',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '1rem',
                         fontSize: '0.75rem',
                         marginLeft: '0.5rem'
-                  }}>{jobs.filter(job => job.tradingWalletPublicKey).length}</span>
+                      }}>{jobs.filter(job => job.tradingWalletPublicKey).length}</span>
                     </h3>
                     {!isActiveLackeysExpanded && (
                       <p style={{ 
@@ -2560,22 +2591,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       </p>
                     )}
                   </div>
-                  <svg 
-                    width="20" 
-                    height="20" 
-                    viewBox="0 0 24 24" 
-                    fill="none" 
-                    xmlns="http://www.w3.org/2000/svg"
-                    style={{
-                      transform: isActiveLackeysExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                      transition: 'transform 0.2s ease',
-                      color: '#94a3b8'
-                    }}
-                  >
-                    <path d="M19 9L12 16L5 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  <div style={{
+                    transform: `rotate(${isActiveLackeysExpanded ? '180deg' : '0deg'})`,
+                    transition: 'transform 0.2s ease-in-out'
+                  }}>
+                    <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M1 1L6 6L11 1" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                  </div>
                 </div>
-
                 <div style={{
                   maxHeight: isActiveLackeysExpanded ? '100%' : '0',
                   opacity: isActiveLackeysExpanded ? '1' : '0',
@@ -2835,12 +2859,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               </div>
             </div>
 
-            {/* Right Column - Available Lackeys */}
-            <div style={{
-              display: 'flex', 
-              flexDirection: 'column', 
-              gap: '0.75rem' /* Reduced from 1rem to 0.75rem (25% smaller) */
-            }}>
+            {/* Right sidebar content */}
+            <div className={walletStyles.sidebarContent}>
               <div style={{ 
                 display: 'flex',
                 justifyContent: 'space-between',

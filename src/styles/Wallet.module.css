@@ -399,4 +399,44 @@
 
 .copyAddress:hover {
   color: #e2e8f0;
+}
+
+.dashboardLayout {
+  max-width: 1600px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 2rem;
+}
+
+.mainContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.titleSection {
+  margin-bottom: 1rem;
+}
+
+.sidebarContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Responsive layout */
+@media (max-width: 630px) {
+  .dashboardLayout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .mainContent {
+    order: 1;
+  }
+
+  .sidebarContent {
+    order: 2;
+  }
 } 
