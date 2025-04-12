@@ -7,8 +7,10 @@
  */
 export interface TradingWallet {
   publicKey: string;
-  name?: string;
-  createdAt: number;
+  secretKey: Uint8Array;
+  mnemonic: string;
+  name?: string;  // Optional name for the trading wallet
+  createdAt: number;  // Timestamp when wallet was created (Unix timestamp in milliseconds)
 }
 
 /**

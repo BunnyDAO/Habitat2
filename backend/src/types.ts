@@ -7,7 +7,7 @@ export interface TokenBalance {
   logoURI?: string;
   uiAmount?: number;
   usdValue?: number;
-  lastUpdated?: string;
+  lastUpdated: Date;
 }
 
 export interface HeliusTokenAccount {
@@ -28,4 +28,9 @@ export interface HeliusResponse {
   error?: {
     message: string;
   };
+}
+
+export interface WalletBalanceResponse {
+  walletAddress: string;
+  balances: TokenBalance[];
 } 

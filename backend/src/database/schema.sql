@@ -82,6 +82,7 @@ CREATE TABLE wallet_balances (
     wallet_address TEXT NOT NULL,
     mint_address TEXT REFERENCES tokens(mint_address),
     amount DECIMAL(20, 10) NOT NULL,
+    decimals INTEGER NOT NULL,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(wallet_address, mint_address)
 );

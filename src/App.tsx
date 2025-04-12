@@ -28,6 +28,8 @@ import { WalletButton } from './components/WalletButton';
 import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
+import { WalletBalanceService } from './services/walletBalanceService';
+import { TradingWallet } from './types/wallet';
 
 // Add SelectedToken interface
 interface SelectedToken {
@@ -312,7 +314,7 @@ interface TradingWallet {
   secretKey: Uint8Array;
   mnemonic: string;
   name?: string;  // Optional name for the trading wallet
-  createdAt: Date;  // Timestamp when wallet was created
+  createdAt: number;  // Timestamp when wallet was created (Unix timestamp in milliseconds)
 }
 
 interface StoredTradingWallets {
@@ -599,6 +601,23 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
   const [existingJobId, setExistingJobId] = useState<string | null>(null);
 
+  // Initialize wallet balance service
+  const walletBalanceService = useMemo(() => new WalletBalanceService(), []);
+
+  // Handle wallet connection
+  useEffect(() => {
+    if (wallet.publicKey?.toBase58()) {
+      const walletAddress = wallet.publicKey.toBase58();
+      walletBalanceService.initializeWallet(walletAddress)
+        .catch(error => console.error('Failed to initialize wallet balances:', error));
+
+      // Cleanup on wallet disconnect or component unmount
+      return () => {
+        walletBalanceService.cleanup();
+      };
+    }
+  }, [wallet.publicKey, walletBalanceService]);
+
   // Add function to handle wallet name save
   const handleWalletNameSave = (jobId: string) => {
     const updatedJobs = jobs.map(j => {
@@ -787,14 +806,40 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     const newBalances: Record<string, number> = {};
     for (const tw of tradingWallets) {
       try {
-        // Make parallel calls to both implementations
-        const [balance, backendBalances] = await Promise.all([
-          connection.getBalance(new PublicKey(tw.publicKey)),
-          fetchBackendBalances(tw.publicKey)
-        ]);
-        
-        
+        // Get SOL balance from chain
+        const balance = await connection.getBalance(new PublicKey(tw.publicKey));
         newBalances[tw.publicKey] = balance / 1e9; // Convert lamports to SOL
+
+        // Get token accounts
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          new PublicKey(tw.publicKey),
+          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+        );
+
+        // Process each token account
+        for (const { account } of tokenAccounts.value) {
+          const parsedInfo = account.data.parsed.info;
+          const tokenMint = parsedInfo.mint;
+          const tokenAmount = parsedInfo.tokenAmount;
+          
+          // Only include tokens with non-zero balance
+          if (tokenAmount.uiAmount > 0) {
+            // Get token metadata
+            const metadata = await fetchTokenMetadata(tokenMint, connection);
+            
+            // Update backend with this token balance using WalletBalanceService
+            try {
+              await walletBalanceService.updateBalance(
+                tw.publicKey,
+                tokenMint,
+                tokenAmount.uiAmount,
+                tokenAmount.decimals
+              );
+            } catch (error) {
+              console.error('Error updating backend balance:', error);
+            }
+          }
+        }
       } catch (error) {
         console.error('Error fetching balance for wallet:', tw.publicKey, error);
         newBalances[tw.publicKey] = 0;
@@ -2531,6 +2576,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       });
     }
   };
+
+  // Add effect to update balances when trading wallets change
+  useEffect(() => {
+    if (tradingWallets.length > 0) {
+      // Update balances for each trading wallet
+      tradingWallets.forEach(tw => {
+        walletBalanceService.initializeWallet(tw.publicKey)
+          .catch(error => console.error('Failed to initialize trading wallet balances:', error));
+      });
+    }
+  }, [tradingWallets, walletBalanceService]);
 
   return (
     <div className={walletStyles.container}>
