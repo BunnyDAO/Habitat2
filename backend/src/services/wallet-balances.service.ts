@@ -71,15 +71,21 @@ export class WalletBalancesService {
     try {
       const result = await this.pool.query(query, [walletAddress]);
       
-      const balances: TokenBalance[] = result.rows.map(row => ({
-        mint: row.mint_address,
-        balance: parseFloat(row.amount),
-        decimals: row.decimals,
-        lastUpdated: row.last_updated,
-        logoURI: row.logo_uri,
-        name: row.name,
-        symbol: row.symbol
-      }));
+      console.log('Raw database results:', result.rows);
+      
+      const balances: TokenBalance[] = result.rows.map(row => {
+        const balance = {
+          mint: row.mint_address,
+          balance: parseFloat(row.amount),
+          decimals: row.decimals,
+          lastUpdated: row.last_updated,
+          logoURI: row.logo_uri,
+          name: row.name,
+          symbol: row.symbol
+        };
+        console.log(`Processed balance for ${row.symbol}:`, balance);
+        return balance;
+      });
 
       const response = {
         walletAddress,

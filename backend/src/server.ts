@@ -12,6 +12,10 @@ import { WalletBalancesService } from './services/wallet-balances.service';
 import { TokenService } from './services/token.service';
 import healthRoutes from './api/v1/routes/health.routes';
 import { createPriceFeedRouter } from './api/v1/routes/price-feed.routes';
+import { createChartDataRouter } from './api/v1/routes/chart-data.routes';
+import { createWhaleTrackingRouter } from './api/v1/routes/whale-tracking.routes';
+import { createProxyRouter } from './api/v1/routes/proxy.routes';
+import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
 
 // Load environment variables
 dotenv.config();
@@ -63,7 +67,7 @@ const initializeRedis = async () => {
     });
 
     await client.connect();
-    console.log('Connected to Redis successfully');
+  console.log('Connected to Redis successfully');
     redisClient = client;
   } catch (error) {
     console.error('Failed to connect to Redis, continuing without Redis:', error);
@@ -97,6 +101,20 @@ app.use('/api/tokens', createTokenRouter(tokenService));
 // Register v1 API routes
 app.use('/api/v1', healthRoutes);
 app.use('/api/v1', createPriceFeedRouter(redisClient, heliusService));
+
+// After other route initializations
+const chartDataRouter = createChartDataRouter(redisClient, tokenService);
+app.use('/api/v1/chart-data', chartDataRouter);
+
+const whaleTrackingRouter = createWhaleTrackingRouter(redisClient, heliusService);
+app.use('/api/v1/whale-tracking', whaleTrackingRouter);
+
+// Add proxy routes
+app.use('/api/v1/proxy', createProxyRouter());
+
+// Add token metadata routes
+const tokenMetadataRouter = createTokenMetadataRouter(pool, redisClient);
+app.use('/api/v1/token-metadata', tokenMetadataRouter);
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {

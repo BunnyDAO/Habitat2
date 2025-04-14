@@ -1,39 +1,82 @@
-import { Connection, PublicKey } from '@solana/web3.js';
-import { WhaleWallet, TokenHolding, Trade, WhaleTrackerConfig, WhaleAnalytics } from '../../types/whale-tracker/types';
+import { WhaleWallet, Trade, WhaleTrackerConfig, WhaleAnalytics } from '../../types/whale-tracker/types';
 
-interface ParsedTransaction {
-  description: string;
-  type: string;
-  source: string;
-  fee: number;
+interface TokenTransfer {
+  fromUserAccount: string;
+  toUserAccount: string;
+  tokenAmount: number;
+  mint: string;
+  type: 'in' | 'out';
+  amount: string;
+  symbol?: string;
+}
+
+interface Transaction {
   signature: string;
   timestamp: number;
-  tokenTransfers: {
-    fromUserAccount: string;
-    toUserAccount: string;
-    fromTokenAccount: string;
-    toTokenAccount: string;
-    tokenAmount: number;
-    mint: string;
-    tokenStandard: string;
-  }[];
+  type: string;
+  source: string;
+  tokenTransfers: TokenTransfer[];
+}
+
+interface TokenHolder {
+  address: string;
+  amount: string;
+  decimals: number;
+  symbol?: string;
 }
 
 export class HeliusService {
-  private connection: Connection;
+  private static instance: HeliusService;
   private heliusApiKey: string;
-  private priceCache: Map<string, { price: number; timestamp: number }>;
-  private readonly PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-  constructor(endpoint: string, heliusApiKey: string) {
-    this.connection = new Connection(endpoint);
-    this.heliusApiKey = heliusApiKey;
-    this.priceCache = new Map();
+  private constructor() {
+    this.heliusApiKey = import.meta.env.VITE_HELIUS_API_KEY || '';
+  }
+
+  public static getInstance(): HeliusService {
+    if (!HeliusService.instance) {
+      HeliusService.instance = new HeliusService();
+    }
+    return HeliusService.instance;
+  }
+
+  public getApiKey(): string {
+    return this.heliusApiKey;
+  }
+
+  async getTransactions(address: string): Promise<Transaction[]> {
+    try {
+      const response = await fetch(`http://localhost:3001/api/v1/whale-tracking/transactions/${address}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch transactions: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      throw error;
+    }
+  }
+
+  async getTokenPrice(mintAddress: string): Promise<number> {
+    try {
+      const response = await fetch(`http://localhost:3001/api/v1/whale-tracking/token-price/${mintAddress}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch token price: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.price;
+    } catch (error) {
+      console.error('Error fetching token price:', error);
+      throw error;
+    }
   }
 
   async getTokenHolders(tokenMint: string, minAmount: number): Promise<WhaleWallet[]> {
     try {
-      // Using Helius Enhanced RPC method for token holders
       const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${this.heliusApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,13 +91,12 @@ export class HeliusService {
       const data = await response.json();
       const holders = data.result?.value || [];
 
-      // Filter holders by minimum amount and fetch additional details
       const whaleHolders = holders
-        .filter((holder: any) => {
+        .filter((holder: TokenHolder) => {
           const amount = parseFloat(holder.amount) / Math.pow(10, holder.decimals || 0);
           return amount >= minAmount;
         })
-        .map((holder: any) => ({
+        .map((holder: TokenHolder) => ({
           address: holder.address,
           tokenHoldings: [{
             mint: tokenMint,
@@ -101,13 +143,13 @@ export class HeliusService {
     }
   }
 
-  private parseTradesFromTransactions(transactions: any[]): Trade[] {
+  private parseTradesFromTransactions(transactions: Transaction[]): Trade[] {
     return transactions
       .map(tx => {
         if (!tx.tokenTransfers || tx.tokenTransfers.length < 2) return null;
 
-        const tokenIn = tx.tokenTransfers.find((t: any) => t.type === 'out');
-        const tokenOut = tx.tokenTransfers.find((t: any) => t.type === 'in');
+        const tokenIn = tx.tokenTransfers.find(t => t.type === 'out');
+        const tokenOut = tx.tokenTransfers.find(t => t.type === 'in');
 
         if (!tokenIn || !tokenOut) return null;
 
@@ -186,34 +228,6 @@ export class HeliusService {
     }));
   }
 
-  private async getTokenPrice(mintAddress: string, timestamp?: number): Promise<number> {
-    // Check cache first if no specific timestamp is provided
-    if (!timestamp) {
-      const cached = this.priceCache.get(mintAddress);
-      if (cached && Date.now() - cached.timestamp < this.PRICE_CACHE_DURATION) {
-        return cached.price;
-      }
-    }
-
-    try {
-      const response = await fetch(`https://price.jup.ag/v4/price?ids=${mintAddress}`);
-      if (!response.ok) throw new Error('Failed to fetch price');
-      
-      const data = await response.json();
-      const price = data.data[mintAddress]?.price || 0;
-
-      // Cache the current price
-      if (!timestamp) {
-        this.priceCache.set(mintAddress, { price, timestamp: Date.now() });
-      }
-
-      return price;
-    } catch (error) {
-      console.error('Error fetching token price:', error);
-      return 0;
-    }
-  }
-
   async getWhaleAnalytics(address: string, config: WhaleTrackerConfig): Promise<WhaleAnalytics> {
     try {
       const trades = await this.getWhaleTrades(address, config);
@@ -253,7 +267,7 @@ export class HeliusService {
       const response = await fetch(`https://api.helius.xyz/v0/addresses/${address}/transactions?api-key=${this.heliusApiKey}`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
       
-      const transactions: ParsedTransaction[] = await response.json();
+      const transactions: Transaction[] = await response.json();
       const trades: Trade[] = [];
       
       // Filter transactions within the timeframe
@@ -269,8 +283,8 @@ export class HeliusService {
           
           if (tokenIn && tokenOut) {
             // Get prices at the time of the trade
-            const tokenInPrice = await this.getTokenPrice(tokenIn.mint, tx.timestamp);
-            const tokenOutPrice = await this.getTokenPrice(tokenOut.mint, tx.timestamp);
+            const tokenInPrice = await this.getTokenPrice(tokenIn.mint);
+            const tokenOutPrice = await this.getTokenPrice(tokenOut.mint);
             
             const tokenInValue = tokenIn.tokenAmount * tokenInPrice;
             const tokenOutValue = tokenOut.tokenAmount * tokenOutPrice;

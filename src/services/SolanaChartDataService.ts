@@ -26,7 +26,7 @@ export class SolanaChartDataService {
   private subscribers: Map<string, Set<(data: PriceData) => void>>;
 
   private constructor() {
-    this.connection = createRateLimitedConnection();
+    this.connection = new Connection(process.env.NEXT_PUBLIC_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
     this.priceCache = new Map();
     this.poolCache = new Map();
     this.subscribers = new Map();
@@ -209,5 +209,20 @@ export class SolanaChartDataService {
       '1M': 2592000
     };
     return intervals[resolution] || 3600;
+  }
+
+  async getTokenPriceChartData(tokenMint: string): Promise<any> {
+    try {
+      const response = await fetch(`http://localhost:3001/api/v1/chart-data/${tokenMint}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch chart data: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching chart data:', error);
+      throw error;
+    }
   }
 } 

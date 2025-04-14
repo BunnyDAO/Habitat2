@@ -1,15 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { HeliusService } from '../../services/whale-tracker/helius';
-import { WhaleWallet, WhaleTrackerConfig, Trade, WhaleAnalytics } from '../../types/whale-tracker/types';
+import { WhaleWallet, WhaleTrackerConfig, WhaleAnalytics } from '../../types/whale-tracker/types';
 import { TokenTable } from '../TokenTable/TokenTable';
 import { TokenFilterButtons, TokenFilterType, MainFilterType, TimeFilterType, TopFilterType, NewPairsFilterType } from './TokenFilterButtons';
 
-interface WhaleTrackerProps {
-  heliusApiKey: string;
-  endpoint: string;
-}
-
-export const WhaleTracker: React.FC<WhaleTrackerProps> = ({ heliusApiKey, endpoint }) => {
+export const WhaleTracker: React.FC = () => {
   const [whales, setWhales] = useState<WhaleWallet[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,14 +16,13 @@ export const WhaleTracker: React.FC<WhaleTrackerProps> = ({ heliusApiKey, endpoi
   });
   const [selectedWhale, setSelectedWhale] = useState<string | null>(null);
   const [whaleAnalytics, setWhaleAnalytics] = useState<WhaleAnalytics | null>(null);
-  const [tokenInfo, setTokenInfo] = useState<{ symbol: string; decimals: number } | null>(null);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
   const [mainFilter, setMainFilter] = useState<MainFilterType>('trending');
   const [timeFilter, setTimeFilter] = useState<TimeFilterType>('24h');
   const [topFilter, setTopFilter] = useState<TopFilterType>('volume');
   const [newPairsFilter, setNewPairsFilter] = useState<NewPairsFilterType>('newest');
 
-  const heliusService = new HeliusService(endpoint, heliusApiKey);
+  const heliusService = HeliusService.getInstance();
 
   // Handle real-time whale movements
   useEffect(() => {
@@ -144,7 +138,7 @@ export const WhaleTracker: React.FC<WhaleTrackerProps> = ({ heliusApiKey, endpoi
     try {
       const analytics = await heliusService.getWhaleAnalytics(address, config);
       setWhaleAnalytics(analytics);
-    } catch (error) {
+    } catch {
       setError('Failed to fetch whale analytics');
     } finally {
       setLoading(false);
@@ -221,7 +215,7 @@ export const WhaleTracker: React.FC<WhaleTrackerProps> = ({ heliusApiKey, endpoi
           gap: '1.5rem'
         }}>
           <TokenTable 
-            heliusApiKey={heliusApiKey} 
+            heliusApiKey={heliusService.getApiKey()} 
             onSelectToken={handleTokenSelect}
             filterType={mainFilter === 'new' ? 'new' : 'default'}
           />
@@ -358,7 +352,7 @@ export const WhaleTracker: React.FC<WhaleTrackerProps> = ({ heliusApiKey, endpoi
                       {whale.address.slice(0, 4)}...{whale.address.slice(-4)}
                     </div>
                     <div style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
-                      Holdings: {whale.tokenHoldings[0]?.amount.toLocaleString()} {tokenInfo?.symbol || 'tokens'}
+                      Holdings: {whale.tokenHoldings[0]?.amount.toLocaleString()} {whale.tokenHoldings[0]?.symbol || 'tokens'}
                     </div>
                     {whale.profitabilityRate !== undefined && (
                       <div style={{ color: '#94a3b8', fontSize: '0.875rem' }}>

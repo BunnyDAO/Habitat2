@@ -1,13 +1,16 @@
 import { createClient } from 'redis';
 import { TokenBalance } from '../types';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 export class HeliusService {
+  private connection: Connection;
   private heliusApiKey: string;
   private redisClient: ReturnType<typeof createClient> | null;
 
   constructor(heliusApiKey: string, redisClient: ReturnType<typeof createClient> | null = null) {
     this.heliusApiKey = heliusApiKey;
     this.redisClient = redisClient;
+    this.connection = new Connection(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
   }
 
   async getWalletBalances(walletAddress: string): Promise<TokenBalance[]> {
@@ -194,6 +197,37 @@ export class HeliusService {
       throw new Error('All attempts failed');
     } catch (error) {
       console.error('Error in getWalletBalances:', error);
+      throw error;
+    }
+  }
+
+  async getTransactions(address: string): Promise<any[]> {
+    try {
+      const response = await fetch(`https://api.helius.xyz/v0/addresses/${address}/transactions?api-key=${this.heliusApiKey}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch transactions: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      throw error;
+    }
+  }
+
+  async getTokenPrice(mintAddress: string): Promise<number> {
+    try {
+      const response = await fetch(`https://price.jup.ag/v4/price?ids=${mintAddress}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch token price: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data[mintAddress]?.price || 0;
+    } catch (error) {
+      console.error('Error fetching token price:', error);
       throw error;
     }
   }

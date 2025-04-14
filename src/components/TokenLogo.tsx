@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface TokenLogoProps {
   logoURI?: string | null;
@@ -11,9 +11,56 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
   symbol, 
   size = 24 
 }) => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
 
-  if (!logoURI || imageError) {
+  useEffect(() => {
+    const loadImage = async () => {
+      if (!logoURI) {
+        setImageUrl(null);
+        return;
+      }
+
+      try {
+        // First try to fetch the content
+        const response = await fetch(logoURI);
+        const contentType = response.headers.get('content-type');
+        
+        // Try to parse as JSON first
+        if (contentType?.includes('json') || contentType?.includes('text')) {
+          try {
+            const data = await response.json();
+            if (data.image) {
+              console.log(`Found image URL in JSON for ${symbol}:`, data.image);
+              // Try to load the image URL
+              const imgResponse = await fetch(data.image);
+              if (imgResponse.ok) {
+                setImageUrl(data.image);
+                return;
+              }
+            }
+          } catch (e) {
+            console.log(`Failed to parse JSON for ${symbol}, trying as image`);
+          }
+        }
+
+        // If we get here, try to use the URL directly
+        const imgResponse = await fetch(logoURI);
+        if (imgResponse.ok) {
+          setImageUrl(logoURI);
+        } else {
+          throw new Error('Failed to load image');
+        }
+      } catch (error) {
+        console.warn(`Error loading image for ${symbol}:`, error);
+        setImageError(true);
+      }
+    };
+
+    loadImage();
+  }, [logoURI, symbol]);
+
+  if (!imageUrl || imageError) {
     return (
       <div style={{ 
         width: size,
@@ -35,7 +82,7 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
 
   return (
     <img 
-      src={logoURI}
+      src={imageUrl}
       alt={`${symbol} logo`}
       style={{
         width: size,
@@ -45,7 +92,10 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
         backgroundColor: '#2d3748',
         flexShrink: 0
       }}
-      onError={() => setImageError(true)}
+      onError={() => {
+        console.error(`Failed to load image for ${symbol}:`, imageUrl);
+        setImageError(true);
+      }}
     />
   );
 }; 
