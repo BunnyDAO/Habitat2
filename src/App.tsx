@@ -134,9 +134,6 @@ const logError = (message: string, ...args: unknown[]) => {
   console.error(message, ...args);
 };
 
-// Cache for token metadata
-const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
-
 // Initialize token metadata cache from localStorage
 (() => {
   try {
@@ -311,10 +308,10 @@ const fetchTokenMetadata = async (mint: string, connection?: Connection): Promis
 // Add interface for trading wallet
 interface TradingWallet {
   publicKey: string;
-  secretKey: Uint8Array;
-  mnemonic: string;
-  name?: string;  // Optional name for the trading wallet
-  createdAt: number;  // Timestamp when wallet was created (Unix timestamp in milliseconds)
+  name?: string;
+  secretKey?: string;
+  mnemonic?: string;
+  createdAt?: number;
 }
 
 interface StoredTradingWallets {
@@ -775,8 +772,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     const keypair = Keypair.generate();
     const newWallet: TradingWallet = {
       publicKey: keypair.publicKey.toString(),
-      secretKey: Array.from(keypair.secretKey),
-      mnemonic: Buffer.from(keypair.secretKey).toString('hex'),
+      name: Buffer.from(keypair.secretKey).toString('hex'),
       createdAt: Date.now()
     };
     saveTradingWallet(newWallet);
@@ -4283,6 +4279,18 @@ const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) =
   return debounced as (...args: Parameters<F>) => ReturnType<F>;
 };
 
+// Add interface for token metadata from backend
+interface TokenMetadata {
+  mint_address?: string;
+  name?: string;
+  symbol: string;
+  decimals: number;
+  logo_uri?: string | null;
+}
+
+// Add a cache for token metadata
+const tokenMetadataCache: Map<string, TokenMetadata> = new Map();
+
 export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({ 
   walletAddress, 
   connection, 
@@ -4343,6 +4351,42 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     throw lastError;
   };
 
+  // Function to fetch token metadata from backend
+  const fetchTokenMetadata = async (mintAddresses: string[]): Promise<Map<string, TokenMetadata>> => {
+    try {
+      console.log('Fetching metadata for:', mintAddresses);
+      const response = await fetch('http://localhost:3001/api/tokens/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mintAddresses }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch token metadata');
+      }
+
+      const metadata: TokenMetadata[] = await response.json();
+      console.log('Received metadata:', metadata);
+      const metadataMap = new Map<string, TokenMetadata>();
+      
+      metadata.forEach(token => {
+        if (token.mint_address) {  // Only add if mint_address exists
+          metadataMap.set(token.mint_address, token);
+          // Update cache
+          tokenMetadataCache.set(token.mint_address, token);
+          console.log('Added token to cache:', token);
+        }
+      });
+
+      return metadataMap;
+    } catch (error) {
+      console.error('Error fetching token metadata:', error);
+      return new Map();
+    }
+  };
+
   const fetchBalances = useCallback(async () => {
     // Check if we're already fetching or if it's too soon to refresh
     const now = Date.now();
@@ -4363,38 +4407,67 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       // Reset consecutive errors on successful fetch start
       setConsecutiveRateLimitErrors(0);
       
-      // First get SOL balance - this is a priority
+      // Get SOL balance
       const walletSolBalance = await withRetry(() => connection.getBalance(new PublicKey(walletAddress)));
       
-      // Create new balances array
       let newBalances: TokenBalance[] = [];
       
+      // Get token accounts
+      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+        new PublicKey(walletAddress),
+        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+      );
+
+      // Collect all mint addresses
+      const mintAddresses = ['So11111111111111111111111111111111111111112', // Include SOL
+        ...tokenAccounts.value.map(account => account.account.data.parsed.info.mint)
+      ];
+
+      // Fetch metadata for all tokens at once
+      const tokenMetadata = await fetchTokenMetadata(mintAddresses);
+      console.log('Token metadata received:', Array.from(tokenMetadata.entries()));
+
       // Add SOL balance
-      const solToken = {
+      const solMetadata = tokenMetadata.get('So11111111111111111111111111111111111111112');
+      const solToken: TokenBalance = {
         mint: 'So11111111111111111111111111111111111111112',
-        symbol: 'SOL',
+        symbol: solMetadata?.symbol || 'SOL',
         balance: walletSolBalance,
         decimals: 9,
         uiBalance: walletSolBalance / LAMPORTS_PER_SOL,
-        logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+        logoURI: solMetadata?.logo_uri || null
       };
       
-      // Create a map of existing balances for quick lookup
-      const existingBalancesMap = new Map(
-        balances.map(balance => [balance.mint, balance])
-      );
+      newBalances.push(solToken);
       
-      // Start with SOL
-      if (existingBalancesMap.has(solToken.mint)) {
-        // Update existing SOL balance but keep USD value
-        const existing = existingBalancesMap.get(solToken.mint)!;
-        newBalances.push({
-          ...solToken,
-          usdValue: existing.usdValue
-        });
-      } else {
-        newBalances.push(solToken);
+      // Process token accounts
+      const tokenBalanceMap = new Map<string, TokenBalance>();
+      
+      // Add SOL balance first
+      tokenBalanceMap.set(solToken.mint, solToken);
+      
+      // Process token accounts
+      for (const { account } of tokenAccounts.value) {
+        const parsedInfo = account.data.parsed.info;
+        const metadata = tokenMetadata.get(parsedInfo.mint);
+        console.log(`Processing token ${parsedInfo.mint}:`, metadata);
+        
+        if (metadata && !tokenBalanceMap.has(parsedInfo.mint)) {
+          const balance = {
+            mint: parsedInfo.mint,
+            symbol: metadata.symbol,
+            balance: Number(parsedInfo.tokenAmount.amount),
+            decimals: metadata.decimals,
+            uiBalance: Number(parsedInfo.tokenAmount.uiAmount),
+            logoURI: metadata.logo_uri || undefined  // Convert null to undefined
+          };
+          console.log(`Created balance object for ${parsedInfo.mint}:`, balance);
+          tokenBalanceMap.set(parsedInfo.mint, balance);
+        }
       }
+      
+      // Convert Map back to array
+      newBalances = Array.from(tokenBalanceMap.values());
       
       // Update balances with SOL first so UI shows something quickly
       if (!isBackgroundUpdate) {
@@ -4434,26 +4507,41 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
             if (parsedInfo && 'tokenAmount' in parsedInfo) {
               const mint = parsedInfo.mint;
               
-              // Check if we already have this token in our existing balances
-              if (existingBalancesMap.has(mint)) {
-                const existing = existingBalancesMap.get(mint)!;
-                // Update balance but keep other metadata and USD value
-                return {
-                  ...existing,
+              // Skip if we already have this token
+              if (tokenBalanceMap.has(mint)) {
+                return null;
+              }
+              
+              // Check if we already have metadata
+              if (tokenMetadata.has(mint)) {
+                const existing = tokenMetadata.get(mint)!;
+                const balance: TokenBalance = {
+                  mint,
+                  symbol: existing.symbol,
                   balance: Number(parsedInfo.tokenAmount.amount),
-                  uiBalance: parsedInfo.tokenAmount.uiAmount || 0
+                  decimals: existing.decimals,
+                  uiBalance: parsedInfo.tokenAmount.uiAmount || 0,
+                  logoURI: existing.logo_uri
                 };
+                tokenBalanceMap.set(mint, balance);
+                return balance;
               } else {
                 // New token, fetch metadata
                 try {
-                  const metadata = await fetchTokenMetadata(mint, connection);
-                  return {
-                    mint,
-                    symbol: metadata.symbol,
-                    balance: Number(parsedInfo.tokenAmount.amount),
-                    decimals: metadata.decimals,
-                    uiBalance: parsedInfo.tokenAmount.uiAmount || 0
-                  };
+                  const metadata = await fetchTokenMetadata([mint]);
+                  if (metadata.has(mint)) {
+                    const tokenInfo = metadata.get(mint)!;
+                    const balance: TokenBalance = {
+                      mint,
+                      symbol: tokenInfo.symbol,
+                      balance: Number(parsedInfo.tokenAmount.amount),
+                      decimals: tokenInfo.decimals,
+                      uiBalance: parsedInfo.tokenAmount.uiAmount || 0,
+                      logoURI: tokenInfo.logo_uri
+                    };
+                    tokenBalanceMap.set(mint, balance);
+                    return balance;
+                  }
                 } catch (error) {
                   logError(`Error fetching metadata for ${mint}:`, error);
                   return null;
@@ -4471,7 +4559,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         const validResults = batchResults.filter(Boolean) as TokenBalance[];
         
         // Update balances incrementally after each batch
-        newBalances = [...newBalances, ...validResults];
+        newBalances = Array.from(tokenBalanceMap.values());
         
         // Only update UI for non-background updates
         if (!isBackgroundUpdate) {
@@ -4606,7 +4694,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       if (isBackgroundUpdate) {
         // Check if balances have changed
         const hasBalanceChanges = updatedBalances.some(newBalance => {
-          const existingBalance = existingBalancesMap.get(newBalance.mint);
+          const existingBalance = tokenMetadata.get(newBalance.mint);
           if (!existingBalance) return true; // New token
           
           // Check if balance or USD value has changed significantly
@@ -5211,7 +5299,11 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
                     height: '100%',
                     objectFit: 'cover'
                   }}
+                  onLoad={() => {
+                    console.log(`Successfully loaded image for ${balance.symbol}:`, balance.logoURI);
+                  }}
                   onError={(e) => {
+                    console.error(`Failed to load image for ${balance.symbol}:`, balance.logoURI);
                     // If image fails to load, show first letter of symbol
                     (e.target as HTMLImageElement).style.display = 'none';
                     (e.target as HTMLImageElement).parentElement!.innerHTML = balance.symbol.charAt(0);

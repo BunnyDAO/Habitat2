@@ -7,7 +7,9 @@ import dotenv from 'dotenv';
 import { Pool } from 'pg';
 import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 import { createWalletBalancesRouter } from './routes/wallet-balances.routes';
+import { createTokenRouter } from './routes/token.routes';
 import { WalletBalancesService } from './services/wallet-balances.service';
+import { TokenService } from './services/token.service';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +55,7 @@ redisClient.connect().then(() => {
 // Initialize services after Redis is connected
 const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '', redisClient);
 const walletBalancesService = new WalletBalancesService(pool);
+const tokenService = new TokenService(pool);
 
 // Configure CORS
 app.use(cors({
@@ -67,6 +70,7 @@ app.use(express.json());
 // Register routes
 app.use('/api/trading-wallets', createTradingWalletsRouter(pool));
 app.use('/api/wallet-balances', createWalletBalancesRouter(walletBalancesService));
+app.use('/api/tokens', createTokenRouter(tokenService));
 
 // Health check endpoint
 app.get('/health', (req, res) => {

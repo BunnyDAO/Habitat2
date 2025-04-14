@@ -15,9 +15,11 @@ export class WalletBalancesService {
 
   async getBalances(walletAddress: string): Promise<WalletBalanceResponse> {
     const query = `
-      SELECT mint_address, amount, decimals, last_updated
-      FROM wallet_balances
-      WHERE wallet_address = $1
+      SELECT wb.mint_address, wb.amount, wb.decimals, wb.last_updated,
+             t.logo_uri, t.name, t.symbol
+      FROM wallet_balances wb
+      LEFT JOIN tokens t ON wb.mint_address = t.mint_address
+      WHERE wb.wallet_address = $1
     `;
 
     try {
@@ -27,7 +29,10 @@ export class WalletBalancesService {
         mint: row.mint_address,
         balance: parseFloat(row.amount),
         decimals: row.decimals,
-        lastUpdated: row.last_updated
+        lastUpdated: row.last_updated,
+        logoURI: row.logo_uri,
+        name: row.name,
+        symbol: row.symbol
       }));
 
       return {

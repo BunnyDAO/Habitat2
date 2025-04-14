@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PublicKey, Connection } from '@solana/web3.js';
 import { tokenService } from '../services/tokenService';
+import { TokenLogo } from './TokenLogo';
 
 interface TokenAccountData {
   parsed: {
@@ -132,19 +133,12 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
           padding: '0.5rem',
           borderBottom: '1px solid #2d3748'
         }}>
-          {balance.logoURI && (
-            <img 
-              src={balance.logoURI} 
-              alt={balance.symbol} 
-              style={{ 
-                width: '24px', 
-                height: '24px', 
-                marginRight: '0.5rem',
-                borderRadius: '50%'
-              }} 
-            />
-          )}
-          <div style={{ flex: 1 }}>
+          <TokenLogo 
+            logoURI={balance.logoURI} 
+            symbol={balance.symbol} 
+            size={24}
+          />
+          <div style={{ flex: 1, marginLeft: '0.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>{balance.symbol}</span>
               <span>${balance.usdValue?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>

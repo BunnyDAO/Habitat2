@@ -2,7 +2,12 @@ export interface TokenBalance {
   mintAddress: string;
   amount: number;
   decimals: number;
-  lastUpdated: number; // Unix timestamp
+  name: string;
+  symbol: string;
+  logoURI: string | null;
+  uiAmount: number;
+  usdValue: number | null;
+  lastUpdated: Date;
 }
 
 export interface WalletBalance {

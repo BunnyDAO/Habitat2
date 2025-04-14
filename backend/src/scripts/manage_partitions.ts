@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { config } from 'dotenv';
 import { CronJob } from 'cron';
+import { JupiterService } from '../services/jupiter.service';
 
 // Load environment variables
 config();
@@ -82,11 +83,30 @@ const refreshJob = new CronJob(
     'America/New_York'
 );
 
+// Add token update job
+const tokenUpdateJob = new CronJob(
+    '0 * * * *', // Run every hour
+    async () => {
+        console.log('Starting token data update...');
+        try {
+            const jupiterService = new JupiterService(pool);
+            await jupiterService.updateTokenData();
+            console.log('Token data update completed successfully');
+        } catch (error) {
+            console.error('Error updating token data:', error);
+        }
+    },
+    null,
+    true,
+    'America/New_York'
+);
+
 // Start the jobs
 console.log('Starting partition management jobs...');
 partitionJob.start();
 archiveJob.start();
 refreshJob.start();
+tokenUpdateJob.start();
 
 // Handle process termination
 process.on('SIGINT', async () => {
@@ -94,6 +114,7 @@ process.on('SIGINT', async () => {
     partitionJob.stop();
     archiveJob.stop();
     refreshJob.stop();
+    tokenUpdateJob.stop();
     await pool.end();
     process.exit(0);
 });
