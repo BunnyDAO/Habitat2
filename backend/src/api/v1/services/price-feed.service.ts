@@ -12,28 +12,13 @@ const PRICE_FEEDS: Record<string, string> = {
 };
 
 export class PriceFeedService {
-  private redisClient: ReturnType<typeof createClient>;
   private heliusService: HeliusService;
   private hermesClient: HermesClient;
+  private inMemoryCache: { [key: string]: { price: number; timestamp: number } } = {};
 
-  constructor(redisClient: ReturnType<typeof createClient>, heliusService: HeliusService) {
-    this.redisClient = redisClient;
+  constructor(redisClient: ReturnType<typeof createClient> | null, heliusService: HeliusService) {
     this.heliusService = heliusService;
     this.hermesClient = new HermesClient(HERMES_ENDPOINT);
-    this.initializeCache();
-  }
-
-  private async initializeCache() {
-    try {
-      // Clear all price-related cache on startup
-      const keys = await this.redisClient.keys('price:*');
-      if (keys.length > 0) {
-        await this.redisClient.del(keys);
-        console.log('Cleared existing price cache');
-      }
-    } catch (error) {
-      console.error('Error clearing cache:', error);
-    }
   }
 
   private getPriceFeedId(token: string): string | null {
@@ -47,9 +32,28 @@ export class PriceFeedService {
   }
 
   private getCacheKey(token: string): string {
-    // Get current minute timestamp to ensure we get fresh prices
     const timestamp = Math.floor(Date.now() / 10000); // 10-second intervals
     return `price:${token}:${timestamp}`;
+  }
+
+  private async getCachedPrice(token: string): Promise<number | null> {
+    const cacheKey = this.getCacheKey(token);
+    
+    // Check in-memory cache first
+    const cached = this.inMemoryCache[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 10000) { // 10 seconds
+      return cached.price;
+    }
+
+    return null;
+  }
+
+  private async setCachedPrice(token: string, price: number): Promise<void> {
+    const cacheKey = this.getCacheKey(token);
+    this.inMemoryCache[cacheKey] = {
+      price,
+      timestamp: Date.now()
+    };
   }
 
   async getPrice(token: string): Promise<number> {
@@ -59,13 +63,11 @@ export class PriceFeedService {
         return 0;
       }
 
-      const cacheKey = this.getCacheKey(token);
-      
-      // Try to get from cache first
-      const cachedPrice = await this.redisClient.get(cacheKey);
-      if (cachedPrice) {
+      // Try to get from cache
+      const cachedPrice = await this.getCachedPrice(token);
+      if (cachedPrice !== null) {
         console.log(`Cache hit for ${token}: ${cachedPrice}`);
-        return parseFloat(cachedPrice);
+        return cachedPrice;
       }
 
       console.log(`Cache miss for ${token}, fetching new price...`);
@@ -94,10 +96,8 @@ export class PriceFeedService {
           const price = Number(priceFeed.price.price) * Math.pow(10, priceFeed.price.expo);
           console.log(`Updated price for ${token}: ${price}`);
           
-          // Cache the price for 10 seconds
-          await this.redisClient.set(cacheKey, price.toString(), {
-            EX: 10 // 10 seconds
-          });
+          // Cache the price
+          await this.setCachedPrice(token, price);
 
           return price;
         }

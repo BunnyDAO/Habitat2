@@ -1,13 +1,13 @@
 export interface TokenBalance {
-  mintAddress: string;
-  amount: number;
-  decimals: number;
-  name: string;
+  mint: string;
   symbol: string;
-  logoURI: string | null;
-  uiAmount: number;
-  usdValue: number | null;
-  lastUpdated: Date;
+  name: string;
+  decimals: number;
+  logoURI: string;
+  balance: number;
+  uiBalance: number;
+  usdValue: number;
+  lastUpdated: string;
 }
 
 export interface WalletBalance {

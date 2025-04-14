@@ -1,103 +1,60 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { PublicKey, Connection } from '@solana/web3.js';
-import { tokenService } from '../services/tokenService';
+import { useState, useEffect, useCallback } from 'react';
+import { TokenBalance } from '../types/balance';
 import { TokenLogo } from './TokenLogo';
-
-interface TokenAccountData {
-  parsed: {
-    info: {
-      mint: string;
-      tokenAmount: {
-        amount: string;
-        uiAmount: number | null;
-      };
-    };
-  };
-}
-
-interface TokenBalance {
-  mint: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-  logoURI: string;
-  balance: number;
-  uiBalance: number;
-  priceUSD: number;
-  usdValue: number;
-}
+import { WalletBalancesService } from '../services/WalletBalancesService';
 
 interface TokenBalancesListProps {
   walletAddress: string;
-  connection: Connection;
   displayMode?: 'full' | 'total-only';
   onRpcError?: () => void;
 }
 
 export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({ 
   walletAddress, 
-  connection, 
   displayMode = 'full',
   onRpcError 
 }) => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [totalUsdValue, setTotalUsdValue] = useState(0);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState(0);
 
   const fetchBalances = useCallback(async () => {
-    if (!walletAddress || !connection) return;
+    if (!walletAddress) return;
+    if (isFetching) return;
+
+    setIsFetching(true);
+    setFetchProgress(0);
 
     try {
-      // Get token accounts from RPC
-      const tokenAccounts = await connection.getTokenAccountsByOwner(
-        new PublicKey(walletAddress),
-        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-      );
-
-      const newBalances: TokenBalance[] = [];
-
-      // Process each token account
-      for (const account of tokenAccounts.value) {
-        const accountData = account.account.data;
-        if (typeof accountData === 'object' && 'parsed' in accountData) {
-          const parsedInfo = (accountData as TokenAccountData).parsed.info;
-          if (parsedInfo && 'tokenAmount' in parsedInfo) {
-            // Get token metadata from Supabase
-            const token = await tokenService.getTokenByMint(parsedInfo.mint);
-            
-            if (token) {
-              newBalances.push({
-                mint: parsedInfo.mint,
-                symbol: token.symbol,
-                name: token.name,
-                decimals: token.decimals,
-                logoURI: token.logo_uri,
-                balance: Number(parsedInfo.tokenAmount.amount),
-                uiBalance: parsedInfo.tokenAmount.uiAmount || 0,
-                priceUSD: token.price_usd,
-                usdValue: token.price_usd * (parsedInfo.tokenAmount.uiAmount || 0)
-              });
-            }
-          }
-        }
-      }
-
-      // Calculate total USD value
-      const total = newBalances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+      const walletBalancesService = WalletBalancesService.getInstance();
+      const response = await walletBalancesService.getBalances(walletAddress);
       
-      setBalances(newBalances);
+      // Calculate total USD value
+      const total = response.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+      
+      setBalances(response.balances);
       setTotalUsdValue(total);
+      setFetchProgress(100);
     } catch (error) {
       console.error('Error fetching balances:', error);
       if (onRpcError) onRpcError();
     } finally {
+      setIsFetching(false);
       setIsInitialLoad(false);
     }
-  }, [walletAddress, connection, onRpcError]);
+  }, [walletAddress, onRpcError]);
 
   // Initial fetch
   useEffect(() => {
     fetchBalances();
+  }, [fetchBalances]);
+
+  // Set up auto-refresh
+  useEffect(() => {
+    const intervalId = setInterval(fetchBalances, 30000); // 30 seconds
+    return () => clearInterval(intervalId);
   }, [fetchBalances]);
 
   // Show loading state
@@ -105,6 +62,27 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     return (
       <div style={{ color: '#94a3b8', padding: '1rem' }}>
         <div>Fetching token balances...</div>
+        {isFetching && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <div style={{ 
+              width: '100%', 
+              backgroundColor: '#1e293b', 
+              borderRadius: '0.25rem',
+              height: '0.5rem',
+              overflow: 'hidden'
+            }}>
+              <div style={{ 
+                width: `${fetchProgress}%`, 
+                backgroundColor: '#3b82f6', 
+                height: '100%',
+                transition: 'width 0.3s ease-in-out'
+              }}></div>
+            </div>
+            <div style={{ fontSize: '0.75rem', marginTop: '0.25rem', color: '#94a3b8' }}>
+              {fetchProgress < 100 ? `${fetchProgress}% complete` : 'Finalizing...'}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -126,6 +104,40 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   // Show full list
   return (
     <div>
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: '0.25rem'
+      }}>
+        <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
+          Total Portfolio Value
+        </div>
+        <button 
+          onClick={fetchBalances}
+          disabled={isFetching}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#94a3b8',
+            cursor: isFetching ? 'not-allowed' : 'pointer',
+            padding: '0.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            fontSize: '0.75rem'
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M12 8L16 4M16 4L20 8M16 4V16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" transform="rotate(135 16 4)"/>
+          </svg>
+          <span style={{ marginLeft: '0.25rem' }}>Refresh</span>
+        </button>
+      </div>
+      <div style={{ color: '#e2e8f0', fontSize: '1rem', fontWeight: '500', marginBottom: '1rem' }}>
+        ${totalUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </div>
+
       {balances.map(balance => (
         <div key={balance.mint} style={{ 
           display: 'flex', 
@@ -145,7 +157,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94a3b8' }}>
               <span>{balance.uiBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
-              <span>${balance.priceUSD?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span>${(balance.usdValue / balance.uiBalance)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
         </div>

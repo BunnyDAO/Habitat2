@@ -5,7 +5,7 @@ import { createClient } from 'redis';
 import { HeliusService } from '../../../services/helius.service';
 
 export const createPriceFeedRouter = (
-  redisClient: ReturnType<typeof createClient>,
+  redisClient: ReturnType<typeof createClient> | null,
   heliusService: HeliusService
 ) => {
   const router = Router();

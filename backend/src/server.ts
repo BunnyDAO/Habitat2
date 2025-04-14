@@ -22,9 +22,7 @@ const port = process.env.PORT || 3001;
 // Initialize database connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
 // Add error handler for database connection
@@ -41,22 +39,44 @@ pool.query('SELECT NOW()', (err, res) => {
   }
 });
 
-// Initialize Redis client with authentication
-const redisClient = createClient({
-  url: `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
-  password: process.env.REDIS_PASSWORD // Add password from env
-});
+// Initialize Redis client with fallback
+let redisClient: ReturnType<typeof createClient> | null = null;
 
-redisClient.on('error', (err) => console.error('Redis Client Error:', err));
-redisClient.connect().then(() => {
-  console.log('Connected to Redis successfully');
-}).catch(err => {
-  console.error('Failed to connect to Redis:', err);
-});
+const initializeRedis = async () => {
+  try {
+    const client = createClient({
+      url: process.env.REDIS_URL || 'redis://localhost:6379',
+      socket: {
+        reconnectStrategy: (retries) => {
+          if (retries > 3) {
+            console.log('Redis connection failed after 3 retries, continuing without Redis');
+            return false;
+          }
+          return Math.min(retries * 100, 3000);
+        }
+      }
+    });
+
+    client.on('error', (err) => {
+      console.error('Redis Client Error:', err);
+      redisClient = null;
+    });
+
+    await client.connect();
+    console.log('Connected to Redis successfully');
+    redisClient = client;
+  } catch (error) {
+    console.error('Failed to connect to Redis, continuing without Redis:', error);
+    redisClient = null;
+  }
+};
+
+// Initialize Redis
+initializeRedis().catch(console.error);
 
 // Initialize services after Redis is connected
-const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '', redisClient);
-const walletBalancesService = new WalletBalancesService(pool);
+const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '');
+const walletBalancesService = new WalletBalancesService(pool, redisClient);
 const tokenService = new TokenService(pool);
 
 // Configure CORS
@@ -141,6 +161,14 @@ app.post('/', async (req, res) => {
       id: req.body.id
     });
   }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    redis: redisClient ? 'connected' : 'not connected'
+  });
 });
 
 // Start the server
