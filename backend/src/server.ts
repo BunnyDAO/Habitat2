@@ -5,6 +5,7 @@ import { HeliusService } from './services/helius.service';
 import { TokenBalance } from './types';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import { Connection } from '@solana/web3.js';
 import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 import { createWalletBalancesRouter } from './routes/wallet-balances.routes';
 import { createTokenRouter } from './routes/token.routes';
@@ -16,12 +17,19 @@ import { createChartDataRouter } from './api/v1/routes/chart-data.routes';
 import { createWhaleTrackingRouter } from './api/v1/routes/whale-tracking.routes';
 import { createProxyRouter } from './api/v1/routes/proxy.routes';
 import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
+import { createSwapRouter } from './api/v1/routes/swap.routes';
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// Initialize Solana connection
+const connection = new Connection(
+  process.env.RPC_URL || 'https://api.mainnet-beta.solana.com',
+  'confirmed'
+);
 
 // Initialize database connection
 const pool = new Pool({
@@ -115,6 +123,10 @@ app.use('/api/v1/proxy', createProxyRouter());
 // Add token metadata routes
 const tokenMetadataRouter = createTokenMetadataRouter(pool, redisClient);
 app.use('/api/v1/token-metadata', tokenMetadataRouter);
+
+// Add swap routes
+const swapRouter = createSwapRouter(pool, connection);
+app.use('/api/v1/swap', swapRouter);
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {
