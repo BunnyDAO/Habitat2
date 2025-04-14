@@ -19,6 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^6.6.0",
+    "@pythnetwork/hermes-client": "^2.0.0",
     "@solana/web3.js": "^1.87.6",
     "cors": "^2.8.5",
     "cron": "^3.0.0",

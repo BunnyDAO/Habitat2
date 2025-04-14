@@ -10,6 +10,8 @@ import { createWalletBalancesRouter } from './routes/wallet-balances.routes';
 import { createTokenRouter } from './routes/token.routes';
 import { WalletBalancesService } from './services/wallet-balances.service';
 import { TokenService } from './services/token.service';
+import healthRoutes from './api/v1/routes/health.routes';
+import { createPriceFeedRouter } from './api/v1/routes/price-feed.routes';
 
 // Load environment variables
 dotenv.config();
@@ -72,10 +74,9 @@ app.use('/api/trading-wallets', createTradingWalletsRouter(pool));
 app.use('/api/wallet-balances', createWalletBalancesRouter(walletBalancesService));
 app.use('/api/tokens', createTokenRouter(tokenService));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', redis: redisClient.isOpen ? 'connected' : 'disconnected' });
-});
+// Register v1 API routes
+app.use('/api/v1', healthRoutes);
+app.use('/api/v1', createPriceFeedRouter(redisClient, heliusService));
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {
