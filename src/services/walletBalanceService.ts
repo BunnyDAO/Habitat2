@@ -1,6 +1,6 @@
 import { TokenBalance, WalletBalanceResponse, WalletBalanceMap } from '../types/balance';
 
-const WALLET_BALANCES_ENDPOINT = 'http://localhost:3001/api/wallet-balances';
+const WALLET_BALANCES_ENDPOINT = 'http://localhost:3001/api/v1/wallet-balances';
 
 export class WalletBalanceService {
   private refreshInterval: NodeJS.Timeout | null = null;

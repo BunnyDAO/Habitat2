@@ -11,11 +11,11 @@ export class WalletBalancesService {
 
   constructor(
     private pool: Pool,
-    redisClient: ReturnType<typeof createClient> | null,
+    redisClient?: ReturnType<typeof createClient> | null,
     rpcUrl: string = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
   ) {
     this.connection = new Connection(rpcUrl, 'confirmed');
-    this.redisClient = redisClient;
+    this.redisClient = redisClient || null;
   }
 
   private getCacheKey(walletAddress: string): string {
@@ -209,5 +209,33 @@ export class WalletBalancesService {
       console.error('Error populating wallet balances:', error);
       throw error;
     }
+  }
+
+  async hideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    const query = `
+      UPDATE wallet_balances 
+      SET hidden = true 
+      WHERE wallet_address = $1 AND mint_address = $2
+    `;
+    await this.pool.query(query, [walletAddress, mintAddress]);
+  }
+
+  async unhideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    const query = `
+      UPDATE wallet_balances 
+      SET hidden = false 
+      WHERE wallet_address = $1 AND mint_address = $2
+    `;
+    await this.pool.query(query, [walletAddress, mintAddress]);
+  }
+
+  async getHiddenTokens(walletAddress: string): Promise<string[]> {
+    const query = `
+      SELECT mint_address 
+      FROM wallet_balances 
+      WHERE wallet_address = $1 AND hidden = true
+    `;
+    const result = await this.pool.query(query, [walletAddress]);
+    return result.rows.map(row => row.mint_address);
   }
 } 

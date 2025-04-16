@@ -1,26 +1,28 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { WalletBalancesService } from '../services/wallet-balances.service';
+import { Pool } from 'pg';
 
-export function createWalletBalancesRouter(walletBalancesService: WalletBalancesService) {
+export function createWalletBalancesRouter(pool: Pool): Router {
   const router = Router();
+  const service = new WalletBalancesService(pool);
 
   // Get balances for a wallet
-  router.get('/:walletAddress', async (req: Request, res: Response) => {
+  router.get('/:walletAddress', async (req, res) => {
     try {
       const { walletAddress } = req.params;
-      const balances = await walletBalancesService.getBalances(walletAddress);
+      const balances = await service.getBalances(walletAddress);
       res.json(balances);
     } catch (error) {
-      console.error('Error fetching balances:', error);
-      res.status(500).json({ error: 'Failed to fetch balances' });
+      console.error('Error getting balances:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
   // Update a specific balance
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', async (req, res) => {
     try {
       const { walletAddress, mintAddress, amount, decimals, lastUpdated } = req.body;
-      await walletBalancesService.updateBalance(
+      await service.updateBalance(
         walletAddress,
         mintAddress,
         amount,
@@ -35,10 +37,10 @@ export function createWalletBalancesRouter(walletBalancesService: WalletBalances
   });
 
   // Delete all balances for a wallet
-  router.delete('/:walletAddress', async (req: Request, res: Response) => {
+  router.delete('/:walletAddress', async (req, res) => {
     try {
       const { walletAddress } = req.params;
-      await walletBalancesService.deleteBalances(walletAddress);
+      await service.deleteBalances(walletAddress);
       res.status(200).json({ message: 'Balances deleted successfully' });
     } catch (error) {
       console.error('Error deleting balances:', error);
@@ -47,14 +49,56 @@ export function createWalletBalancesRouter(walletBalancesService: WalletBalances
   });
 
   // Populate balances from blockchain
-  router.post('/:walletAddress/populate', async (req: Request, res: Response) => {
+  router.post('/:walletAddress/populate', async (req, res) => {
     try {
       const { walletAddress } = req.params;
-      await walletBalancesService.populateWalletBalances(walletAddress);
+      await service.populateWalletBalances(walletAddress);
       res.status(200).json({ message: 'Balances populated successfully' });
     } catch (error) {
       console.error('Error populating balances:', error);
       res.status(500).json({ error: 'Failed to populate balances' });
+    }
+  });
+
+  // Hide a token
+  router.post('/hide', async (req, res) => {
+    try {
+      const { walletAddress, mintAddress } = req.body;
+      if (!walletAddress || !mintAddress) {
+        return res.status(400).json({ error: 'Missing required parameters' });
+      }
+      await service.hideToken(walletAddress, mintAddress);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error hiding token:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Unhide a token
+  router.post('/unhide', async (req, res) => {
+    try {
+      const { walletAddress, mintAddress } = req.body;
+      if (!walletAddress || !mintAddress) {
+        return res.status(400).json({ error: 'Missing required parameters' });
+      }
+      await service.unhideToken(walletAddress, mintAddress);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error unhiding token:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Get hidden tokens for a wallet
+  router.get('/:walletAddress/hidden', async (req, res) => {
+    try {
+      const { walletAddress } = req.params;
+      const hiddenTokens = await service.getHiddenTokens(walletAddress);
+      res.json({ hiddenTokens });
+    } catch (error) {
+      console.error('Error getting hidden tokens:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

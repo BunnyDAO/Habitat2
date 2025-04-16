@@ -214,8 +214,7 @@ export const WhaleTracker: React.FC = () => {
           flexDirection: 'column',
           gap: '1.5rem'
         }}>
-          <TokenTable 
-            heliusApiKey={heliusService.getApiKey()} 
+          <TokenTable
             onSelectToken={handleTokenSelect}
             filterType={mainFilter === 'new' ? 'new' : 'default'}
           />

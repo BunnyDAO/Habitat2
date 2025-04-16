@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
-import { TokenBalance, WalletBalanceResponse } from '../types/balance';
+import { WalletBalanceResponse } from '../types/balance';
 
-const BACKEND_ENDPOINT = 'http://localhost:3001/api/v1/wallet-balances';
+const BACKEND_ENDPOINT = 'http://localhost:3001/api/v1';
 const UPDATE_INTERVAL = 30000; // 30 seconds
 
 export class WalletBalancesService extends EventEmitter {
@@ -23,36 +23,21 @@ export class WalletBalancesService extends EventEmitter {
 
   public async getBalances(walletAddress: string): Promise<WalletBalanceResponse> {
     try {
-      const url = `${BACKEND_ENDPOINT}/${walletAddress}`;
-      console.log(`Fetching balances for wallet: ${walletAddress}`);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}`);
+      if (!response.ok) throw new Error('Failed to fetch balances');
       const data = await response.json();
-      console.log(`Received balances for ${walletAddress}:`, data);
-      
       this.balances[walletAddress] = data;
-      this.emit('balances_update', { walletAddress, balances: data });
-      
+      this.emit('balancesUpdated', walletAddress, data);
       return data;
     } catch (error) {
-      console.error(`Error fetching balances for ${walletAddress}:`, error);
+      console.error('Error fetching balances:', error);
       throw error;
     }
   }
 
   public async updateBalances(walletAddress: string): Promise<void> {
     try {
-      const url = `${BACKEND_ENDPOINT}/${walletAddress}/update`;
+      const url = `${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}/update`;
       console.log(`Updating balances for wallet: ${walletAddress}`);
       
       const response = await fetch(url, {
@@ -76,7 +61,7 @@ export class WalletBalancesService extends EventEmitter {
 
   public async deleteBalances(walletAddress: string): Promise<void> {
     try {
-      const url = `${BACKEND_ENDPOINT}/${walletAddress}`;
+      const url = `${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}`;
       console.log(`Deleting balances for wallet: ${walletAddress}`);
       
       const response = await fetch(url, {
@@ -91,7 +76,7 @@ export class WalletBalancesService extends EventEmitter {
       }
 
       delete this.balances[walletAddress];
-      this.emit('balances_update', { walletAddress, balances: null });
+      this.emit('balancesUpdated', walletAddress, null);
     } catch (error) {
       console.error(`Error deleting balances for ${walletAddress}:`, error);
       throw error;
@@ -120,5 +105,49 @@ export class WalletBalancesService extends EventEmitter {
 
   public getCachedBalances(walletAddress: string): WalletBalanceResponse | null {
     return this.balances[walletAddress] || null;
+  }
+
+  async hideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/hide`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ walletAddress, mintAddress }),
+      });
+      if (!response.ok) throw new Error('Failed to hide token');
+    } catch (error) {
+      console.error('Error hiding token:', error);
+      throw error;
+    }
+  }
+
+  async unhideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/unhide`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ walletAddress, mintAddress }),
+      });
+      if (!response.ok) throw new Error('Failed to unhide token');
+    } catch (error) {
+      console.error('Error unhiding token:', error);
+      throw error;
+    }
+  }
+
+  async getHiddenTokens(walletAddress: string): Promise<string[]> {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}/hidden`);
+      if (!response.ok) throw new Error('Failed to fetch hidden tokens');
+      const data = await response.json();
+      return data.hiddenTokens;
+    } catch (error) {
+      console.error('Error fetching hidden tokens:', error);
+      throw error;
+    }
   }
 } 

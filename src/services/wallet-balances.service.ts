@@ -4,13 +4,24 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 export class WalletBalancesService {
+  private static instance: WalletBalancesService;
   private connection: Connection;
 
-  constructor(
+  private constructor(
     private pool: Pool,
     rpcUrl: string = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
   ) {
     this.connection = new Connection(rpcUrl, 'confirmed');
+  }
+
+  public static getInstance(): WalletBalancesService {
+    if (!WalletBalancesService.instance) {
+      const pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+      });
+      WalletBalancesService.instance = new WalletBalancesService(pool);
+    }
+    return WalletBalancesService.instance;
   }
 
   async getBalances(walletAddress: string): Promise<WalletBalanceResponse> {
@@ -33,13 +44,13 @@ export class WalletBalancesService {
       const result = await this.pool.query(query, [walletAddress]);
       
       const balances: TokenBalance[] = result.rows.map(row => ({
-        mintAddress: row.mint_address,
-        amount: parseFloat(row.amount),
+        mint: row.mint_address,
+        balance: parseFloat(row.amount),
         decimals: row.decimals,
         name: row.name,
         symbol: row.symbol,
         logoURI: row.logo_uri,
-        uiAmount: parseFloat(row.ui_amount),
+        uiBalance: parseFloat(row.ui_amount),
         usdValue: parseFloat(row.usd_value),
         lastUpdated: row.last_updated
       }));
@@ -147,5 +158,33 @@ export class WalletBalancesService {
       console.error('Error populating wallet balances:', error);
       throw error;
     }
+  }
+
+  async hideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    const query = `
+      UPDATE wallet_balances 
+      SET hidden = true 
+      WHERE wallet_address = $1 AND mint_address = $2
+    `;
+    await this.pool.query(query, [walletAddress, mintAddress]);
+  }
+
+  async unhideToken(walletAddress: string, mintAddress: string): Promise<void> {
+    const query = `
+      UPDATE wallet_balances 
+      SET hidden = false 
+      WHERE wallet_address = $1 AND mint_address = $2
+    `;
+    await this.pool.query(query, [walletAddress, mintAddress]);
+  }
+
+  async getHiddenTokens(walletAddress: string): Promise<string[]> {
+    const query = `
+      SELECT mint_address 
+      FROM wallet_balances 
+      WHERE wallet_address = $1 AND hidden = true
+    `;
+    const result = await this.pool.query(query, [walletAddress]);
+    return result.rows.map(row => row.mint_address);
   }
 } 

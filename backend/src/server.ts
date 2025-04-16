@@ -221,6 +221,17 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 1000; // 1 second
 let isConnecting = false;
 
+// Track subscriptions
+interface Subscription {
+  id: number;
+  method: string;
+  params: unknown[];
+  clientWs: WebSocket;
+}
+
+const subscriptions = new Map<number, Subscription>();
+let nextSubscriptionId = 1;
+
 function connectToHelius() {
   if (isConnecting) {
     console.log('Already attempting to connect, skipping...');
@@ -242,6 +253,17 @@ function connectToHelius() {
     heliusWs = newWs;
     isConnecting = false;
     reconnectAttempts = 0;
+
+    // Resubscribe to all active subscriptions
+    for (const [id, sub] of subscriptions) {
+      const request = {
+        jsonrpc: '2.0',
+        id,
+        method: sub.method,
+        params: sub.params
+      };
+      newWs.send(JSON.stringify(request));
+    }
   });
 
   newWs.on('error', (error: Error) => {
@@ -258,6 +280,32 @@ function connectToHelius() {
     if (newWs === heliusWs) {
       heliusWs = null;
       attemptReconnect();
+    }
+  });
+
+  // Handle messages from Helius
+  newWs.on('message', (data: Buffer) => {
+    try {
+      const message = JSON.parse(data.toString());
+      
+      // If this is a subscription notification
+      if (message.method && message.method.endsWith('Notification')) {
+        // Forward to all relevant clients
+        for (const sub of subscriptions.values()) {
+          if (sub.clientWs.readyState === WebSocket.OPEN) {
+            sub.clientWs.send(data);
+          }
+        }
+      } 
+      // If this is a subscription response
+      else if (message.id && subscriptions.has(message.id)) {
+        const sub = subscriptions.get(message.id)!;
+        if (sub.clientWs.readyState === WebSocket.OPEN) {
+          sub.clientWs.send(data);
+        }
+      }
+    } catch (error) {
+      console.error('Error handling Helius message:', error);
     }
   });
 }
@@ -292,25 +340,40 @@ wss.on('connection', (ws: WebSocket) => {
       if (!heliusWs || heliusWs.readyState !== WebSocket.OPEN) {
         console.log('Helius WebSocket not ready, attempting to reconnect...');
         connectToHelius();
-        ws.send(JSON.stringify({ error: 'WebSocket temporarily unavailable, reconnecting...' }));
+        ws.send(JSON.stringify({ 
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'WebSocket temporarily unavailable, reconnecting...' },
+          id: null
+        }));
         return;
       }
 
-      heliusWs.send(message);
+      const request = JSON.parse(message.toString());
+      
+      // Handle subscription requests
+      if (request.method && request.method.endsWith('Subscribe')) {
+        const subscriptionId = nextSubscriptionId++;
+        subscriptions.set(subscriptionId, {
+          id: subscriptionId,
+          method: request.method,
+          params: request.params,
+          clientWs: ws
+        });
+        
+        // Modify the request to use our subscription ID
+        request.id = subscriptionId;
+      }
+
+      heliusWs.send(JSON.stringify(request));
     } catch (error) {
       console.error('Error handling WebSocket message:', error);
-      ws.send(JSON.stringify({ error: 'Failed to process WebSocket message' }));
+      ws.send(JSON.stringify({ 
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Failed to process WebSocket message' },
+        id: null
+      }));
     }
   });
-
-  // Forward messages from Helius to client
-  if (heliusWs) {
-    heliusWs.on('message', (data: Buffer) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
-  }
 
   ws.on('error', (error: Error) => {
     console.error('Client WebSocket error:', error);
@@ -318,6 +381,12 @@ wss.on('connection', (ws: WebSocket) => {
 
   ws.on('close', () => {
     console.log('Client WebSocket connection closed');
+    // Remove all subscriptions for this client
+    for (const [id, sub] of subscriptions) {
+      if (sub.clientWs === ws) {
+        subscriptions.delete(id);
+      }
+    }
   });
 });
 

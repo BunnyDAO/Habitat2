@@ -40,7 +40,7 @@ interface SelectedToken {
 // Add at the top with other imports and constants
 const JUPITER_API_BASE = 'https://api.jup.ag/swap/v1';
 const HELIUS_API_KEY = 'dd2b28a0-d00e-44f1-bbda-23c042d7476a';
-const HELIUS_ENDPOINT = 'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a';
+const HELIUS_ENDPOINT = '/api/rpc';
 
 interface JupiterConfig {
     endpoint: string;
@@ -86,10 +86,7 @@ declare global {
   }
 }
 
-// Simplified to just use Helius RPC
-const RPC_ENDPOINTS = [
-  'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a'
-];
+
 
 // Define the transaction event type
 interface TransactionEventDetail {
@@ -2584,6 +2581,26 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [tradingWallets, walletBalanceService]);
 
+  // Function to process logo URI
+  const processLogoURI = async (logoURI: string | null | undefined): Promise<string | undefined> => {
+    if (!logoURI) return undefined;
+
+    // If it's an IPFS JSON metadata URL
+    if (logoURI.includes('/ipfs/') && !logoURI.match(/\.(jpg|jpeg|png|gif|webp|svg)/i)) {
+      try {
+        const response = await fetch(logoURI);
+        const data = await response.json();
+        if (data.image) {
+          return data.image;
+        }
+      } catch (error) {
+        console.error('Error processing IPFS JSON metadata:', error);
+      }
+    }
+
+    return logoURI;
+  };
+
   return (
     <div className={walletStyles.container}>
       <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} />
@@ -4355,7 +4372,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   const fetchTokenMetadata = async (mintAddresses: string[]): Promise<Map<string, TokenMetadata>> => {
     try {
       console.log('Fetching metadata for:', mintAddresses);
-      const response = await fetch('http://localhost:3001/api/tokens/batch', {
+      const response = await fetch('http://localhost:3001/api/v1/tokens/batch', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -4453,13 +4470,27 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         console.log(`Processing token ${parsedInfo.mint}:`, metadata);
         
         if (metadata && !tokenBalanceMap.has(parsedInfo.mint)) {
+          // Process the logo URI if it exists
+          let logoURI = metadata.logo_uri;
+          if (logoURI?.includes('/ipfs/') && !logoURI.match(/\.(jpg|jpeg|png|gif|webp|svg)/i)) {
+            try {
+              const response = await fetch(logoURI);
+              const data = await response.json();
+              if (data.image) {
+                logoURI = data.image;
+              }
+            } catch (error) {
+              console.error('Error processing IPFS JSON metadata:', error);
+            }
+          }
+          
           const balance = {
             mint: parsedInfo.mint,
             symbol: metadata.symbol,
             balance: Number(parsedInfo.tokenAmount.amount),
             decimals: metadata.decimals,
             uiBalance: Number(parsedInfo.tokenAmount.uiAmount),
-            logoURI: metadata.logo_uri || undefined  // Convert null to undefined
+            logoURI
           };
           console.log(`Created balance object for ${parsedInfo.mint}:`, balance);
           tokenBalanceMap.set(parsedInfo.mint, balance);

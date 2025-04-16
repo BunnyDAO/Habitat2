@@ -13,69 +13,90 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
 }) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const MAX_RETRIES = 3;
 
   useEffect(() => {
     const loadImage = async () => {
       if (!logoURI) {
+        console.log(`[${symbol}] No logoURI provided`);
         setImageUrl(null);
         return;
       }
 
-      try {
-        // First try to fetch the content
-        const response = await fetch(logoURI);
-        const contentType = response.headers.get('content-type');
-        
-        // Try to parse as JSON first
-        if (contentType?.includes('json') || contentType?.includes('text')) {
-          try {
-            const data = await response.json();
-            if (data.image) {
-              console.log(`Found image URL in JSON for ${symbol}:`, data.image);
-              // Try to load the image URL
-              const imgResponse = await fetch(data.image);
-              if (imgResponse.ok) {
-                setImageUrl(data.image);
-                return;
-              }
-            }
-          } catch (e) {
-            console.log(`Failed to parse JSON for ${symbol}, trying as image`);
-          }
-        }
+      setImageError(false); // Reset error state on new URI
+      console.log(`[${symbol}] Starting image load from:`, logoURI);
 
-        // If we get here, try to use the URL directly
-        const imgResponse = await fetch(logoURI);
-        if (imgResponse.ok) {
-          setImageUrl(logoURI);
-        } else {
-          throw new Error('Failed to load image');
+      try {
+        // Check if it's an IPFS link that needs resolution
+        if (logoURI.includes('/ipfs/') && !logoURI.match(/\.(jpg|jpeg|png|gif|webp|svg)/i)) {
+          console.log(`[${symbol}] IPFS link detected, resolving through backend...`);
+          const response = await fetch(`/api/v1/token/metadata-image/${encodeURIComponent(logoURI)}`);
+          
+          if (!response.ok) {
+            throw new Error(`Backend request failed: ${response.status}`);
+          }
+
+          const data = await response.json();
+          
+          if (data.error) {
+            throw new Error(`Backend error: ${data.error}`);
+          }
+          
+          if (!data.imageUrl) {
+            throw new Error('No image URL returned from backend');
+          }
+
+          console.log(`[${symbol}] Resolved image URL:`, data.imageUrl);
+          setImageUrl(data.imageUrl);
+          return;
         }
-      } catch (error) {
-        console.warn(`Error loading image for ${symbol}:`, error);
-        setImageError(true);
+        
+        // If not an IPFS link or it's a direct image link, use directly
+        console.log(`[${symbol}] Using direct URL:`, logoURI);
+        setImageUrl(logoURI);
+      } catch (e) {
+        console.error(`[${symbol}] Error:`, e);
+        if (retryCount < MAX_RETRIES) {
+          console.log(`[${symbol}] Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
+          setRetryCount(prev => prev + 1);
+          // Retry after a delay
+          setTimeout(() => {
+            setImageError(false);
+          }, 1000 * (retryCount + 1));
+        } else {
+          console.log(`[${symbol}] Max retries reached, showing fallback`);
+          setImageError(true);
+        }
       }
     };
 
     loadImage();
-  }, [logoURI, symbol]);
+  }, [logoURI, symbol, retryCount]);
 
   if (!imageUrl || imageError) {
+    // Fallback to symbol in a colored circle
+    const colors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
+      '#FFEEAD', '#D4A5A5', '#9B59B6', '#3498DB'
+    ];
+    const colorIndex = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % colors.length;
+    
     return (
       <div style={{ 
         width: size,
         height: size,
         borderRadius: '50%',
-        backgroundColor: '#2d3748',
+        backgroundColor: colors[colorIndex],
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: '#e2e8f0',
-        fontSize: `${size * 0.5}px`,
-        fontWeight: 500,
+        color: '#fff',
+        fontSize: `${size * 0.4}px`,
+        fontWeight: 'bold',
         flexShrink: 0
       }}>
-        {symbol.charAt(0)}
+        {symbol.slice(0, 2)}
       </div>
     );
   }
@@ -93,8 +114,18 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
         flexShrink: 0
       }}
       onError={() => {
-        console.error(`Failed to load image for ${symbol}:`, imageUrl);
-        setImageError(true);
+        console.error(`[${symbol}] Failed to load image:`, imageUrl);
+        if (retryCount < MAX_RETRIES) {
+          console.log(`[${symbol}] Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
+          setRetryCount(prev => prev + 1);
+          // Retry after a delay
+          setTimeout(() => {
+            setImageError(false);
+          }, 1000 * (retryCount + 1));
+        } else {
+          console.log(`[${symbol}] Max retries reached, showing fallback`);
+          setImageError(true);
+        }
       }}
     />
   );
