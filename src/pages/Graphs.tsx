@@ -22,8 +22,13 @@ const PortfolioValueFetcher: React.FC<{
 }> = ({ walletAddress, connection, tradingWallet, onValue }) => {
   const [totalValue, setTotalValue] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<ReturnType<typeof createRoot> | null>(null);
+  const mountedRef = useRef(true);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
+    
     // Create a container div that will be hidden but still rendered
     const container = document.createElement('div');
     container.style.cssText = 'position: absolute; visibility: hidden; pointer-events: none;';
@@ -31,8 +36,8 @@ const PortfolioValueFetcher: React.FC<{
     containerRef.current = container;
 
     // Create a portal to render the TokenBalancesList
-    const root = createRoot(container);
-    root.render(
+    rootRef.current = createRoot(container);
+    rootRef.current.render(
       <div id={`portfolio-value-${walletAddress}`}>
         <TokenBalancesList
           walletAddress={walletAddress}
@@ -46,6 +51,8 @@ const PortfolioValueFetcher: React.FC<{
 
     // Set up an interval to check for value updates
     const intervalId = setInterval(() => {
+      if (!mountedRef.current) return;
+      
       const text = container.textContent || '';
       const match = text.match(/Portfolio Value: \$([0-9,.]+)/);
       if (match) {
@@ -57,12 +64,25 @@ const PortfolioValueFetcher: React.FC<{
       }
     }, 1000); // Check every second
 
-    return () => {
-      clearInterval(intervalId);
-      root.unmount();
+    // Store cleanup function
+    cleanupRef.current = () => {
+      if (rootRef.current) {
+        rootRef.current.unmount();
+        rootRef.current = null;
+      }
       if (containerRef.current) {
         document.body.removeChild(containerRef.current);
         containerRef.current = null;
+      }
+    };
+
+    return () => {
+      mountedRef.current = false;
+      clearInterval(intervalId);
+      
+      // Schedule cleanup for next tick
+      if (cleanupRef.current) {
+        Promise.resolve().then(cleanupRef.current);
       }
     };
   }, [walletAddress, connection, tradingWallet, onValue, totalValue]);
@@ -78,7 +98,9 @@ export const Graphs: React.FC<GraphsProps> = ({
   const [selectedToken, setSelectedToken] = useState<{ mintAddress: string; symbol: string } | null>(null);
   const [selectedWallet, setSelectedWallet] = useState<TradingWallet | null>(null);
   const [portfolioValues, setPortfolioValues] = useState<Record<string, number>>({});
-  const connection = useRef(new Connection(endpoint));
+  const connection = useRef(new Connection(
+    endpoint.startsWith('http') ? endpoint : `http://localhost:3001${endpoint}`
+  ));
 
   // Handle token selection
   const handleTokenSelect = (mintAddress: string, symbol: string) => {
