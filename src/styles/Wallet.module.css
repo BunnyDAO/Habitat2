@@ -426,7 +426,7 @@
 }
 
 /* Responsive layout */
-@media (max-width: 630px) {
+@media (max-width: 1028px) {
   .dashboardLayout {
     grid-template-columns: 1fr;
     gap: 1rem;
@@ -438,5 +438,120 @@
 
   .sidebarContent {
     order: 2;
+  }
+}
+
+/* Additional responsive adjustments for smaller screens */
+@media (max-width: 768px) {
+  .dashboardLayout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .mainContent {
+    order: 1;
+  }
+
+  .sidebarContent {
+    order: 2;
+  }
+}
+
+@media (max-width: 630px) {
+  .walletItem {
+    padding: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .walletNameText {
+    font-size: 0.75rem;
+  }
+
+  .strategyBadge {
+    padding: 0.2rem;
+    font-size: 0.7rem;
+  }
+
+  .button {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .strategyMenuDetail {
+    font-size: 0.7rem;
+  }
+
+  .strategyMenuButton {
+    padding: 0.25rem 0.375rem;
+    font-size: 0.7rem;
+  }
+
+  .activeOnContainer {
+    padding: 0.2rem 0.375rem;
+    font-size: 0.7rem;
+  }
+
+  .tooltipContent {
+    font-size: 0.7rem;
+    min-width: 150px;
+  }
+
+  .walletNameInput {
+    width: 120px;
+    font-size: 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .walletItem {
+    padding: 0.375rem;
+    font-size: 0.75rem;
+  }
+
+  .walletNameText {
+    font-size: 0.7rem;
+  }
+
+  .strategyBadge {
+    padding: 0.15rem;
+    font-size: 0.65rem;
+  }
+
+  .button {
+    padding: 0.2rem 0.375rem;
+    font-size: 0.65rem;
+  }
+
+  .strategyMenuDetail {
+    font-size: 0.65rem;
+  }
+
+  .strategyMenuButton {
+    padding: 0.2rem 0.3rem;
+    font-size: 0.65rem;
+  }
+
+  .activeOnContainer {
+    padding: 0.15rem 0.3rem;
+    font-size: 0.65rem;
+  }
+
+  .tooltipContent {
+    font-size: 0.65rem;
+    min-width: 120px;
+  }
+
+  .walletNameInput {
+    width: 100px;
+    font-size: 0.7rem;
+  }
+
+  .dashboardLayout {
+    gap: 0.75rem;
+  }
+
+  .mainContent,
+  .sidebarContent {
+    gap: 0.5rem;
   }
 } 

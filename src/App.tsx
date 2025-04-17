@@ -38,9 +38,8 @@ interface SelectedToken {
 }
 
 // Add at the top with other imports and constants
-const JUPITER_API_BASE = 'https://api.jup.ag/swap/v1';
-const HELIUS_API_KEY = 'dd2b28a0-d00e-44f1-bbda-23c042d7476a';
-const HELIUS_ENDPOINT = '/api/rpc';
+const JUPITER_API_BASE = 'https://quote-api.jup.ag/v6';
+const BACKEND_ENDPOINT = 'http://localhost:3001/api/rpc';
 
 interface JupiterConfig {
     endpoint: string;
@@ -387,8 +386,7 @@ const WhaleTrackerPage: React.FC<{ onRpcError: () => void; currentEndpoint: stri
             fontSize: '1.5rem'
           }}>Whale Tracker</h2>
           <WhaleTracker
-            heliusApiKey={HELIUS_API_KEY}
-            endpoint={HELIUS_ENDPOINT}
+            endpoint={BACKEND_ENDPOINT}
           />
         </div>
       </div>
@@ -4071,8 +4069,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               }}>Trading View</h2>
               <Graphs
                 tradingWallets={tradingWallets}
-                heliusApiKey={HELIUS_API_KEY}
-                endpoint={HELIUS_ENDPOINT}
+                endpoint={BACKEND_ENDPOINT}
               />
             </div>
           </div>
@@ -5391,7 +5388,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
 
 const App = () => {
   const wallets = [new PhantomWalletAdapter(), new SolflareWalletAdapter()];
-  const defaultEndpoint = 'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a';
+  const defaultEndpoint = BACKEND_ENDPOINT;
 
   // Create the wallet adapter config
   const walletConfig = {
@@ -5422,26 +5419,17 @@ const App = () => {
   }, []);
   
   // Handle RPC errors by switching endpoints
-  const handleRpcError = useCallback(() => {
-    // Define fallback endpoints - only use Helius
-    const fallbackEndpoints = [
-      'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a'
-    ];
+  const handleRpcError = async (error: any) => {
+    console.error('RPC Error:', error);
+    const newEndpoint = BACKEND_ENDPOINT;
     
-    // Get current endpoint
-    const currentEndpoint = endpoint;
-    
-    // Find a different endpoint
-    const availableEndpoints = fallbackEndpoints.filter(e => e !== currentEndpoint);
-    if (availableEndpoints.length > 0) {
-      const newEndpoint = availableEndpoints[0];
-      log(`Switching RPC endpoint from ${currentEndpoint} to ${newEndpoint}`);
+    if (endpoint !== newEndpoint) {
+      console.log('Switching to backend endpoint:', newEndpoint);
       setEndpoint(newEndpoint);
-      localStorage.setItem('rpcEndpoint', newEndpoint);
     } else {
-      log('No alternative endpoints available');
+      console.log('Already using backend endpoint');
     }
-  }, [endpoint]);
+  };
   
   return (
     <ConnectionProvider endpoint={endpoint}>
