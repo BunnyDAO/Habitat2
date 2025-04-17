@@ -119,6 +119,7 @@ const PasswordModal: React.FC<PasswordModalProps> = ({
               <button
                 type="button"
                 onClick={togglePasswordVisibility}
+                tabIndex={-1}
                 style={{
                   position: 'absolute',
                   right: '0.5rem',
@@ -171,6 +172,7 @@ const PasswordModal: React.FC<PasswordModalProps> = ({
                 <button
                   type="button"
                   onClick={togglePasswordVisibility}
+                  tabIndex={-1}
                   style={{
                     position: 'absolute',
                     right: '0.5rem',

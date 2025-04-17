@@ -1342,10 +1342,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        const amount = prompt('Enter amount in SOL to fund wallet:');
-                        if (amount && !isNaN(parseFloat(amount))) {
-                          fundWallet(tw, parseFloat(amount));
-                        }
+                        setFundingWallet(tw);
+                        setFundingAmount('');
                       }}
                       className={`${walletStyles.button} ${walletStyles.primary}`}
                     >
