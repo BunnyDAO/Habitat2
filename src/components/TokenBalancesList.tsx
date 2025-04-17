@@ -202,10 +202,25 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
           borderBottom: '1px solid #2d3748',
           opacity: hiddenTokens.includes(balance.mint) ? 0.5 : 1,
           background: hiddenTokens.includes(balance.mint) ? 'rgba(100,116,139,0.1)' : undefined,
-          position: 'relative'
+          position: 'relative',
+          zIndex: 1
         }}>
-          {/* Ellipsis menu */}
-          <div style={{ position: 'relative', marginRight: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+            <TokenLogo logoURI={balance.logoURI} symbol={balance.symbol} size={24} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{balance.symbol}</span>
+                <span>${balance.usdValue?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94a3b8' }}>
+                <span>{balance.uiBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                <span>${(balance.usdValue / balance.uiBalance)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/token</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Vertical ellipsis menu */}
+          <div style={{ position: 'relative', marginLeft: '12px', zIndex: 2 }}>
             <button
               onClick={() => setMenuOpen(balance.mint === menuOpen ? null : balance.mint)}
               style={{
@@ -213,55 +228,67 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
                 border: 'none',
                 color: '#94a3b8',
                 cursor: 'pointer',
-                fontSize: '1.25rem',
-                padding: '0.25rem',
+                padding: '6px 8px',
+                fontSize: '20px',
                 lineHeight: 1,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: '24px',
-                height: '24px',
                 borderRadius: '4px',
-                transition: 'background-color 0.2s'
+                transition: 'all 0.2s ease',
+                fontWeight: 'bold',
+                width: '32px',
+                height: '32px',
+                position: 'relative',
+                zIndex: 2
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'rgba(100,116,139,0.1)';
+                e.currentTarget.style.backgroundColor = '#334155';
+                e.currentTarget.style.color = '#e2e8f0';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = '#94a3b8';
               }}
-              aria-label="Token options"
             >
               ⋮
             </button>
+
+            {/* Dropdown menu */}
             {menuOpen === balance.mint && (
               <div
                 ref={menuRef}
                 style={{
                   position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  background: '#1e293b',
-                  border: '1px solid #334155',
-                  borderRadius: '0.375rem',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                  zIndex: 10,
-                  minWidth: '120px',
-                  overflow: 'hidden'
+                  right: '100%',
+                  top: '0',
+                  marginRight: '8px',
+                  backgroundColor: '#1e293b',
+                  border: '1px solid #3b82f6',
+                  borderRadius: '8px',
+                  padding: '4px',
+                  zIndex: 999,
+                  minWidth: '140px',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
                 }}
               >
                 <button
                   onClick={() => hiddenTokens.includes(balance.mint) ? handleUnhide(balance.mint) : handleHide(balance.mint)}
                   style={{
+                    width: '100%',
                     background: 'none',
                     border: 'none',
                     color: '#e2e8f0',
-                    width: '100%',
+                    padding: '8px 12px',
                     textAlign: 'left',
-                    padding: '0.5rem 1rem',
                     cursor: 'pointer',
+                    borderRadius: '4px',
                     fontSize: '0.875rem',
-                    transition: 'background-color 0.2s'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'all 0.2s ease',
+                    whiteSpace: 'nowrap'
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = '#334155';
@@ -270,25 +297,24 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
                     e.currentTarget.style.backgroundColor = 'transparent';
                   }}
                 >
-                  {hiddenTokens.includes(balance.mint) ? 'Unhide' : 'Hide'}
+                  {hiddenTokens.includes(balance.mint) ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+                        <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/>
+                      </svg>
+                      <span>Show Token</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+                        <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" fill="currentColor"/>
+                      </svg>
+                      <span>Hide Token</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}
-          </div>
-          <TokenLogo 
-            logoURI={balance.logoURI} 
-            symbol={balance.symbol} 
-            size={24}
-          />
-          <div style={{ flex: 1, marginLeft: '0.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{balance.symbol}</span>
-              <span>${balance.usdValue?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94a3b8' }}>
-              <span>{balance.uiBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
-              <span>${(balance.usdValue / balance.uiBalance)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
           </div>
         </div>
       ))}
