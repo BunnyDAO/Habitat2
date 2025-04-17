@@ -3,11 +3,13 @@ import { TokenBalance, WalletBalanceResponse } from '../types';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { createClient } from 'redis';
+import { TokenService } from './token.service';
 
 export class WalletBalancesService {
   private connection: Connection;
   private redisClient: ReturnType<typeof createClient> | null;
   private readonly CACHE_TTL = 30; // 30 seconds
+  private tokenService: TokenService;
 
   constructor(
     private pool: Pool,
@@ -16,6 +18,7 @@ export class WalletBalancesService {
   ) {
     this.connection = new Connection(rpcUrl, 'confirmed');
     this.redisClient = redisClient || null;
+    this.tokenService = new TokenService(pool);
   }
 
   private getCacheKey(walletAddress: string): string {
@@ -109,6 +112,35 @@ export class WalletBalancesService {
     decimals: number,
     lastUpdated: number
   ): Promise<void> {
+    try {
+      // For SOL, we don't need to check Jupiter
+      if (mintAddress === 'So11111111111111111111111111111111111111112') {
+        await this.insertOrUpdateBalance(walletAddress, mintAddress, amount, decimals, lastUpdated);
+        return;
+      }
+
+      // Check if token exists in Jupiter
+      const tokenMetadata = await this.tokenService.getTokenMetadata(mintAddress);
+      
+      // Only insert balance if token exists in Jupiter
+      if (tokenMetadata) {
+        await this.insertOrUpdateBalance(walletAddress, mintAddress, amount, decimals, lastUpdated);
+      } else {
+        console.log(`Skipping unknown token ${mintAddress} - not found in Jupiter`);
+      }
+    } catch (error) {
+      console.error('Error updating wallet balance:', error);
+      throw error;
+    }
+  }
+
+  private async insertOrUpdateBalance(
+    walletAddress: string,
+    mintAddress: string,
+    amount: number,
+    decimals: number,
+    lastUpdated: number
+  ): Promise<void> {
     const query = `
       INSERT INTO wallet_balances (wallet_address, mint_address, amount, decimals, last_updated)
       VALUES ($1, $2, $3, $4, $5)
@@ -119,23 +151,18 @@ export class WalletBalancesService {
         last_updated = EXCLUDED.last_updated
     `;
 
-    try {
-      await this.pool.query(query, [
-        walletAddress,
-        mintAddress,
-        amount,
-        decimals,
-        new Date(lastUpdated)
-      ]);
+    await this.pool.query(query, [
+      walletAddress,
+      mintAddress,
+      amount,
+      decimals,
+      new Date(lastUpdated)
+    ]);
 
-      // Invalidate cache
-      if (this.redisClient) {
-        const cacheKey = this.getCacheKey(walletAddress);
-        await this.redisClient.del(cacheKey);
-      }
-    } catch (error) {
-      console.error('Error updating wallet balance:', error);
-      throw error;
+    // Invalidate cache
+    if (this.redisClient) {
+      const cacheKey = this.getCacheKey(walletAddress);
+      await this.redisClient.del(cacheKey);
     }
   }
 

@@ -35,7 +35,7 @@ export class TokenService {
             const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`);
             
             if (!response.ok) {
-                console.log(`Jupiter lite API returned ${response.status}`);
+                console.log(`Jupiter lite API returned ${response.status} for ${mintAddress}`);
                 return null;
             }
 
@@ -50,6 +50,17 @@ export class TokenService {
 
     async getTokenMetadata(mintAddress: string): Promise<TokenMetadata | null> {
         try {
+            // Special case for SOL
+            if (mintAddress === 'So11111111111111111111111111111111111111112') {
+                return {
+                    mint_address: mintAddress,
+                    name: 'Solana',
+                    symbol: 'SOL',
+                    decimals: 9,
+                    logo_uri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+                };
+            }
+
             // First try to get from our database
             const result = await this.pool.query(`
                 SELECT mint_address, name, symbol, decimals, logo_uri
@@ -98,22 +109,16 @@ export class TokenService {
                 return metadata;
             }
 
-            // If not found in Jupiter, return default metadata
-            console.log(`Token ${mintAddress} not found in Jupiter, using default metadata`);
-            return {
-                mint_address: mintAddress,
-                name: mintAddress.slice(0, 8) + '...',
-                symbol: 'UNKNOWN',
-                decimals: 9,
-                logo_uri: null
-            };
+            // If not found in Jupiter, return null instead of default metadata
+            console.log(`Token ${mintAddress} not found in Jupiter, skipping`);
+            return null;
         } catch (error) {
             console.error('Error fetching token metadata:', error);
             throw error;
         }
     }
 
-    async getTokensMetadata(mintAddresses: string[]) {
+    async getTokensMetadata(mintAddresses: string[]): Promise<(TokenMetadata | null)[]> {
         try {
             console.log('Fetching metadata for mint addresses:', mintAddresses);
             
@@ -168,21 +173,18 @@ export class TokenService {
                 await Promise.all(jupiterPromises);
             }
 
-            // Return metadata for all requested addresses
+            // Return metadata for all requested addresses, null for unknown tokens
             return mintAddresses.map(address => {
-                const metadata = metadataMap.get(address);
-                if (metadata) {
-                    return metadata;
+                if (address === 'So11111111111111111111111111111111111111112') {
+                    return {
+                        mint_address: address,
+                        name: 'Solana',
+                        symbol: 'SOL',
+                        decimals: 9,
+                        logo_uri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+                    };
                 }
-
-                // Return default metadata if not found
-                return {
-                    mint_address: address,
-                    name: address.slice(0, 8) + '...',
-                    symbol: 'UNKNOWN',
-                    decimals: 9,
-                    logo_uri: null
-                };
+                return metadataMap.get(address) || null;
             });
         } catch (error) {
             console.error('Error fetching tokens metadata:', error);
