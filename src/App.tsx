@@ -2624,8 +2624,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               {/* Active Jobs Section */}
               <div style={{
                 backgroundColor: '#1e293b',
-                borderRadius: '0.5rem',
-                padding: '1rem'
+                borderRadius: '0.75rem',
+                padding: '1.25rem',
+                border: '1px solid #2d3748',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
               }}>
                 <div 
                   style={{
@@ -2678,7 +2680,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   </div>
                   <div style={{
                     transform: `rotate(${isActiveLackeysExpanded ? '180deg' : '0deg'})`,
-                    transition: 'transform 0.2s ease-in-out'
+                    transition: 'transform 0.2s ease-in-out',
+                    marginRight: '2.7px'
                   }}>
                     <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M1 1L6 6L11 1" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round"/>

@@ -405,7 +405,7 @@
   max-width: 1600px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 400px;
+  grid-template-columns: 1fr 450px;
   gap: 2rem;
 }
 
