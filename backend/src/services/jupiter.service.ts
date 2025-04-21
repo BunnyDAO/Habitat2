@@ -10,6 +10,24 @@ interface JupiterToken {
     price?: number;
 }
 
+interface JupiterQuoteResponse {
+    inAmount: string;
+    outAmount: string;
+    priceImpactPct: number;
+    marketInfos: any[];
+    amount: string;
+    slippageBps: number;
+    otherAmountThreshold: string;
+    swapMode: string;
+    fees: {
+        signatureFee: number;
+        openOrdersDeposits: number[];
+        ataDeposits: number[];
+        totalFeeAndDeposits: number;
+        minimumSOLForTransaction: number;
+    };
+}
+
 export class JupiterService {
     private pool: Pool;
     private redisClient: ReturnType<typeof createClient> | null;
@@ -40,12 +58,11 @@ export class JupiterService {
             console.log(`Fetched ${tokens.length} tokens from Jupiter`);
 
             // Process tokens in batches
-            const batchSize = 100; // Reduced batch size for more frequent commits
+            const batchSize = 100;
             let totalSuccessCount = 0;
             let totalErrorCount = 0;
 
             for (let i = 0; i < tokens.length; i += batchSize) {
-                // Get a new client for each batch
                 client = await this.pool.connect();
                 let batchSuccessCount = 0;
                 let batchErrorCount = 0;
@@ -65,7 +82,6 @@ export class JupiterService {
                                 continue;
                             }
 
-                            // Update tokens table
                             const tokenResult = await client.query(`
                                 INSERT INTO tokens (mint_address, name, symbol, decimals, logo_uri, last_updated)
                                 VALUES ($1, $2, $3, $4, $5, NOW())
@@ -78,12 +94,10 @@ export class JupiterService {
                                 RETURNING mint_address
                             `, [token.address, token.name, token.symbol, token.decimals, token.logoURI]);
 
-                            // Fix linter error by checking if rowCount exists
                             if (tokenResult?.rowCount && tokenResult.rowCount > 0) {
                                 batchSuccessCount++;
                             }
 
-                            // Update token_prices table if price exists
                             if (token.price !== undefined && token.price !== null) {
                                 await client.query(`
                                     INSERT INTO token_prices (mint_address, current_price_usd, last_updated)
@@ -99,28 +113,23 @@ export class JupiterService {
                         }
                     }
 
-                    // Commit each batch independently
                     await client.query('COMMIT');
                     totalSuccessCount += batchSuccessCount;
                     totalErrorCount += batchErrorCount;
                     console.log(`Batch ${batchNumber} committed - Success: ${batchSuccessCount}, Errors: ${batchErrorCount}`);
-                    console.log(`Running totals - Success: ${totalSuccessCount}, Errors: ${totalErrorCount}`);
 
                 } catch (batchError) {
-                    // Rollback only affects the current batch
                     await client.query('ROLLBACK');
                     const currentBatch = tokens.slice(i, i + batchSize);
                     console.error(`Batch ${Math.floor(i / batchSize) + 1} rolled back:`, batchError);
                     totalErrorCount += currentBatch.length;
                 } finally {
-                    // Release client after each batch
                     client.release();
                 }
             }
 
             console.log(`Update completed - Total Success: ${totalSuccessCount}, Total Errors: ${totalErrorCount}`);
 
-            // Cache the results in Redis if available
             if (this.redisClient?.isOpen) {
                 await this.redisClient.setEx(
                     this.CACHE_KEY,
@@ -138,7 +147,6 @@ export class JupiterService {
 
     async getTokenData(mintAddress: string): Promise<JupiterToken | null> {
         try {
-            // Try Redis cache first
             if (this.redisClient?.isOpen) {
                 const cachedData = await this.redisClient.get(this.CACHE_KEY);
                 if (cachedData) {
@@ -148,7 +156,6 @@ export class JupiterService {
                 }
             }
 
-            // Fallback to database
             const result = await this.pool.query(`
                 SELECT t.*, tp.current_price_usd as price
                 FROM tokens t
@@ -170,6 +177,30 @@ export class JupiterService {
             return null;
         } catch (error) {
             console.error('Error fetching token data:', error);
+            throw error;
+        }
+    }
+
+    async getQuote(
+        inputMint: string,
+        outputMint: string,
+        amount: number,
+        slippageBps: number = 50
+    ): Promise<JupiterQuoteResponse> {
+        try {
+            const response = await fetch(
+                `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`
+            );
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Jupiter quote error:', errorText);
+                throw new Error(`Failed to get quote: ${errorText}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Error getting quote:', error);
             throw error;
         }
     }

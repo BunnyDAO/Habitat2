@@ -1,11 +1,17 @@
 import { Request, Response } from 'express';
 import { JupiterService } from '../services/jupiter.service';
+import { SwapService } from '../../../services/swap.service';
+import { Connection } from '@solana/web3.js';
 
 export class JupiterController {
   private jupiterService: JupiterService;
+  private swapService: SwapService;
 
   constructor(jupiterService: JupiterService) {
     this.jupiterService = jupiterService;
+    // Initialize swap service with connection
+    const connection = new Connection('https://api.mainnet-beta.solana.com');
+    this.swapService = new SwapService(connection);
   }
 
   getTokenPrice = async (req: Request, res: Response) => {
@@ -60,6 +66,39 @@ export class JupiterController {
     } catch (error) {
       console.error('Error fetching tokens:', error);
       res.status(500).json({ error: 'Failed to fetch tokens' });
+    }
+  };
+
+  executeSwap = async (req: Request, res: Response) => {
+    try {
+      const {
+        inputMint,
+        outputMint,
+        amount,
+        slippageBps = 50,
+        walletKeypair,
+        feeWalletPubkey,
+        feeBps = 100
+      } = req.body;
+
+      if (!inputMint || !outputMint || !amount || !walletKeypair) {
+        return res.status(400).json({ error: 'Missing required parameters' });
+      }
+
+      const result = await this.swapService.swapTokens({
+        inputMint,
+        outputMint,
+        amount: parseFloat(amount),
+        slippageBps,
+        walletKeypair,
+        feeWalletPubkey,
+        feeBps
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Swap execution error:', error);
+      res.status(500).json({ error: error.message });
     }
   };
 } 

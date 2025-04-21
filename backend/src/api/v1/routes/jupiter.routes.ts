@@ -12,6 +12,7 @@ export const createJupiterRouter = (redisClient: ReturnType<typeof createClient>
   router.get('/prices', jupiterController.getTokenPrices);
   router.get('/quote', jupiterController.getQuote);
   router.get('/tokens', jupiterController.getAllTokens);
+  router.post('/swap', jupiterController.executeSwap);
 
   return router;
 }; 

@@ -30,6 +30,7 @@ import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
 import { WalletBalanceService } from './services/walletBalanceService';
 import { TradingWallet } from './types/wallet';
+import { executeSwap } from './services/api/swap.service';
 
 // Add SelectedToken interface
 interface SelectedToken {
@@ -1172,6 +1173,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       tradingWallet={tw}
                       displayMode="total-only"
                       onRpcError={onRpcError}
+                      wallet={wallet}
                     />
                   </div>
                 </div>
@@ -1502,6 +1504,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       connection={connection} 
                       tradingWallet={tw}  // Pass the trading wallet
                       onRpcError={onRpcError}  // Pass the onRpcError function
+                      wallet={wallet}
                     />
                   </div>
                 </div>
@@ -2596,6 +2599,49 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
     return logoURI;
   };
+
+  // Update the swap function to use the backend API
+  const handleSwap = async (tokenBalance: TokenBalance) => {
+    try {
+        if (!wallet || !wallet.publicKey) {
+            throw new Error('Wallet not connected');
+        }
+
+        // Get the trading wallet keypair
+        const tradingWallet = tradingWallets[0]; // Use the first trading wallet
+        if (!tradingWallet) {
+            throw new Error('No trading wallet found');
+        }
+
+        const privateKey = localStorage.getItem(`wallet_${tradingWallet.publicKey}`);
+        if (!privateKey) {
+            throw new Error('Trading wallet private key not found');
+        }
+
+        const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(privateKey)));
+
+        // Execute swap through backend API
+        const result = await executeSwap({
+            inputMint: tokenBalance.mint,
+            outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
+            amount: tokenBalance.balance,
+            slippageBps: 50, // 0.5% slippage
+            walletKeypair: {
+                publicKey: keypair.publicKey.toString(),
+                secretKey: Array.from(keypair.secretKey)
+            },
+            feeWalletPubkey: wallet.publicKey.toString(),
+            feeBps: 100 // 1% fee
+        });
+
+        console.log('Swap executed successfully:', result);
+        // Update balances after successful swap
+        window.dispatchEvent(new Event('update-balances'));
+    } catch (error) {
+        console.error('Swap failed:', error);
+        setJupiterError(error instanceof Error ? error.message : 'Failed to execute swap');
+    }
+};
 
   return (
     <div className={walletStyles.container}>
@@ -4241,8 +4287,9 @@ interface TokenBalancesListProps {
   walletAddress: string; 
   connection: Connection;
   tradingWallet?: TradingWallet;
-  displayMode?: 'full' | 'total-only';  // Add display mode prop
-  onRpcError?: () => void;  // Add onRpcError prop
+  displayMode?: 'full' | 'total-only';
+  onRpcError?: () => void;
+  wallet: any; // Add wallet prop
 }
 
 // Add a cache for token balances
@@ -4311,7 +4358,8 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   connection, 
   tradingWallet, 
   displayMode = 'full',
-  onRpcError 
+  onRpcError,
+  wallet // Add wallet to destructuring
 }): ReactElement => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -4847,262 +4895,36 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         throw new Error('Trading wallet not initialized');
       }
 
-      const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(tradingWallet.secretKey));
-      console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
-      
-      const amountInSmallestUnit = tokenBalance.balance;
-
-      // Validate input amount and check balances
-      if (!amountInSmallestUnit || amountInSmallestUnit <= 0) {
-        throw new Error('Invalid input amount');
+      // Get the trading wallet keypair
+      const privateKey = localStorage.getItem(`wallet_${tradingWallet.publicKey}`);
+      if (!privateKey) {
+          throw new Error('Trading wallet private key not found');
       }
 
-      // Check SOL balance for fees
-      const solBalance = await connection.getBalance(tradingKeypair.publicKey);
-      if (solBalance < 10000) { // ~0.00001 SOL for fees
-        throw new Error('Insufficient SOL balance for transaction fees');
-      }
+      const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(privateKey)));
 
-      // Use the full amount - no buffer needed for Jupiter
-      const adjustedAmount = amountInSmallestUnit;
-
-      console.log('Requesting quote for swap:', {
-        inputMint: tokenBalance.mint,
-        outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
-        amount: adjustedAmount,
-        slippageBps: 50,
-        inputDecimals: tokenBalance.decimals,
-        solBalance: solBalance / LAMPORTS_PER_SOL
+      // Execute swap through backend API
+      const result = await executeSwap({
+          inputMint: tokenBalance.mint,
+          outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
+          amount: tokenBalance.balance,
+          slippageBps: 50, // 0.5% slippage
+          walletKeypair: {
+              publicKey: keypair.publicKey.toString(),
+              secretKey: Array.from(keypair.secretKey)
+          },
+          feeWalletPubkey: wallet.publicKey?.toString(),
+          feeBps: 100 // 1% fee
       });
 
-      // First try with direct routes
-      let quoteResponse = await fetch(
-        `https://quote-api.jup.ag/v6/quote?inputMint=${tokenBalance.mint}` +
-        `&outputMint=So11111111111111111111111111111111111111112` +
-        `&amount=${adjustedAmount}` +
-        `&slippageBps=50` +
-        `&platformFeeBps=0` +
-        `&onlyDirectRoutes=true`
-      );
-
-      // If direct route fails, try without restrictions
-      if (!quoteResponse.ok) {
-        console.log('Direct route not found, trying alternative routes...');
-        quoteResponse = await fetch(
-          `https://quote-api.jup.ag/v6/quote?inputMint=${tokenBalance.mint}` +
-          `&outputMint=So11111111111111111111111111111111111111112` +
-          `&amount=${adjustedAmount}` +
-          `&slippageBps=50`
-        );
-      }
-
-      if (!quoteResponse.ok) {
-        const errorText = await quoteResponse.text();
-        throw new Error(`Quote request failed: ${errorText}`);
-      }
-
-      const quoteData = await quoteResponse.json();
-      console.log('Quote received:', quoteData);
-
-      // Log the route information
-      if (quoteData.routePlan) {
-        console.log('Route plan:', quoteData.routePlan.map((step: any) => ({
-          swapInfo: step.swapInfo.label,
-          percent: step.percent,
-          inputMint: step.swapInfo.inputMint,
-          outputMint: step.swapInfo.outputMint
-        })));
-      }
-
-      // Validate quote data
-      if (!quoteData.inAmount || !quoteData.outAmount || Number(quoteData.inAmount) <= 0) {
-        throw new Error('Invalid quote response: missing or invalid amount information');
-      }
-
-      const swapRequestBody = {
-        quoteResponse: quoteData,
-        userPublicKey: tradingKeypair.publicKey.toString(),
-        wrapUnwrapSOL: true, // This ensures WSOL is unwrapped to SOL
-        prioritizationFeeLamports: 5000,
-        asLegacyTransaction: false,
-        useTokenLedger: false,
-        mode: "instructions"
-      };
-
-      console.log('Requesting swap instructions with config:', {
-        ...swapRequestBody,
-        quoteResponse: {
-          ...swapRequestBody.quoteResponse,
-          inAmount: quoteData.inAmount,
-          outAmount: quoteData.outAmount
-        }
-      });
-
-      const swapResponse = await fetch('https://api.jup.ag/swap/v1/swap-instructions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(swapRequestBody)
-      });
-
-      if (!swapResponse.ok) {
-        const errorText = await swapResponse.text();
-        throw new Error(`Swap request failed: ${errorText}`);
-      }
-
-      const swapData = await swapResponse.json();
-      console.log('Raw swap instructions received:', swapData);
-
-      // Helper function to convert instruction fields to PublicKey objects
-      const convertInstruction = (instr: any): TransactionInstruction | null => {
-        try {
-          if (!instr || typeof instr !== 'object') {
-            console.error('Invalid instruction:', instr);
-            return null;
-          }
-
-          if (!instr.programId || typeof instr.programId !== 'string') {
-            console.error('Invalid programId:', instr.programId);
-            return null;
-          }
-
-          if (!Array.isArray(instr.accounts)) {
-            console.error('Invalid accounts array:', instr.accounts);
-            return null;
-          }
-
-          return {
-            programId: new PublicKey(instr.programId),
-            keys: instr.accounts.map((account: any) => ({
-              pubkey: new PublicKey(account.pubkey),
-              isSigner: Boolean(account.isSigner),
-              isWritable: Boolean(account.isWritable)
-            })),
-            data: Buffer.from(instr.data || '', 'base64')
-          };
-        } catch (error) {
-          console.error('Error converting instruction:', error);
-          console.error('Problematic instruction:', instr);
-          return null;
-        }
-      };
-
-      // Extract and validate instructions
-      const { 
-        swapInstruction, 
-        computeBudgetInstructions = [], 
-        setupInstructions = [], 
-        cleanupInstruction, 
-        addressLookupTableAddresses = []
-      } = swapData;
-
-      if (!swapInstruction || !setupInstructions) {
-        throw new Error('Invalid swap response: missing required instructions');
-      }
-
-      // Convert instructions
-      const validatedInstructions: TransactionInstruction[] = [
-        ...computeBudgetInstructions.map(convertInstruction),
-        ...setupInstructions.map(convertInstruction),
-        convertInstruction(swapInstruction)
-      ].filter((instr): instr is TransactionInstruction => instr !== null);
-
-      if (cleanupInstruction) {
-        const cleanup = convertInstruction(cleanupInstruction);
-        if (cleanup) validatedInstructions.push(cleanup);
-      }
-
-      if (validatedInstructions.length === 0) {
-        throw new Error('No valid instructions generated from swap response');
-      }
-      // Get latest blockhash with longer validity
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-
-      const messageV0 = new TransactionMessage({
-        payerKey: tradingKeypair.publicKey,
-        recentBlockhash: blockhash,
-        instructions: [
-          ...(swapData.computeBudgetInstructions || []),
-          ...(swapData.setupInstructions || []),
-          swapData.swapInstruction,
-          ...(swapData.cleanupInstruction ? [swapData.cleanupInstruction] : [])
-        ].filter(Boolean).map(instr => {
-          const converted = convertInstruction(instr);
-          if (!converted) {
-            throw new Error('Failed to convert instruction');
-          }
-          return converted;
-        })
-      }).compileToV0Message([]); // Compile to VersionedMessage
-
-      const transaction = new VersionedTransaction(messageV0);
-      transaction.sign([tradingKeypair]);
-
-      console.log('Sending transaction...');
-      
-      // Function to execute the transaction with retries
-      const executeTransaction = async (retries = 3): Promise<string> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-          try {
-            // Get fresh blockhash if not first attempt
-            if (attempt > 1) {
-              const { blockhash: newBlockhash } = await connection.getLatestBlockhash('finalized');
-              transaction.message.recentBlockhash = newBlockhash;
-              // Re-sign with new blockhash
-              transaction.signatures = [];
-              transaction.sign([tradingKeypair]);
-            }
-
-            const signature = await connection.sendTransaction(transaction, {
-              skipPreflight: false,
-              maxRetries: 3,
-              preflightCommitment: 'confirmed'
-            });
-
-            console.log('Transaction sent:', signature);
-
-            // Wait for confirmation with increased timeout
-            const confirmation = await connection.confirmTransaction({
-              signature,
-              blockhash,
-              lastValidBlockHeight
-            }, 'confirmed');
-
-            if (confirmation.value.err) {
-              throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
-            }
-
-            return signature;
-          } catch (error: any) {
-            console.log(`Attempt ${attempt} failed:`, error);
-            
-            if (attempt === retries || 
-                !(error instanceof TransactionExpiredBlockheightExceededError) ||
-                !error.message.includes('expired')) {
-              throw error;
-            }
-            
-            console.log(`Retrying transaction (attempt ${attempt + 1}/${retries})...`);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s between retries
-          }
-        }
-        throw new Error('All retry attempts failed');
-      };
-
-      try {
-        const signature = await executeTransaction();
-        console.log('Transaction confirmed:', signature);
-        window.dispatchEvent(new Event('update-balances'));
-        return signature;
-      } catch (error) {
-        console.error('Error initiating swap:', error);
-        throw error;
-      }
-
+      console.log('Swap executed successfully:', result);
+      // Update balances after successful swap
+      window.dispatchEvent(new Event('update-balances'));
     } catch (error) {
-      console.error('Error initiating swap:', error);
-      setJupiterError(error instanceof Error ? error.message : 'Failed to initiate swap');
+        console.error('Swap failed:', error);
+        setJupiterError(error instanceof Error ? error.message : 'Failed to execute swap');
     }
-  };
+};
   // Add a manual refresh function
   const handleManualRefresh = () => {
     // Only allow manual refresh if not already fetching and cooldown period has passed
