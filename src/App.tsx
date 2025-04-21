@@ -2600,48 +2600,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     return logoURI;
   };
 
-  // Update the swap function to use the backend API
-  const handleSwap = async (tokenBalance: TokenBalance) => {
-    try {
-        if (!wallet || !wallet.publicKey) {
-            throw new Error('Wallet not connected');
-        }
-
-        // Get the trading wallet keypair
-        const tradingWallet = tradingWallets[0]; // Use the first trading wallet
-        if (!tradingWallet) {
-            throw new Error('No trading wallet found');
-        }
-
-        const privateKey = localStorage.getItem(`wallet_${tradingWallet.publicKey}`);
-        if (!privateKey) {
-            throw new Error('Trading wallet private key not found');
-        }
-
-        const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(privateKey)));
-
-        // Execute swap through backend API
-        const result = await executeSwap({
-            inputMint: tokenBalance.mint,
-            outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
-            amount: tokenBalance.balance,
-            slippageBps: 50, // 0.5% slippage
-            walletKeypair: {
-                publicKey: keypair.publicKey.toString(),
-                secretKey: Array.from(keypair.secretKey)
-            },
-            feeWalletPubkey: wallet.publicKey.toString(),
-            feeBps: 100 // 1% fee
-        });
-
-        console.log('Swap executed successfully:', result);
-        // Update balances after successful swap
-        window.dispatchEvent(new Event('update-balances'));
-    } catch (error) {
-        console.error('Swap failed:', error);
-        setJupiterError(error instanceof Error ? error.message : 'Failed to execute swap');
-    }
-};
 
   return (
     <div className={walletStyles.container}>
@@ -4888,8 +4846,8 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     };
   }, [walletAddress, debouncedFetchBalances]);
 
-  // Add handleSwap function
-  const handleSwap = async (tokenBalance: TokenBalance) => {
+  // Add handleSwap, used just for swapToSol button.
+  const handleSwapToSol = async (tokenBalance: TokenBalance) => {
     try {
       if (!tradingWallet) {
         throw new Error('Trading wallet not initialized');
@@ -4914,7 +4872,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
               secretKey: Array.from(keypair.secretKey)
           },
           feeWalletPubkey: wallet.publicKey?.toString(),
-          feeBps: 100 // 1% fee
+          feeBps: 0// 0% fee for swap to Sol.
       });
 
       console.log('Swap executed successfully:', result);
@@ -5183,7 +5141,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
             </div>
             {balance.mint !== 'So11111111111111111111111111111111111111112' && tradingWallet && (
               <button
-                onClick={() => handleSwap(balance)}
+                onClick={() => handleSwapToSol(balance)}
                 disabled={!tradingWallet}
                 style={{
                   padding: '0.25rem 0.5rem',

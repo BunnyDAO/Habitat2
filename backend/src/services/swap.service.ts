@@ -67,6 +67,7 @@ interface JupiterQuoteResponse {
 export class SwapService {
     private pool: Pool;
     private connection: Connection;
+    private jupiterService: any; // Assuming jupiterService is defined elsewhere in the file
 
     constructor(pool: Pool, connection: Connection) {
         this.pool = pool;
@@ -135,33 +136,21 @@ export class SwapService {
             });
 
             // Get quote from Jupiter API
-            const quoteData = await this.getQuote(inputMint, outputMint, baseAmount, slippageBps);
+            const quoteData = await this.jupiterService.getQuote(
+                inputMint,
+                outputMint,
+                baseAmount,
+                slippageBps,
+                feeBps
+            );
             
-            // Create swap request body
-            const swapRequestBody = {
-                quoteResponse: quoteData,
-                userPublicKey: tradingKeypair.publicKey.toString(),
-                wrapAndUnwrapSol: true,
-                dynamicSlippage: { maxBps: slippageBps },
-                ...(feeWalletPubkey && { feeAccount: feeWalletPubkey })
-            };
-
             // Execute swap through Jupiter API
-            const response = await fetch('https://quote-api.jup.ag/v6/swap', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(swapRequestBody),
-            });
+            const swapResult = await this.jupiterService.executeSwap(
+                quoteData,
+                tradingKeypair.publicKey.toString(),
+                feeWalletPubkey
+            );
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('Jupiter API error:', errorText);
-                throw new Error(`Failed to execute swap: ${errorText}`);
-            }
-
-            const swapResult = await response.json();
             const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
             const swapTransaction = VersionedTransaction.deserialize(swapTransactionBuf);
 
@@ -218,25 +207,6 @@ export class SwapService {
             console.error(`Error fetching token info for ${mint}:`, error);
             throw new Error(`Failed to get decimals for token ${mint}`);
         }
-    }
-
-    private async getQuote(
-        inputMint: string,
-        outputMint: string,
-        amount: number,
-        slippageBps: number
-    ): Promise<JupiterQuoteResponse> {
-        const response = await fetch(
-            `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`
-        );
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Jupiter quote error:', errorText);
-            throw new Error(`Failed to get quote: ${errorText}`);
-        }
-
-        return await response.json();
     }
 
     private async logSwap(params: {

@@ -34,6 +34,7 @@ export class JupiterService {
     private JUPITER_API_URL = 'https://token.jup.ag/all';
     private CACHE_KEY = 'jupiter:tokens';
     private CACHE_DURATION = 300; // 5 minutes in seconds
+    private CACHE_TTL = 300; // 5 minutes in seconds
 
     constructor(pool: Pool, redisClient: ReturnType<typeof createClient> | null = null) {
         this.pool = pool;
@@ -185,22 +186,174 @@ export class JupiterService {
         inputMint: string,
         outputMint: string,
         amount: number,
-        slippageBps: number = 50
+        slippageBps: number = 50,
+        platformFeeBps: number = 0
     ): Promise<JupiterQuoteResponse> {
         try {
+            // Check cache first
+            const cacheKey = `jupiter:quote:${inputMint}:${outputMint}:${amount}:${platformFeeBps}`;
+            if (this.redisClient) {
+                const cachedQuote = await this.redisClient.get(cacheKey);
+                if (cachedQuote) {
+                    return JSON.parse(cachedQuote);
+                }
+            }
+
+            // Fetch from Jupiter API
             const response = await fetch(
-                `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`
+                `https://lite-api.jup.ag/swap/v1/quote?` +
+                `inputMint=${inputMint}&` +
+                `outputMint=${outputMint}&` +
+                `amount=${amount}&` +
+                `slippageBps=${slippageBps}&` +
+                `restrictIntermediateTokens=true&` +
+                `platformFeeBps=${platformFeeBps}`
             );
 
             if (!response.ok) {
-                const errorText = await response.text();
-                console.error('Jupiter quote error:', errorText);
-                throw new Error(`Failed to get quote: ${errorText}`);
+                throw new Error(`Failed to get quote: ${response.statusText}`);
+            }
+
+            const quote = await response.json();
+
+            // Cache the result
+            if (this.redisClient) {
+                await this.redisClient.setex(cacheKey, this.CACHE_TTL, JSON.stringify(quote));
+            }
+
+            return quote;
+        } catch (error) {
+            console.error('Error fetching quote:', error);
+            throw error;
+        }
+    }
+
+    async executeSwap(
+        quoteResponse: JupiterQuoteResponse,
+        userPublicKey: string,
+        feeAccount?: string
+    ): Promise<any> {
+        try {
+            const response = await fetch('https://api.jup.ag/swap/v1/swap', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    quoteResponse,
+                    userPublicKey,
+                    ...(feeAccount && { feeAccount })
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to execute swap: ${response.statusText}`);
             }
 
             return await response.json();
         } catch (error) {
-            console.error('Error getting quote:', error);
+            console.error('Error executing swap:', error);
+            throw error;
+        }
+    }
+
+    async getTokenPrice(tokenMint: string): Promise<number> {
+        try {
+            // Check cache first
+            const cacheKey = `jupiter:price:${tokenMint}`;
+            if (this.redisClient) {
+                const cachedPrice = await this.redisClient.get(cacheKey);
+                if (cachedPrice) {
+                    return parseFloat(cachedPrice);
+                }
+            }
+
+            // Fetch from Jupiter API
+            const response = await fetch(`https://price.jup.ag/v4/price?ids=${tokenMint}`);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch token price: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            const price = data.data[tokenMint]?.price || 0;
+
+            // Cache the result
+            if (this.redisClient) {
+                await this.redisClient.setEx(cacheKey, this.CACHE_TTL, price.toString());
+            }
+
+            return price;
+        } catch (error) {
+            console.error('Error fetching token price:', error);
+            throw error;
+        }
+    }
+
+    async getTokenPrices(tokenMints: string[]): Promise<Record<string, number>> {
+        try {
+            // Check cache first
+            const cacheKey = `jupiter:prices:${tokenMints.join(',')}`;
+            if (this.redisClient) {
+                const cachedPrices = await this.redisClient.get(cacheKey);
+                if (cachedPrices) {
+                    return JSON.parse(cachedPrices);
+                }
+            }
+
+            // Fetch from Jupiter API
+            const response = await fetch(`https://price.jup.ag/v4/price?ids=${tokenMints.join(',')}`);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch token prices: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            const prices: Record<string, number> = {};
+
+            tokenMints.forEach(mint => {
+                prices[mint] = data.data[mint]?.price || 0;
+            });
+
+            // Cache the result
+            if (this.redisClient) {
+                await this.redisClient.setEx(cacheKey, this.CACHE_TTL, JSON.stringify(prices));
+            }
+
+            return prices;
+        } catch (error) {
+            console.error('Error fetching token prices:', error);
+            throw error;
+        }
+    }
+
+    async getAllTokens(): Promise<JupiterToken[]> {
+        try {
+            // Check cache first
+            if (this.redisClient) {
+                const cachedTokens = await this.redisClient.get(this.CACHE_KEY);
+                if (cachedTokens) {
+                    return JSON.parse(cachedTokens);
+                }
+            }
+
+            // Fetch from Jupiter API
+            const response = await fetch(this.JUPITER_API_URL);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch tokens: ${response.statusText}`);
+            }
+
+            const tokens = await response.json();
+
+            // Cache the result
+            if (this.redisClient) {
+                await this.redisClient.setEx(this.CACHE_KEY, this.CACHE_DURATION, JSON.stringify(tokens));
+            }
+
+            return tokens;
+        } catch (error) {
+            console.error('Error fetching tokens:', error);
             throw error;
         }
     }

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { JupiterService } from '../services/jupiter.service';
+import { JupiterService } from '../../../services/jupiter.service';
 import { SwapService } from '../../../services/swap.service';
 import { Connection } from '@solana/web3.js';
 
@@ -39,7 +39,7 @@ export class JupiterController {
 
   getQuote = async (req: Request, res: Response) => {
     try {
-      const { inputMint, outputMint, amount, slippageBps } = req.query;
+      const { inputMint, outputMint, amount, slippageBps, platformFeeBps } = req.query;
       
       if (!inputMint || !outputMint || !amount) {
         return res.status(400).json({ error: 'Missing required parameters' });
@@ -49,7 +49,8 @@ export class JupiterController {
         inputMint as string,
         outputMint as string,
         Number(amount),
-        slippageBps ? Number(slippageBps) : undefined
+        slippageBps ? Number(slippageBps) : undefined,
+        platformFeeBps ? Number(platformFeeBps) : undefined
       );
 
       res.json(quote);
@@ -72,28 +73,20 @@ export class JupiterController {
   executeSwap = async (req: Request, res: Response) => {
     try {
       const {
-        inputMint,
-        outputMint,
-        amount,
-        slippageBps = 50,
-        walletKeypair,
-        feeWalletPubkey,
-        feeBps = 100
+        quoteResponse,
+        userPublicKey,
+        feeAccount
       } = req.body;
 
-      if (!inputMint || !outputMint || !amount || !walletKeypair) {
+      if (!quoteResponse || !userPublicKey) {
         return res.status(400).json({ error: 'Missing required parameters' });
       }
 
-      const result = await this.swapService.swapTokens({
-        inputMint,
-        outputMint,
-        amount: parseFloat(amount),
-        slippageBps,
-        walletKeypair,
-        feeWalletPubkey,
-        feeBps
-      });
+      const result = await this.jupiterService.executeSwap(
+        quoteResponse,
+        userPublicKey,
+        feeAccount
+      );
 
       res.json(result);
     } catch (error) {
