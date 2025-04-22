@@ -667,10 +667,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       if (storedWallets) {
         const allWallets: StoredTradingWallets = JSON.parse(storedWallets);
         const userWallets = allWallets[wallet.publicKey.toString()] || [];
-        setTradingWallets(userWallets);
+        
+        // Convert secret keys from base64 to Uint8Array
+        const processedWallets = userWallets.map(w => ({
+          ...w,
+          secretKey: new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+        }));
+        
+        setTradingWallets(processedWallets);
         // Auto-select the most recently created wallet if none selected
-        if (!selectedTradingWallet && userWallets.length > 0) {
-          setSelectedTradingWallet(userWallets[userWallets.length - 1]);
+        if (!selectedTradingWallet && processedWallets.length > 0) {
+          setSelectedTradingWallet(processedWallets[processedWallets.length - 1]);
         }
       }
     }
@@ -758,41 +765,46 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
 
     try {
+        // Check wallet limit
+        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
+        const ownerAddress = wallet.publicKey.toString();
+        const existingWallets = allWallets[ownerAddress] || [];
+        
+        if (existingWallets.length >= 3) {
+            setShowWalletLimitDialog(true);
+            return;
+        }
+
         const newWallet = Keypair.generate();
         
         // Store the secret key in wallet_<publickey> format
         storeWalletSecretKey(newWallet.publicKey.toString(), newWallet.secretKey);
         
-        // Get existing wallets to generate unique name
-        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
-        const ownerAddress = wallet.publicKey.toString();
-        const existingWallets = allWallets[ownerAddress] || [];
-        
         // Generate unique name
         const baseName = `Trading Wallet ${existingWallets.length + 1}`;
         const uniqueName = generateUniqueWalletName(baseName, existingWallets);
         
-        const walletToStore: TradingWallet = {
+        // Store the secret key as base64 in tradingWallets
+        const walletToStoreLocal = {
             publicKey: newWallet.publicKey.toString(),
-            secretKey: newWallet.secretKey,
+            secretKey: Buffer.from(newWallet.secretKey).toString('base64'),
             mnemonic: '', // We don't use mnemonic in this implementation
             name: uniqueName,
             createdAt: Date.now()
-        };
-
-        // Store the secret key as base64 in tradingWallets
-        const walletToStoreLocal = {
-            ...walletToStore,
-            secretKey: Buffer.from(walletToStore.secretKey).toString('base64')
         };
         
         allWallets[ownerAddress] = [...existingWallets, walletToStoreLocal];
         localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
         
-        // Update state with the original wallet (keeping secretKey as Uint8Array)
+        // Update state with the wallet, ensuring secretKey is Uint8Array
+        const walletToStore = {
+            ...walletToStoreLocal,
+            secretKey: ensureUint8Array(newWallet.secretKey)
+        };
+        
         setTradingWallets(allWallets[ownerAddress].map((w: any) => ({
             ...w,
-            secretKey: new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+            secretKey: ensureUint8Array(Buffer.from(w.secretKey, 'base64'))
         })));
         setSelectedTradingWallet(walletToStore);
 
@@ -1684,6 +1696,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       // Get initial balance
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey));
 
+      // Ensure secret key is in the correct format
+      const secretKeyArray = ensureUint8Array(selectedTradingWallet.secretKey);
+
       // Create new job with properly formatted secret key and all required properties
       const newJob: WalletMonitoringJob = {
         id: crypto.randomUUID(),
@@ -1691,7 +1706,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         walletAddress: monitoredWallet,
         percentage: autoTradePercentage,
         tradingWalletPublicKey: selectedTradingWallet.publicKey,
-        tradingWalletSecretKey: selectedTradingWallet.secretKey, // Already a Uint8Array from state
+        tradingWalletSecretKey: secretKeyArray,
         isActive: true,
         createdAt: Date.now().toString(),
         recentTransactions: [],
@@ -2237,21 +2252,48 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const handleImportWallets = async (mergedWallets: TradingWallet[]) => {
     if (!wallet.publicKey) return;
 
-    const ownerAddress = wallet.publicKey.toString();
-    
-    // Save to localStorage
-    localStorage.setItem('tradingWallets', JSON.stringify({
-      [ownerAddress]: mergedWallets
-    }));
-    
-    // Update state
-    setTradingWallets(mergedWallets);
-    
-    setNotification({
-      message: `Successfully imported ${mergedWallets.length} wallets`,
-      type: 'success'
-    });
-  };
+    try {
+        const ownerAddress = wallet.publicKey.toString();
+        const existingWallets = tradingWallets;
+
+        // Check if importing would exceed the limit
+        if (existingWallets.length + mergedWallets.length > 3) {
+            setShowWalletLimitDialog(true);
+            return;
+        }
+
+        // Process each wallet
+        for (const importedWallet of mergedWallets) {
+            // Store the secret key in wallet_<publickey> format
+            storeWalletSecretKey(importedWallet.publicKey, importedWallet.secretKey);
+            
+            // Save to backend
+            try {
+                await tradingWalletService.saveWallet(ownerAddress, importedWallet);
+            } catch (error) {
+                console.warn('Error saving imported wallet to backend:', error);
+            }
+        }
+
+        // Update local state
+        const allWallets = {
+            [ownerAddress]: mergedWallets
+        };
+        localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+        setTradingWallets(mergedWallets);
+        
+        setNotification({
+            message: 'Wallets imported successfully',
+            type: 'success'
+        });
+    } catch (error) {
+        console.error('Error importing wallets:', error);
+        setNotification({
+            message: 'Failed to import wallets',
+            type: 'error'
+        });
+    }
+};
 
   const handleImportLackeys = async (fileContent: string, password: string) => {
     try {
