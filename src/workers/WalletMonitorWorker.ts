@@ -1,11 +1,34 @@
-import { PublicKey, Keypair, Message, VersionedMessage } from '@solana/web3.js';
+import { Connection, PublicKey, Keypair, Message, VersionedMessage } from '@solana/web3.js';
 import { BaseWorker } from './BaseWorker';
 import { WalletMonitoringJob } from '../types/jobs';
-import { SOL_MINT } from '../utils/tokens'; // Assuming SOL_MINT = 'So11111111111111111111111111111111111111112'
-import { swapTokens } from '../utils/swap';
 import { createRateLimitedConnection } from '../utils/connection';
 
 const MAX_RECENT_TRANSACTIONS = 50;
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const MIN_SOL_THRESHOLD = 0.002; // Minimum SOL to keep for fees
+
+interface TokenBalance {
+  mint: string;
+  uiTokenAmount: {
+    uiAmount: number;
+    decimals: number;
+  };
+  owner: string;
+}
+
+interface TransactionMeta {
+  preTokenBalances: TokenBalance[];
+  postTokenBalances: TokenBalance[];
+}
+
+interface ParsedTransaction {
+  meta: TransactionMeta;
+  transaction: {
+    message: {
+      accountKeys: string[];
+    };
+  };
+}
 
 export class WalletMonitorWorker extends BaseWorker {
   private subscription: number | undefined;
@@ -17,6 +40,7 @@ export class WalletMonitorWorker extends BaseWorker {
   private transactionTimestamps: Map<string, number> = new Map();
   private processingTransactions: Set<string> = new Set();
   private lastProcessedSignature: string | null = null;
+  private tradingWalletKeypair: Keypair;
 
   constructor(job: WalletMonitoringJob, endpoint: string, tradingWallet: PublicKey) {
     super(job, endpoint);
@@ -24,6 +48,39 @@ export class WalletMonitorWorker extends BaseWorker {
     this.tradingWallet = tradingWallet;
     this.walletAddress = job.walletAddress;
     this.percentage = job.percentage;
+    
+    // Ensure the secret key is a Uint8Array
+    let secretKey: Uint8Array;
+    try {
+      if (job.tradingWalletSecretKey instanceof Uint8Array) {
+        secretKey = job.tradingWalletSecretKey;
+      } else if (Array.isArray(job.tradingWalletSecretKey)) {
+        secretKey = new Uint8Array(job.tradingWalletSecretKey);
+      } else if (typeof job.tradingWalletSecretKey === 'string') {
+        // Handle base64 encoded secret key
+        try {
+          const decoded = Buffer.from(job.tradingWalletSecretKey, 'base64');
+          if (decoded.length !== 64) {
+            throw new Error(`Invalid secret key size: expected 64 bytes, got ${decoded.length}`);
+          }
+          secretKey = new Uint8Array(decoded);
+        } catch (e) {
+          throw new Error('Invalid secret key format: not a valid base64 string');
+        }
+      } else {
+        throw new Error('Invalid secret key format: must be Uint8Array, number[], or base64 string');
+      }
+      
+      // Validate secret key size
+      if (secretKey.length !== 64) {
+        throw new Error(`Invalid secret key size: expected 64 bytes, got ${secretKey.length}`);
+      }
+      
+      this.tradingWalletKeypair = Keypair.fromSecretKey(secretKey);
+    } catch (error) {
+      console.error('Error initializing trading wallet keypair:', error);
+      throw error;
+    }
 
     if (job.recentTransactions) {
       try {
@@ -176,7 +233,6 @@ export class WalletMonitorWorker extends BaseWorker {
       }
 
       // Check if SOL balance is below minimum threshold after swap
-      const MIN_SOL_THRESHOLD = 0.002; // 0.002 SOL minimum for fees
       if (postSOLBalance < MIN_SOL_THRESHOLD) {
         console.log(`Warning: SOL balance after swap (${postSOLBalance.toFixed(6)} SOL) is below minimum threshold (${MIN_SOL_THRESHOLD} SOL)`);
       }
@@ -369,29 +425,48 @@ export class WalletMonitorWorker extends BaseWorker {
     try {
       console.log(`Mirroring swap: ${inputMint} -> ${outputMint}, amount: ${amount}`);
       
-      // Get private key from localStorage
-      const privateKeyStr = localStorage.getItem(`wallet_${this.tradingWallet.toString()}`);
-      if (!privateKeyStr) {
-        throw new Error('Private key not found in localStorage');
-      }
-      
-      // Create keypair from private key
-      const tradingWalletKeypair = Keypair.fromSecretKey(
-        new Uint8Array(JSON.parse(privateKeyStr))
+      // First get a quote from Jupiter
+      const quoteResponse = await fetch(
+        `http://localhost:3001/api/v1/jupiter/quote?` +
+        `inputMint=${inputMint}&` +
+        `outputMint=${outputMint}&` +
+        `amount=${amount.toString()}&` +
+        `slippageBps=50&` +
+        `platformFeeBps=10`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        }
       );
-      
-      await swapTokens({
-        inputMint,
-        outputMint,
-        amount,
-        slippageBps: 50,
-        walletKeypair: tradingWalletKeypair,
-        connection: this.connection,
-        feeWalletPubkey: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL',
-        feeBps: 10  // 0.1% fee
+
+      if (!quoteResponse.ok) {
+        throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
+      }
+
+      const quote = await quoteResponse.json();
+
+      // Execute the swap using the quote
+      const response = await fetch('http://localhost:3001/api/v1/jupiter/swap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey: this.tradingWalletKeypair.publicKey.toString(),
+          feeAccount: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL'
+        }),
       });
-      
-      console.log('Mirror swap completed successfully');
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Swap failed: ${JSON.stringify(errorData)}`);
+      }
+
+      const result = await response.json();
+      console.log('Mirror swap completed successfully:', result);
     } catch (error) {
       console.error('Error mirroring swap:', error);
       throw error;

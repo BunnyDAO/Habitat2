@@ -32,6 +32,48 @@ interface WalletExportFile {
 }
 
 /**
+ * Stores a wallet's secret key in localStorage
+ * @param publicKey The wallet's public key
+ * @param secretKey The wallet's secret key
+ */
+export function storeWalletSecretKey(publicKey: string, secretKey: Uint8Array): void {
+  console.log('Storing secret key in localStorage:', {
+    publicKey,
+    secretKeyLength: secretKey.length,
+    secretKeyType: secretKey.constructor.name
+  });
+  
+  const key = `wallet_${publicKey}`;
+  const value = JSON.stringify(Array.from(secretKey));
+  
+  console.log('Storage details:', {
+    key,
+    valueLength: value.length,
+    localStorageAvailable: typeof localStorage !== 'undefined'
+  });
+  
+  localStorage.setItem(key, value);
+  
+  // Verify storage
+  const stored = localStorage.getItem(key);
+  console.log('Storage verification:', {
+    stored: stored !== null,
+    storedLength: stored?.length
+  });
+}
+
+/**
+ * Retrieves a wallet's secret key from localStorage
+ * @param publicKey The wallet's public key
+ * @returns The wallet's secret key as Uint8Array, or null if not found
+ */
+export function getWalletSecretKey(publicKey: string): Uint8Array | null {
+  const stored = localStorage.getItem(`wallet_${publicKey}`);
+  if (!stored) return null;
+  return new Uint8Array(JSON.parse(stored));
+}
+
+/**
  * Exports trading wallets to an encrypted file
  * @param wallets The wallets to export
  * @param ownerAddress The address of the wallet owner
@@ -174,8 +216,8 @@ export async function importWallets(
         const wallets: TradingWallet[] = decryptedWallets.map(w => {
             const metadata = decryptedData.wallets.find((m: { publicKey: string }) => m.publicKey === w.publicKey);
             
-            // Store secret key in localStorage
-            localStorage.setItem(`wallet_${w.publicKey}`, JSON.stringify(Array.from(w.secretKey)));
+            // Store secret key in localStorage using the new function
+            storeWalletSecretKey(w.publicKey, w.secretKey);
             
             return {
                 publicKey: w.publicKey,

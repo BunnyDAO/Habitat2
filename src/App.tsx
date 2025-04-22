@@ -15,7 +15,7 @@ import PasswordModal from './components/PasswordModal';
 import ImportWalletModal from './components/ImportWalletModal';
 import Notification from './components/Notification';
 import { WhaleTracker } from './components/WhaleTracker/WhaleTracker';
-import { exportWallets } from './utils/walletExportImport';
+import { exportWallets, storeWalletSecretKey } from './utils/walletExportImport';
 import { importLackeys, mergeLackeys } from './utils/lackeyExportImport';
 import WalletLimitDialog from './components/WalletLimitDialog';
 import DeleteWalletDialog from './components/DeleteWalletDialog';
@@ -305,14 +305,14 @@ const fetchTokenMetadata = async (mint: string, connection?: Connection): Promis
 // Add interface for trading wallet
 interface TradingWallet {
   publicKey: string;
+  secretKey: Uint8Array;
+  mnemonic: string;
   name?: string;
-  secretKey?: string;
-  mnemonic?: string;
-  createdAt?: number;
+  createdAt: number;
 }
 
 interface StoredTradingWallets {
-  [ownerAddress: string]: TradingWallet[];  // Map of owner's address to their trading wallets
+  [ownerAddress: string]: TradingWallet[];
 }
 
 // Add error type definition
@@ -745,34 +745,65 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     setTradingWallets(allWallets[ownerAddress]);
     setSelectedTradingWallet(walletToSave);  // Auto-select newly created wallet
 
-    // Save to database (excluding sensitive data)
+    // Save to database (including secret key)
     try {
-      const dbWallet = {
-        publicKey: walletToSave.publicKey,
-        name: walletToSave.name,
-        createdAt: walletToSave.createdAt
-      };
-      await tradingWalletService.saveWallet(ownerAddress, dbWallet);
+      await tradingWalletService.saveWallet(ownerAddress, walletToSave);
     } catch (error) {
       console.error('Error saving trading wallet to database:', error);
       // Don't throw the error - we still want to keep the wallet in localStorage
     }
   };
 
-  const generateTradingWallet = () => {
-    if (tradingWallets.length >= 3) {
-      setShowWalletLimitDialog(true);
-      return;
-    }
+  const generateTradingWallet = async () => {
+    if (!wallet.publicKey) return;
 
-    const keypair = Keypair.generate();
-    const newWallet: TradingWallet = {
-      publicKey: keypair.publicKey.toString(),
-      name: Buffer.from(keypair.secretKey).toString('hex'),
-      createdAt: Date.now()
-    };
-    saveTradingWallet(newWallet);
-  };
+    try {
+        const newWallet = Keypair.generate();
+        
+        // Store the secret key in wallet_<publickey> format
+        storeWalletSecretKey(newWallet.publicKey.toString(), newWallet.secretKey);
+        
+        const walletToStore: TradingWallet = {
+            publicKey: newWallet.publicKey.toString(),
+            secretKey: newWallet.secretKey,
+            mnemonic: '', // We don't use mnemonic in this implementation
+            createdAt: Date.now()
+        };
+
+        // Save to localStorage first
+        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
+        const ownerAddress = wallet.publicKey.toString();
+        
+        // Store the secret key as base64 in tradingWallets
+        const walletToStoreLocal = {
+            ...walletToStore,
+            secretKey: Buffer.from(walletToStore.secretKey).toString('base64')
+        };
+        
+        allWallets[ownerAddress] = [...(allWallets[ownerAddress] || []), walletToStoreLocal];
+        localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+        
+        // Update state with the original wallet (keeping secretKey as Uint8Array)
+        setTradingWallets(allWallets[ownerAddress].map((w: any) => ({
+            ...w,
+            secretKey: new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+        })));
+        setSelectedTradingWallet(walletToStore);
+
+        // Try to save to backend, but don't block if it fails
+        try {
+            await tradingWalletService.saveWallet(ownerAddress, walletToStore);
+        } catch (error) {
+            console.warn('Error saving wallet to database:', error);
+        }
+    } catch (error) {
+        console.error('Error generating trading wallet:', error);
+        setNotification({
+            message: 'Failed to generate trading wallet',
+            type: 'error'
+        });
+    }
+};
 
   // fetch Backend Balances - Add this helper function
   const fetchBackendBalances = async (walletAddress: string) => {
@@ -1624,60 +1655,64 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Update createJob function to include tradingWalletSecretKey
   const createJob = async () => {
-    if (!selectedTradingWallet || !monitoredWallet || !isValidAddress) return;
+    if (!selectedTradingWallet || !monitoredWallet || !isValidAddress) {
+      setNotification({
+        message: 'Please select a trading wallet and enter a valid wallet address to monitor',
+        type: 'error'
+      });
+      return;
+    }
 
     try {
-      // Prevent monitoring the trading wallet itself
-      if (selectedTradingWallet.publicKey === monitoredWallet) {
-        setNotification({
-          message: 'A trading wallet cannot monitor itself. Please select a different wallet to monitor.',
-          type: 'error'
-        });
-        return;
-      }
+      // Validate the monitored wallet address
+      new PublicKey(monitoredWallet);
+    } catch (error) {
+      setNotification({
+        message: 'Invalid wallet address',
+        type: 'error'
+      });
+      return;
+    }
 
-      // Check if this trading wallet already has a monitoring job for this public wallet
-      const existingJob = jobs.find(job => 
-        job.type === JobType.WALLET_MONITOR && 
-        job.tradingWalletPublicKey === selectedTradingWallet.publicKey &&
-        (job as WalletMonitoringJob).walletAddress === monitoredWallet &&
-        job.isActive
-      );
+    try {
+      // Get initial balance
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey));
 
-      if (existingJob) {
-        setExistingJobId(existingJob.id);
-        setIsOverrideModalOpen(true);
-        return;
-      }
-
-      const secretKeyArray = ensureUint8Array(selectedTradingWallet.secretKey);
-      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
-
+      // Create new job with properly formatted secret key and all required properties
       const newJob: WalletMonitoringJob = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         type: JobType.WALLET_MONITOR,
-        isActive: true,
         walletAddress: monitoredWallet,
-        tradingWalletPublicKey: selectedTradingWallet.publicKey,
-        tradingWalletSecretKey: secretKeyArray,
         percentage: autoTradePercentage,
+        tradingWalletPublicKey: selectedTradingWallet.publicKey,
+        tradingWalletSecretKey: selectedTradingWallet.secretKey, // Already a Uint8Array from state
+        isActive: true,
+        createdAt: Date.now().toString(),
+        recentTransactions: [],
         mirroredTokens: {},
-        createdAt: new Date().toISOString(),
-        profitTracking: createInitialProfitTracking(initialBalance, solPrice)
+        profitTracking: {
+          initialBalance: initialBalance / LAMPORTS_PER_SOL,
+          currentBalance: initialBalance / LAMPORTS_PER_SOL,
+          initialPrice: 0,
+          currentPrice: 0,
+          currentProfit: 0,
+          lastUpdated: Date.now().toString(),
+          history: [],
+          trades: []
+        }
       };
 
+      // Add job to manager
+      jobManagerRef.current?.addJob(newJob);
+
+      // Update local state
       setJobs(prevJobs => [...prevJobs, newJob]);
       setMonitoredWallet('');
-      setAutoTradePercentage(10);
-
-      setNotification({
-        message: 'Lackey created successfully',
-        type: 'success'
-      });
+      setIsValidAddress(false);
     } catch (error) {
       console.error('Error creating job:', error);
       setNotification({
-        message: 'Failed to create Lackey',
+        message: error instanceof Error ? error.message : 'Failed to create job',
         type: 'error'
       });
     }

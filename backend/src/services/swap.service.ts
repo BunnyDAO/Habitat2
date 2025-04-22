@@ -1,5 +1,7 @@
 import { Connection, PublicKey, Keypair, VersionedTransaction, ParsedAccountData } from '@solana/web3.js';
 import { Pool } from 'pg';
+import { JupiterService } from './jupiter.service';
+import { createClient } from 'redis';
 
 // Common token decimals
 const TOKEN_DECIMALS: { [key: string]: number } = {
@@ -53,8 +55,8 @@ interface JupiterQuoteResponse {
             label: string;
             inputMint: string;
             outputMint: string;
-            inAmount: string;
-            outAmount: string;
+  inAmount: string;
+  outAmount: string;
             feeAmount: string;
             feeMint: string;
         };
@@ -65,24 +67,25 @@ interface JupiterQuoteResponse {
 }
 
 export class SwapService {
-    private pool: Pool;
-    private connection: Connection;
-    private jupiterService: any; // Assuming jupiterService is defined elsewhere in the file
+  private pool: Pool;
+  private connection: Connection;
+  private jupiterService: JupiterService;
 
-    constructor(pool: Pool, connection: Connection) {
-        this.pool = pool;
-        this.connection = connection;
-    }
+  constructor(pool: Pool, connection: Connection, redisClient: ReturnType<typeof createClient> | null = null) {
+    this.pool = pool;
+    this.connection = connection;
+    this.jupiterService = new JupiterService(pool, redisClient);
+  }
 
     async executeSwap(request: SwapRequest): Promise<SwapResponse> {
-        try {
-            const {
-                inputMint,
-                outputMint,
-                amount,
+    try {
+      const {
+        inputMint,
+        outputMint,
+        amount,
                 slippageBps = 50,
-                walletKeypair,
-                feeWalletPubkey,
+        walletKeypair,
+        feeWalletPubkey,
                 feeBps = 100
             } = request;
 
@@ -96,7 +99,7 @@ export class SwapService {
             // Create keypair from provided secret key
             const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
             console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
-
+        
             // Check SOL balance for fees and rent
             const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
             console.log('Current SOL balance:', solBalance / 1e9, 'SOL');
@@ -115,11 +118,11 @@ export class SwapService {
                     `Need at least ${requiredSol} SOL (${inputMint === WSOL_MINT ? 'amount + fees' : 'fees'}), ` +
                     `have ${currentSol} SOL`
                 );
-            }
+      }
 
-            // Get token decimals
-            const inputDecimals = await this.getTokenDecimals(inputMint);
-            const outputDecimals = await this.getTokenDecimals(outputMint);
+      // Get token decimals
+      const inputDecimals = await this.getTokenDecimals(inputMint);
+      const outputDecimals = await this.getTokenDecimals(outputMint);
 
             // Convert amount to base units using correct decimals
             // If amount is already in base units (no decimal point), use it directly
@@ -135,7 +138,7 @@ export class SwapService {
                 isInteger: Number.isInteger(amount)
             });
 
-            // Get quote from Jupiter API
+      // Get quote from Jupiter API
             const quoteData = await this.jupiterService.getQuote(
                 inputMint,
                 outputMint,
@@ -143,31 +146,31 @@ export class SwapService {
                 slippageBps,
                 feeBps
             );
-            
-            // Execute swap through Jupiter API
+
+      // Execute swap through Jupiter API
             const swapResult = await this.jupiterService.executeSwap(
                 quoteData,
                 tradingKeypair.publicKey.toString(),
                 feeWalletPubkey
             );
 
-            const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
-            const swapTransaction = VersionedTransaction.deserialize(swapTransactionBuf);
+      const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
+      const swapTransaction = VersionedTransaction.deserialize(swapTransactionBuf);
 
-            // Sign and send transaction
+      // Sign and send transaction
             swapTransaction.sign([tradingKeypair]);
-            const signature = await this.connection.sendTransaction(swapTransaction);
+      const signature = await this.connection.sendTransaction(swapTransaction);
 
-            // Log the swap in the database
-            await this.logSwap({
+      // Log the swap in the database
+      await this.logSwap({
                 walletPubkey: tradingKeypair.publicKey.toString(),
-                inputMint,
-                outputMint,
-                inputAmount: amount,
-                outputAmount: Number(quoteData.outAmount) / Math.pow(10, outputDecimals),
-                txid: signature,
+        inputMint,
+        outputMint,
+        inputAmount: amount,
+        outputAmount: Number(quoteData.outAmount) / Math.pow(10, outputDecimals),
+        txid: signature,
                 feeBps
-            });
+      });
 
             return {
                 signature,
@@ -176,98 +179,98 @@ export class SwapService {
                 routePlan: quoteData.routePlan,
                 message: 'Swap executed successfully!'
             };
-        } catch (error) {
-            console.error('Error executing swap:', error);
-            throw error;
-        }
+    } catch (error) {
+      console.error('Error executing swap:', error);
+      throw error;
+    }
+  }
+
+  private async getTokenDecimals(mint: string): Promise<number> {
+    if (TOKEN_DECIMALS[mint]) {
+      return TOKEN_DECIMALS[mint];
     }
 
-    private async getTokenDecimals(mint: string): Promise<number> {
-        if (TOKEN_DECIMALS[mint]) {
-            return TOKEN_DECIMALS[mint];
+    try {
+      const mintPubkey = new PublicKey(mint);
+      const accountInfo = await this.connection.getParsedAccountInfo(mintPubkey);
+      
+      if (!accountInfo.value) {
+        throw new Error(`Token mint ${mint} not found`);
+      }
+      
+      if ('parsed' in accountInfo.value.data) {
+        const parsedData = accountInfo.value.data as ParsedAccountData;
+        const decimals = parsedData.parsed?.info?.decimals;
+        if (typeof decimals === 'number') {
+          return decimals;
         }
-
-        try {
-            const mintPubkey = new PublicKey(mint);
-            const accountInfo = await this.connection.getParsedAccountInfo(mintPubkey);
-            
-            if (!accountInfo.value) {
-                throw new Error(`Token mint ${mint} not found`);
-            }
-            
-            if ('parsed' in accountInfo.value.data) {
-                const parsedData = accountInfo.value.data as ParsedAccountData;
-                const decimals = parsedData.parsed?.info?.decimals;
-                if (typeof decimals === 'number') {
-                    return decimals;
-                }
-            }
-            throw new Error(`Could not parse decimals for token ${mint}`);
-        } catch (error) {
-            console.error(`Error fetching token info for ${mint}:`, error);
-            throw new Error(`Failed to get decimals for token ${mint}`);
-        }
+      }
+      throw new Error(`Could not parse decimals for token ${mint}`);
+    } catch (error) {
+      console.error(`Error fetching token info for ${mint}:`, error);
+      throw new Error(`Failed to get decimals for token ${mint}`);
     }
+  }
 
-    private async logSwap(params: {
-        walletPubkey: string;
-        inputMint: string;
-        outputMint: string;
-        inputAmount: number;
-        outputAmount: number;
-        txid: string;
+  private async logSwap(params: {
+    walletPubkey: string;
+    inputMint: string;
+    outputMint: string;
+    inputAmount: number;
+    outputAmount: number;
+    txid: string;
         feeBps?: number;
-    }): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            // First check if the trading wallet exists
-            const walletResult = await client.query(
-                'SELECT id, main_wallet_pubkey FROM trading_wallets WHERE wallet_pubkey = $1',
-                [params.walletPubkey]
-            );
+  }): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      // First check if the trading wallet exists
+      const walletResult = await client.query(
+        'SELECT id, main_wallet_pubkey FROM trading_wallets WHERE wallet_pubkey = $1',
+        [params.walletPubkey]
+      );
 
-            if (walletResult.rows.length === 0) {
-                console.warn(`Trading wallet ${params.walletPubkey} not found in database, skipping transaction log`);
-                return;
-            }
+      if (walletResult.rows.length === 0) {
+        console.warn(`Trading wallet ${params.walletPubkey} not found in database, skipping transaction log`);
+        return;
+      }
 
-            const { id: tradingWalletId, main_wallet_pubkey: mainWalletPubkey } = walletResult.rows[0];
+      const { id: tradingWalletId, main_wallet_pubkey: mainWalletPubkey } = walletResult.rows[0];
 
-            // Prepare transaction details
-            const details = {
-                inputMint: params.inputMint,
-                outputMint: params.outputMint,
-                outputAmount: params.outputAmount,
+      // Prepare transaction details
+      const details = {
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        outputAmount: params.outputAmount,
                 feeBps: params.feeBps
-            };
+      };
 
-            await client.query(`
-                INSERT INTO transactions (
-                    trading_wallet_id,
-                    main_wallet_pubkey,
-                    wallet_pubkey,
-                    signature,
-                    type,
-                    amount,
-                    token_mint,
-                    timestamp,
-                    details
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
-            `, [
-                tradingWalletId,
-                mainWalletPubkey,
-                params.walletPubkey,
-                params.txid,
-                'swap',
-                params.inputAmount,
-                params.inputMint,
-                JSON.stringify(details)
-            ]);
-        } catch (error) {
-            console.error('Error logging swap transaction:', error);
-            // Don't throw the error as we don't want to fail the swap if logging fails
-        } finally {
-            client.release();
-        }
+      await client.query(`
+        INSERT INTO transactions (
+          trading_wallet_id,
+          main_wallet_pubkey,
+          wallet_pubkey,
+          signature,
+          type,
+          amount,
+          token_mint,
+          timestamp,
+          details
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+      `, [
+        tradingWalletId,
+        mainWalletPubkey,
+        params.walletPubkey,
+        params.txid,
+        'swap',
+        params.inputAmount,
+        params.inputMint,
+        JSON.stringify(details)
+      ]);
+    } catch (error) {
+      console.error('Error logging swap transaction:', error);
+      // Don't throw the error as we don't want to fail the swap if logging fails
+    } finally {
+      client.release();
     }
+  }
 } 

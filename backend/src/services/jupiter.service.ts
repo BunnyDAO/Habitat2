@@ -10,11 +10,34 @@ interface JupiterToken {
     price?: number;
 }
 
+interface MarketInfo {
+    id: string;
+    label: string;
+    inputMint: string;
+    outputMint: string;
+    notEnoughLiquidity: boolean;
+    inAmount: string;
+    outAmount: string;
+    minInAmount?: string;
+    minOutAmount?: string;
+    priceImpactPct: number;
+    lpFee: {
+        amount: string;
+        mint: string;
+        pct: number;
+    };
+    platformFee: {
+        amount: string;
+        mint: string;
+        pct: number;
+    };
+}
+
 interface JupiterQuoteResponse {
     inAmount: string;
     outAmount: string;
     priceImpactPct: number;
-    marketInfos: any[];
+    marketInfos: MarketInfo[];
     amount: string;
     slippageBps: number;
     otherAmountThreshold: string;
@@ -26,6 +49,26 @@ interface JupiterQuoteResponse {
         totalFeeAndDeposits: number;
         minimumSOLForTransaction: number;
     };
+    routePlan?: Array<{
+        swapInfo: {
+            ammKey: string;
+            label: string;
+            inputMint: string;
+            outputMint: string;
+            inAmount: string;
+            outAmount: string;
+            feeAmount: string;
+            feeMint: string;
+        };
+        percent: number;
+    }>;
+}
+
+interface JupiterSwapResponse {
+    swapTransaction: string;
+    setupTransaction?: string;
+    cleanupTransaction?: string;
+    addressLookupTableAddresses?: string[];
 }
 
 export class JupiterService {
@@ -34,7 +77,7 @@ export class JupiterService {
     private JUPITER_API_URL = 'https://token.jup.ag/all';
     private CACHE_KEY = 'jupiter:tokens';
     private CACHE_DURATION = 300; // 5 minutes in seconds
-    private CACHE_TTL = 300; // 5 minutes in seconds
+    private CACHE_TTL = 60; // 1 minute cache TTL
 
     constructor(pool: Pool, redisClient: ReturnType<typeof createClient> | null = null) {
         this.pool = pool;
@@ -218,7 +261,7 @@ export class JupiterService {
 
             // Cache the result
             if (this.redisClient) {
-                await this.redisClient.setex(cacheKey, this.CACHE_TTL, JSON.stringify(quote));
+                await this.redisClient.setEx(cacheKey, this.CACHE_TTL, JSON.stringify(quote));
             }
 
             return quote;
@@ -232,7 +275,7 @@ export class JupiterService {
         quoteResponse: JupiterQuoteResponse,
         userPublicKey: string,
         feeAccount?: string
-    ): Promise<any> {
+    ): Promise<JupiterSwapResponse> {
         try {
             const response = await fetch('https://api.jup.ag/swap/v1/swap', {
                 method: 'POST',

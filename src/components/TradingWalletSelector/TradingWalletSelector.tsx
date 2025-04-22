@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { TradingWallet } from '../../types/wallet';
 import { tradingWalletService } from '../../services/tradingWalletService';
+import { Keypair } from '@solana/web3.js';
+import { storeWalletSecretKey } from '../../utils/walletExportImport';
 
 export const TradingWalletSelector: React.FC = () => {
   const { publicKey } = useWallet();
@@ -38,12 +40,26 @@ export const TradingWalletSelector: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Generate a new keypair
+      const keypair = Keypair.generate();
+      
       // Create a new wallet object with required fields
       const newWallet: TradingWallet = {
-        publicKey: 'pending', // Temporary value, will be replaced by backend
+        publicKey: keypair.publicKey.toString(),
+        secretKey: keypair.secretKey, // Keep as Uint8Array
+        mnemonic: '', // Empty string since we don't need it
         name: `Trading Wallet ${wallets.length + 1}`,
         createdAt: Date.now()
       };
+
+      console.log('Creating new wallet:', {
+        publicKey: newWallet.publicKey,
+        secretKeyLength: newWallet.secretKey.length,
+        secretKeyType: newWallet.secretKey.constructor.name
+      });
+
+      // Store the private key in localStorage using the centralized function
+      storeWalletSecretKey(newWallet.publicKey, newWallet.secretKey);
 
       const savedWallet = await tradingWalletService.saveWallet(publicKey.toString(), newWallet);
       if (savedWallet) {

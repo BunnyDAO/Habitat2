@@ -22,8 +22,8 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-app.use('/api/v1/jupiter', createJupiterRouter(redisClient));
 app.use('/api/v1/swap', createSwapRouter(pool, connection));
+app.use('/api/v1/jupiter', createJupiterRouter(redisClient));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -31,7 +31,7 @@ app.get('/health', (req, res) => {
 });
 
 // Error handling
-app.use((err: Error, req: express.Request, res: express.Response) => {
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error(err.stack);
     res.status(500).json({ error: 'Something broke!' });
 });
