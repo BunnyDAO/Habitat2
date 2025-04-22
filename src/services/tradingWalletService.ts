@@ -1,7 +1,7 @@
 import { TradingWallet } from '../types/wallet';
 
 // Use the backend server URL
-const TRADING_WALLETS_ENDPOINT = 'http://localhost:3001/api/trading-wallets';
+const TRADING_WALLETS_ENDPOINT = 'http://localhost:3001/api/v1/trading-wallets';
 
 interface RawWallet {
   publicKey: string;

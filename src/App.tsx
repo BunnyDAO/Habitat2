@@ -763,24 +763,30 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         // Store the secret key in wallet_<publickey> format
         storeWalletSecretKey(newWallet.publicKey.toString(), newWallet.secretKey);
         
+        // Get existing wallets to generate unique name
+        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
+        const ownerAddress = wallet.publicKey.toString();
+        const existingWallets = allWallets[ownerAddress] || [];
+        
+        // Generate unique name
+        const baseName = `Trading Wallet ${existingWallets.length + 1}`;
+        const uniqueName = generateUniqueWalletName(baseName, existingWallets);
+        
         const walletToStore: TradingWallet = {
             publicKey: newWallet.publicKey.toString(),
             secretKey: newWallet.secretKey,
             mnemonic: '', // We don't use mnemonic in this implementation
+            name: uniqueName,
             createdAt: Date.now()
         };
 
-        // Save to localStorage first
-        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
-        const ownerAddress = wallet.publicKey.toString();
-        
         // Store the secret key as base64 in tradingWallets
         const walletToStoreLocal = {
             ...walletToStore,
             secretKey: Buffer.from(walletToStore.secretKey).toString('base64')
         };
         
-        allWallets[ownerAddress] = [...(allWallets[ownerAddress] || []), walletToStoreLocal];
+        allWallets[ownerAddress] = [...existingWallets, walletToStoreLocal];
         localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
         
         // Update state with the original wallet (keeping secretKey as Uint8Array)
