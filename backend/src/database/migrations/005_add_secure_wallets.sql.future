@@ -1,0 +1,42 @@
+-- FUTURE MIGRATION: This will be needed when implementing secure backend-only wallet storage
+
+-- Create table for storing encrypted wallets
+CREATE TABLE secure_wallets (
+    id SERIAL PRIMARY KEY,
+    public_key VARCHAR(44) NOT NULL UNIQUE,
+    encrypted_data TEXT NOT NULL,
+    encryption_method VARCHAR(20) NOT NULL,
+    encryption_version INTEGER NOT NULL DEFAULT 1,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    last_key_rotation TIMESTAMP WITH TIME ZONE,
+    metadata JSONB
+);
+
+-- Add indexes for performance
+CREATE INDEX idx_secure_wallets_public_key ON secure_wallets(public_key);
+CREATE INDEX idx_secure_wallets_active ON secure_wallets(is_active);
+CREATE INDEX idx_secure_wallets_method ON secure_wallets(encryption_method);
+
+-- Add audit table for key operations
+CREATE TABLE secure_wallet_audit_log (
+    id SERIAL PRIMARY KEY,
+    wallet_id INTEGER REFERENCES secure_wallets(id),
+    operation_type VARCHAR(50) NOT NULL,
+    performed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    performed_by VARCHAR(44), -- public key of admin/user who performed operation
+    encryption_method_old VARCHAR(20),
+    encryption_method_new VARCHAR(20),
+    encryption_version_old INTEGER,
+    encryption_version_new INTEGER,
+    metadata JSONB
+);
+
+-- Add comments
+COMMENT ON TABLE secure_wallets IS 'Stores encrypted wallet data for automated trading';
+COMMENT ON COLUMN secure_wallets.encryption_method IS 'Method used to encrypt wallet: HSM, ENCLAVE, or SPLIT_KEY';
+COMMENT ON COLUMN secure_wallets.encryption_version IS 'Version of the encryption scheme used';
+COMMENT ON COLUMN secure_wallets.last_key_rotation IS 'When the encryption keys were last rotated';
+COMMENT ON TABLE secure_wallet_audit_log IS 'Audit trail for all operations on secure wallets'; 
