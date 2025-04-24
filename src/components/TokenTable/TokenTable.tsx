@@ -14,7 +14,7 @@ interface Token {
 
 interface TokenTableProps {
   heliusApiKey?: string;
-  onSelectToken?: (mintAddress: string, symbol: string) => void;
+  onSelectToken?: (tokenAddress: string, symbol: string) => void;
   filterType?: 'default' | 'new';
 }
 

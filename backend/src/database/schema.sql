@@ -63,7 +63,7 @@ CREATE TABLE trading_wallets (
     UNIQUE (wallet_pubkey)
 );
 
--- Create strategies table
+-- Create strategies table with versioning
 CREATE TABLE strategies (
     id SERIAL PRIMARY KEY,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
@@ -72,8 +72,20 @@ CREATE TABLE strategies (
     config JSONB NOT NULL,
     is_active BOOLEAN DEFAULT true,
     name VARCHAR(255),
+    version INTEGER DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create strategy_versions table for version history
+CREATE TABLE strategy_versions (
+    id SERIAL PRIMARY KEY,
+    strategy_id INTEGER REFERENCES strategies(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    config JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(44) REFERENCES users(main_wallet_pubkey),
+    change_reason TEXT
 );
 
 -- Create wallet_balances table
@@ -251,4 +263,36 @@ CREATE TRIGGER update_trading_wallets_updated_at
 CREATE TRIGGER update_strategies_updated_at
     BEFORE UPDATE ON strategies
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column(); 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create index for versioning
+CREATE INDEX idx_strategy_versions_strategy_id ON strategy_versions(strategy_id);
+CREATE INDEX idx_strategy_versions_version ON strategy_versions(version);
+
+-- Add trigger to automatically create version history
+CREATE OR REPLACE FUNCTION create_strategy_version()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'UPDATE') THEN
+        INSERT INTO strategy_versions (
+            strategy_id,
+            version,
+            config,
+            created_by,
+            change_reason
+        ) VALUES (
+            NEW.id,
+            NEW.version,
+            NEW.config,
+            NEW.main_wallet_pubkey,
+            NEW.change_reason
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER strategy_version_trigger
+    AFTER UPDATE ON strategies
+    FOR EACH ROW
+    EXECUTE FUNCTION create_strategy_version(); 

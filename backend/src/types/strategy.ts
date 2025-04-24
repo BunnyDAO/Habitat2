@@ -1,38 +1,41 @@
-export interface StrategyConfig {
-  type: 'DCA' | 'GRID';
-  parameters: DCAParameters | GridParameters;
-}
-
-interface DCAParameters {
-  tokenMint: string;
-  amount: number;
-  interval: number; // in minutes
-  maxPrice?: number;
-  minPrice?: number;
-}
-
-interface GridParameters {
-  tokenMint: string;
-  gridSize: number;
-  upperPrice: number;
-  lowerPrice: number;
-  amountPerGrid: number;
-}
-
 export interface Strategy {
   id: number;
-  tradingWalletId: number;
-  mainWalletPubkey: string;
-  strategyType: 'DCA' | 'GRID';
+  trading_wallet_id: number;
+  main_wallet_pubkey: string;
+  strategy_type: string;
   config: StrategyConfig;
-  isActive: boolean;
+  is_active: boolean;
   name?: string;
-  createdAt: Date;
-  updatedAt: Date;
-  lastExecuted?: Date;
-  nextExecution?: Date;
-  position?: number;
-  isLackey: boolean;
-  originalWalletPubkey?: string;
-  currentWalletPubkey?: string;
-} 
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StrategyConfig {
+  type: string;
+  parameters: any;
+}
+
+export interface DCAConfig extends StrategyConfig {
+  type: 'DCA';
+  parameters: {
+    tokenMint: string;
+    amount: number;
+    interval: number; // in minutes
+    maxPrice?: number;
+    minPrice?: number;
+  };
+}
+
+export interface GridConfig extends StrategyConfig {
+  type: 'GRID';
+  parameters: {
+    tokenMint: string;
+    upperPrice: number;
+    lowerPrice: number;
+    gridSize: number;
+    amountPerGrid: number;
+  };
+}
+
+export type AnyStrategyConfig = DCAConfig | GridConfig; 

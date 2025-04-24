@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import apiClient from './api/api-client';
 
 export interface Token {
   mint_address: string;
@@ -17,22 +12,22 @@ export interface Token {
 
 export const tokenService = {
   async getTokens() {
-    const { data, error } = await supabase
-      .from('tokens')
-      .select('*');
-    
-    if (error) throw error;
-    return data as Token[];
+    try {
+      const response = await apiClient.get<Token[]>('/tokens');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching tokens:', error);
+      throw error;
+    }
   },
 
   async getTokenByMint(mint: string) {
-    const { data, error } = await supabase
-      .from('tokens')
-      .select('*')
-      .eq('mint_address', mint)
-      .single();
-    
-    if (error) throw error;
-    return data as Token;
+    try {
+      const response = await apiClient.get<Token>(`/tokens/${mint}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching token:', error);
+      throw error;
+    }
   }
 }; 

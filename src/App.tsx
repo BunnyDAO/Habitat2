@@ -29,8 +29,12 @@ import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
 import { WalletBalanceService } from './services/walletBalanceService';
-import { TradingWallet } from './types/wallet';
 import { executeSwap } from './services/api/swap.service';
+import { StrategyService } from './services/strategy.service';
+import { authService } from './services/auth.service';
+
+// Initialize token metadata cache
+const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
 
 // Add SelectedToken interface
 interface SelectedToken {
@@ -669,10 +673,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         const userWallets = allWallets[wallet.publicKey.toString()] || [];
         
         // Convert secret keys from base64 to Uint8Array
-        const processedWallets = userWallets.map(w => ({
-          ...w,
-          secretKey: new Uint8Array(Buffer.from(w.secretKey, 'base64'))
-        }));
+        const processedWallets = userWallets.map(w => {
+          try {
+            return {
+              ...w,
+              secretKey: new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+            };
+          } catch (error) {
+            console.error('Error processing wallet secret key:', error);
+            return w;
+          }
+        });
         
         setTradingWallets(processedWallets);
         // Auto-select the most recently created wallet if none selected
@@ -777,35 +788,33 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
         const newWallet = Keypair.generate();
         
-        // Store the secret key in wallet_<publickey> format
-        storeWalletSecretKey(newWallet.publicKey.toString(), newWallet.secretKey);
-        
         // Generate unique name
         const baseName = `Trading Wallet ${existingWallets.length + 1}`;
         const uniqueName = generateUniqueWalletName(baseName, existingWallets);
         
-        // Store the secret key as base64 in tradingWallets
-        const walletToStoreLocal = {
+        // Create the wallet object
+        const walletToStore: TradingWallet = {
             publicKey: newWallet.publicKey.toString(),
-            secretKey: Buffer.from(newWallet.secretKey).toString('base64'),
+            secretKey: newWallet.secretKey,
             mnemonic: '', // We don't use mnemonic in this implementation
             name: uniqueName,
             createdAt: Date.now()
         };
         
-        allWallets[ownerAddress] = [...existingWallets, walletToStoreLocal];
+        // Store the secret key in wallet_<publickey> format
+        storeWalletSecretKey(walletToStore.publicKey, walletToStore.secretKey);
+        
+        // Save to localStorage without the secretKey
+        const walletForStorage = {
+            ...walletToStore,
+            secretKey: undefined // Don't store secretKey in tradingWallets
+        };
+        allWallets[ownerAddress] = [...existingWallets, walletForStorage];
         localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
         
-        // Update state with the wallet, ensuring secretKey is Uint8Array
-        const walletToStore = {
-            ...walletToStoreLocal,
-            secretKey: ensureUint8Array(newWallet.secretKey)
-        };
-        
-        setTradingWallets(allWallets[ownerAddress].map((w: any) => ({
-            ...w,
-            secretKey: ensureUint8Array(Buffer.from(w.secretKey, 'base64'))
-        })));
+        // Update state with the wallet (with secretKey from storeWalletSecretKey)
+        const updatedWallets = [...existingWallets, walletToStore];
+        setTradingWallets(updatedWallets);
         setSelectedTradingWallet(walletToStore);
 
         // Try to save to backend, but don't block if it fails
@@ -1312,13 +1321,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         </span>
                         {job.profitTracking && (
                           <span style={{
-                            color: job.profitTracking.currentProfit >= 0 ? '#22c55e' : '#ef4444',
+                            color: job.profitTracking.percentageChange >= 0 ? '#22c55e' : '#ef4444',
                             fontSize: '0.75rem',
                             fontWeight: '500',
                             marginLeft: '0.25rem'
                           }}>
-                            {job.profitTracking.currentProfit > 0 ? '+' : ''}
-                            {job.profitTracking.currentProfit.toFixed(2)}%
+                            {job.profitTracking.percentageChange > 0 ? '+' : ''}
+                            {job.profitTracking.percentageChange.toFixed(2)}%
                           </span>
                         )}
                         <div className={walletStyles.strategyMenu}>
@@ -1327,22 +1336,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             {job.profitTracking && (
                               <div style={{
                                 fontSize: '0.75rem',
-                                color: job.profitTracking.currentProfit >= 0 ? '#22c55e' : '#ef4444',
+                                color: job.profitTracking.percentageChange >= 0 ? '#22c55e' : '#ef4444',
                                 marginTop: '0.25rem'
                               }}>
-                                Profit/Loss: {job.profitTracking.currentProfit > 0 ? '+' : ''}
-                                {job.profitTracking.currentProfit.toFixed(2)}%
-                                {job.profitTracking.trades.length > 0 && (
-                                  <span style={{ 
-                                    fontSize: '0.625rem',
-                                    backgroundColor: job.profitTracking.currentProfit >= 0 ? '#15803d' : '#991b1b',
-                                    padding: '0.125rem 0.25rem',
-                                    borderRadius: '0.25rem',
-                                    marginLeft: '0.5rem'
-                                  }}>
-                                    {job.profitTracking.trades.length} {job.profitTracking.trades.length === 1 ? 'trade' : 'trades'}
-                                  </span>
-                                )}
+                                Profit/Loss: {job.profitTracking.percentageChange > 0 ? '+' : ''}
+                                {job.profitTracking.percentageChange.toFixed(2)}%
+                                <span style={{ 
+                                  fontSize: '0.625rem',
+                                  backgroundColor: job.profitTracking.percentageChange >= 0 ? '#15803d' : '#991b1b',
+                                  padding: '0.125rem 0.25rem',
+                                  borderRadius: '0.25rem',
+                                  marginLeft: '0.5rem'
+                                }}>
+                                  {job.profitTracking.totalProfitSOL.toFixed(4)} SOL (${job.profitTracking.totalProfitUSD.toFixed(2)})
+                                </span>
                               </div>
                             )}
                           </div>
@@ -1671,7 +1678,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     };
   }, [wallet.publicKey, currentEndpoint, selectedTradingWallet]);
 
-  // Update createJob function to include tradingWalletSecretKey
+  // Update createJob function to use StrategyService
   const createJob = async () => {
     if (!selectedTradingWallet || !monitoredWallet || !isValidAddress) {
       setNotification({
@@ -1682,46 +1689,42 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
 
     try {
+      // Check if user is authenticated
+      const token = await authService.getSession();
+      if (!token) {
+        // If not authenticated, try to sign in with the wallet address
+        const walletAddress = wallet.publicKey?.toBase58();
+        if (!walletAddress) {
+          setNotification({
+            message: 'Please connect your wallet first',
+            type: 'error'
+          });
+          return;
+        }
+
+        const newToken = await authService.signIn(walletAddress);
+        if (!newToken) {
+          setNotification({
+            message: 'Failed to authenticate. Please try again.',
+            type: 'error'
+          });
+          return;
+        }
+      }
+
       // Validate the monitored wallet address
       new PublicKey(monitoredWallet);
-    } catch (error) {
-      setNotification({
-        message: 'Invalid wallet address',
-        type: 'error'
-      });
-      return;
-    }
 
-    try {
-      // Get initial balance
-      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey));
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-      // Ensure secret key is in the correct format
-      const secretKeyArray = ensureUint8Array(selectedTradingWallet.secretKey);
-
-      // Create new job with properly formatted secret key and all required properties
-      const newJob: WalletMonitoringJob = {
-        id: crypto.randomUUID(),
-        type: JobType.WALLET_MONITOR,
+      const strategyInstance = StrategyService.getInstance(connection);
+      const newJob = await strategyInstance.createWalletMonitorStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        solPrice,
         walletAddress: monitoredWallet,
-        percentage: autoTradePercentage,
-        tradingWalletPublicKey: selectedTradingWallet.publicKey,
-        tradingWalletSecretKey: secretKeyArray,
-        isActive: true,
-        createdAt: Date.now().toString(),
-        recentTransactions: [],
-        mirroredTokens: {},
-        profitTracking: {
-          initialBalance: initialBalance / LAMPORTS_PER_SOL,
-          currentBalance: initialBalance / LAMPORTS_PER_SOL,
-          initialPrice: 0,
-          currentPrice: 0,
-          currentProfit: 0,
-          lastUpdated: Date.now().toString(),
-          history: [],
-          trades: []
-        }
-      };
+        percentage: autoTradePercentage
+      });
 
       // Add job to manager
       jobManagerRef.current?.addJob(newJob);
@@ -1746,23 +1749,22 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       // Remove the existing job
       setJobs(prevJobs => prevJobs.filter(job => job.id !== existingJobId));
       
-      // Create the new job immediately
-      const secretKeyArray = ensureUint8Array(selectedTradingWallet.secretKey);
+      // Create the new job using StrategyService
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-      const newJob: WalletMonitoringJob = {
-        id: Date.now().toString(),
-        type: JobType.WALLET_MONITOR,
-        isActive: true,
+      const strategyInstance = StrategyService.getInstance(connection);
+      const newJob = await strategyInstance.createWalletMonitorStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        solPrice,
         walletAddress: monitoredWallet,
-        tradingWalletPublicKey: selectedTradingWallet.publicKey,
-        tradingWalletSecretKey: secretKeyArray,
-        percentage: autoTradePercentage,
-        mirroredTokens: {},
-        createdAt: new Date().toISOString(),
-        profitTracking: createInitialProfitTracking(initialBalance, solPrice)
-      };
+        percentage: autoTradePercentage
+      });
 
+      // Add job to manager
+      jobManagerRef.current?.addJob(newJob);
+
+      // Update local state
       setJobs(prevJobs => [...prevJobs, newJob]);
       setMonitoredWallet('');
       setAutoTradePercentage(10);
@@ -2017,39 +2019,44 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // Add helper function to create initial profit tracking
   const createInitialProfitTracking = (initialBalance: number, currentPrice: number) => ({
     initialBalance,
+    initialValue: initialBalance * currentPrice,
     currentBalance: initialBalance,
-    initialPrice: currentPrice,
-    currentPrice,
-    currentProfit: 0,
-    lastUpdated: new Date().toISOString(),
-    history: [],
-    trades: []
+    currentValue: initialBalance * currentPrice,
+    totalProfitSOL: 0,
+    totalProfitUSD: 0,
+    percentageChange: 0,
+    lastUpdated: new Date().toISOString()
   });
 
   // Update createPriceMonitorJob
   const createPriceMonitorJob = async () => {
     if (!selectedTradingWallet || !targetPrice) return;
 
-    const secretKeyArray = new Uint8Array(selectedTradingWallet.secretKey);
-    const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
+    try {
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-    const newJob: PriceMonitoringJob = {
-      id: Date.now().toString(),
-      type: JobType.PRICE_MONITOR,
-      tradingWalletPublicKey: selectedTradingWallet.publicKey,
-      tradingWalletSecretKey: secretKeyArray,
-      targetPrice,
-      direction: priceDirection,
-      percentageToSell: sellPercentage,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: createInitialProfitTracking(initialBalance, solPrice)
-    };
+      const strategyInstance = StrategyService.getInstance(connection);
+      const newJob = await strategyInstance.createPriceMonitorStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        solPrice,
+        targetPrice,
+        direction: priceDirection,
+        percentageToSell: sellPercentage
+      });
 
-    setJobs(prevJobs => [...prevJobs, newJob]);
-    setTargetPrice(0);
-    setPriceDirection('above');
-    setSellPercentage(10);
+      // Update local state
+      setJobs(prevJobs => [...prevJobs, newJob]);
+      setTargetPrice(0);
+      setPriceDirection('above');
+      setSellPercentage(10);
+    } catch (error) {
+      console.error('Error creating price monitor strategy:', error);
+      setNotification({
+        message: error instanceof Error ? error.message : 'Failed to create price monitor strategy',
+        type: 'error'
+      });
+    }
   };
 
   // Add price monitor removal handler
@@ -2161,22 +2168,27 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const createVaultStrategy = async () => {
     if (!selectedTradingWallet || !vaultPercentage) return;
 
-    const secretKeyArray = new Uint8Array(selectedTradingWallet.secretKey);
-    const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
+    try {
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-    const newJob: VaultStrategy = {
-      id: Date.now().toString(),
-      type: JobType.VAULT,
-      tradingWalletPublicKey: selectedTradingWallet.publicKey,
-      tradingWalletSecretKey: secretKeyArray,
-      vaultPercentage,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: createInitialProfitTracking(initialBalance, solPrice)
-    };
+      const strategyInstance = StrategyService.getInstance(connection);
+      const newJob = await strategyInstance.createVaultStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        solPrice,
+        vaultPercentage
+      });
 
-    setJobs(prevJobs => [...prevJobs, newJob]);
-    setVaultPercentage(10);
+      // Update local state
+      setJobs(prevJobs => [...prevJobs, newJob]);
+      setVaultPercentage(10);
+    } catch (error) {
+      console.error('Error creating vault strategy:', error);
+      setNotification({
+        message: error instanceof Error ? error.message : 'Failed to create vault strategy',
+        type: 'error'
+      });
+    }
   };
 
   // Export trading wallets
@@ -2417,26 +2429,31 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     });
   };
 
-  // Update createLevelsStrategy function to include tradingWalletSecretKey
+  // Update createLevelsStrategy
   const createLevelsStrategy = async () => {
     if (!selectedTradingWallet || levels.length === 0) return;
 
-    const secretKeyArray = new Uint8Array(selectedTradingWallet.secretKey);
-    const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
+    try {
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-    const newJob: LevelsStrategy = {
-      id: Date.now().toString(),
-      type: JobType.LEVELS,
-      tradingWalletPublicKey: selectedTradingWallet.publicKey,
-      tradingWalletSecretKey: secretKeyArray,
-      levels,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: createInitialProfitTracking(initialBalance, solPrice)
-    };
+      const strategyInstance = StrategyService.getInstance(connection);
+      const newJob = await strategyInstance.createLevelsStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        solPrice,
+        levels
+      });
 
-    setJobs(prevJobs => [...prevJobs, newJob]);
-    setLevels([]);
+      // Update local state
+      setJobs(prevJobs => [...prevJobs, newJob]);
+      setLevels([]);
+    } catch (error) {
+      console.error('Error creating levels strategy:', error);
+      setNotification({
+        message: error instanceof Error ? error.message : 'Failed to create levels strategy',
+        type: 'error'
+      });
+    }
   };
 
   // Add deleteJob function before the return statement
@@ -2683,6 +2700,42 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     return logoURI;
   };
 
+  const loadTradingWallets = async () => {
+    if (!wallet.publicKey) return;
+    
+    try {
+      const ownerAddress = wallet.publicKey.toString();
+      const storedWallets = await tradingWalletService.getWallets(ownerAddress);
+      
+      if (!storedWallets || !Array.isArray(storedWallets)) {
+        console.warn('No trading wallets found or invalid format');
+        return;
+      }
+
+      // Process wallets to ensure consistent secret key format
+      const processedWallets = storedWallets.map(w => ({
+        ...w,
+        secretKey: w.secretKey instanceof Uint8Array ? w.secretKey : new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+      }));
+
+      // Ensure no duplicates by using publicKey as unique identifier
+      const uniqueWallets = Array.from(
+        new Map(processedWallets.map(w => [w.publicKey, w])).values()
+      );
+
+      setTradingWallets(uniqueWallets);
+      
+      if (uniqueWallets.length > 0) {
+        setSelectedTradingWallet(uniqueWallets[0]);
+      }
+    } catch (error) {
+      console.error('Error loading trading wallets:', error);
+      setNotification({
+        message: 'Failed to load trading wallets',
+        type: 'error'
+      });
+    }
+  };
 
   return (
     <div className={walletStyles.container}>
@@ -2940,23 +2993,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                         <>
                                           <span style={{ color: '#94a3b8' }}>|</span>
                                           <span style={{
-                                            color: job.profitTracking.currentProfit >= 0 ? '#22c55e' : '#ef4444',
+                                            color: job.profitTracking.percentageChange >= 0 ? '#22c55e' : '#ef4444',
                                             fontWeight: '500',
                                             display: 'flex',
                                             alignItems: 'center',
                                             gap: '0.25rem'
                                           }}>
-                                            <span>{job.profitTracking.currentProfit > 0 ? '+' : ''}{job.profitTracking.currentProfit.toFixed(2)}%</span>
-                                            {job.profitTracking.trades.length > 0 && (
-                                              <span style={{ 
-                                                fontSize: '0.625rem', 
-                                                backgroundColor: job.profitTracking.currentProfit >= 0 ? '#15803d' : '#991b1b',
-                                                padding: '0.125rem 0.25rem',
-                                                borderRadius: '0.25rem'
-                                              }}>
-                                                {job.profitTracking.trades.length} {job.profitTracking.trades.length === 1 ? 'trade' : 'trades'}
-                                              </span>
-                                            )}
+                                            <span>{job.profitTracking.percentageChange > 0 ? '+' : ''}{job.profitTracking.percentageChange.toFixed(2)}%</span>
+                                            <span style={{ 
+                                              fontSize: '0.625rem', 
+                                              backgroundColor: job.profitTracking.percentageChange >= 0 ? '#15803d' : '#991b1b',
+                                              padding: '0.125rem 0.25rem',
+                                              borderRadius: '0.25rem'
+                                            }}>
+                                              {job.profitTracking.totalProfitSOL.toFixed(4)} SOL
+                                            </span>
                                           </span>
                                         </>
                                       )}
@@ -4391,8 +4442,10 @@ interface TokenMetadata {
   logo_uri?: string | null;
 }
 
+
+
 // Add a cache for token metadata
-const tokenMetadataCache: Map<string, TokenMetadata> = new Map();
+const tokenMetadataCacheInList: Map<string, TokenMetadata> = new Map();
 
 export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({ 
   walletAddress, 
@@ -4400,7 +4453,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   tradingWallet, 
   displayMode = 'full',
   onRpcError,
-  wallet // Add wallet to destructuring
+  wallet
 }): ReactElement => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);

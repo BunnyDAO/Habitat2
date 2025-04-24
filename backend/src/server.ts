@@ -16,6 +16,7 @@ import { createWhaleTrackingRouter } from './api/v1/routes/whale-tracking.routes
 import { createProxyRouter } from './api/v1/routes/proxy.routes';
 import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
 import { createSwapRouter } from './api/v1/routes/swap.routes';
+import strategiesRouter from './routes/strategies.routes';
 import WebSocket from 'ws';
 import { createServer, Server as HttpServer } from 'http';
 import { Server as WebSocketServer } from 'ws';
@@ -133,6 +134,9 @@ app.use('/api/v1/wallet-balances', walletBalancesRouter);
 // Add swap routes
 const swapRouter = createSwapRouter(pool, connection);
 app.use('/api/v1/swap', swapRouter);
+
+// Add strategies routes
+app.use('/api/v1/strategies', strategiesRouter);
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {

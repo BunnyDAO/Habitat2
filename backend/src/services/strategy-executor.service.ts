@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { createClient } from 'redis';
 import { HeliusService } from './helius.service';
-import { Strategy, DCAConfig, GridConfig } from '../types/strategy';
+import { Strategy, DCAConfig, GridConfig, AnyStrategyConfig } from '../types/strategy';
 
 export class StrategyExecutorService {
   private pool: Pool;
@@ -68,19 +68,15 @@ export class StrategyExecutorService {
   private async executeStrategy(strategy: Strategy & { wallet_pubkey: string }) {
     try {
       // Parse strategy configuration
-      const config = JSON.parse(strategy.config);
+      const config = strategy.config as AnyStrategyConfig;
       
       // Execute strategy based on type
-      switch (strategy.strategyType) {
-        case 'DCA':
-          await this.executeDCAStrategy(strategy, config as DCAConfig);
-          break;
-        case 'GRID':
-          await this.executeGridStrategy(strategy, config as GridConfig);
-          break;
-        // Add more strategy types as needed
-        default:
-          console.warn(`Unknown strategy type: ${strategy.strategyType}`);
+      if (config.type === 'DCA') {
+        await this.executeDCAStrategy(strategy, config as DCAConfig);
+      } else if (config.type === 'GRID') {
+        await this.executeGridStrategy(strategy, config as GridConfig);
+      } else {
+        throw new Error(`Unsupported strategy type: ${config.type}`);
       }
     } catch (error) {
       console.error(`Error executing strategy ${strategy.id}:`, error);

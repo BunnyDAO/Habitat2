@@ -128,5 +128,37 @@ export function createTradingWalletsRouter(pool: Pool) {
     }
   });
 
+  // Get trading wallet ID by public key
+  router.get('/by-pubkey/:walletPubkey', async (req, res) => {
+    console.log('Received GET request for trading wallet ID by public key');
+    const { walletPubkey } = req.params;
+    console.log('Wallet public key:', walletPubkey);
+    
+    const client = await pool.connect();
+    console.log('Got database client');
+
+    try {
+      const result = await client.query(`
+        SELECT id
+        FROM trading_wallets
+        WHERE wallet_pubkey = $1
+      `, [walletPubkey]);
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ error: 'Trading wallet not found' });
+        return;
+      }
+
+      console.log('Found trading wallet ID:', result.rows[0].id);
+      res.json({ id: result.rows[0].id });
+    } catch (error) {
+      console.error('Error fetching trading wallet ID:', error);
+      res.status(500).json({ error: 'Failed to fetch trading wallet ID' });
+    } finally {
+      client.release();
+      console.log('Released database client');
+    }
+  });
+
   return router;
 } 

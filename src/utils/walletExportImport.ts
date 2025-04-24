@@ -12,7 +12,7 @@ import {
 // Use the types from App.tsx
 interface TradingWallet {
   publicKey: string;
-  secretKey: number[];
+  secretKey: Uint8Array;
   mnemonic: string;
   name?: string;
   createdAt: number;
@@ -36,42 +36,44 @@ interface WalletExportFile {
  * @param publicKey The wallet's public key
  * @param secretKey The wallet's secret key
  */
-export function storeWalletSecretKey(publicKey: string, secretKey: Uint8Array): void {
-  console.log('Storing secret key in localStorage:', {
-    publicKey,
-    secretKeyLength: secretKey.length,
-    secretKeyType: secretKey.constructor.name
-  });
-  
-  const key = `wallet_${publicKey}`;
-  const value = JSON.stringify(Array.from(secretKey));
-  
-  console.log('Storage details:', {
-    key,
-    valueLength: value.length,
-    localStorageAvailable: typeof localStorage !== 'undefined'
-  });
-  
-  localStorage.setItem(key, value);
-  
-  // Verify storage
-  const stored = localStorage.getItem(key);
-  console.log('Storage verification:', {
-    stored: stored !== null,
-    storedLength: stored?.length
-  });
-}
+export const storeWalletSecretKey = (publicKey: string, secretKey: Uint8Array) => {
+    try {
+        console.log('Storing secret key for wallet:', publicKey);
+        console.log('Secret key length:', secretKey.length);
+        console.log('Secret key type:', secretKey.constructor.name);
+        
+        // Store the secretKey as a base64 string to preserve the Uint8Array data
+        const base64SecretKey = Buffer.from(secretKey).toString('base64');
+        localStorage.setItem(`wallet_${publicKey}`, base64SecretKey);
+        
+        // Verify storage
+        const storedKey = localStorage.getItem(`wallet_${publicKey}`);
+        console.log('Storage verification - key exists:', !!storedKey);
+        return true;
+    } catch (error) {
+        console.error('Error storing wallet secret key:', error);
+        return false;
+    }
+};
 
 /**
  * Retrieves a wallet's secret key from localStorage
  * @param publicKey The wallet's public key
  * @returns The wallet's secret key as Uint8Array, or null if not found
  */
-export function getWalletSecretKey(publicKey: string): Uint8Array | null {
-  const stored = localStorage.getItem(`wallet_${publicKey}`);
-  if (!stored) return null;
-  return new Uint8Array(JSON.parse(stored));
-}
+export const getWalletSecretKey = (publicKey: string): Uint8Array | null => {
+    try {
+        const storedKey = localStorage.getItem(`wallet_${publicKey}`);
+        if (!storedKey) return null;
+        
+        // Convert base64 string back to Uint8Array
+        const secretKeyBuffer = Buffer.from(storedKey, 'base64');
+        return new Uint8Array(secretKeyBuffer);
+    } catch (error) {
+        console.error('Error retrieving wallet secret key:', error);
+        return null;
+    }
+};
 
 /**
  * Exports trading wallets to an encrypted file
@@ -221,7 +223,7 @@ export async function importWallets(
             
             return {
                 publicKey: w.publicKey,
-                secretKey: Array.from(w.secretKey),
+                secretKey: w.secretKey,
                 mnemonic: '', // Empty string since we don't need it
                 name: metadata?.name,
                 createdAt: metadata?.createdAt || Date.now()

@@ -6,7 +6,7 @@ import { PublicKey } from '@solana/web3.js';
 // Use the TradingWallet type directly
 interface TradingWallet {
   publicKey: string;
-  secretKey: number[];
+  secretKey: Uint8Array;
   mnemonic: string;
   name?: string;
   createdAt: number;
