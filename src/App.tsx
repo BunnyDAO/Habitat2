@@ -776,6 +776,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
 
     try {
+        // Check if user is authenticated
+        const token = await authService.getSession();
+        if (!token) {
+            // Try to sign in first
+            const newToken = await authService.signIn(wallet.publicKey.toString());
+            if (!newToken) {
+                setNotification({
+                    message: 'Please sign in to create a trading wallet',
+                    type: 'error'
+                });
+                return;
+            }
+        }
+
         // Check wallet limit
         const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
         const ownerAddress = wallet.publicKey.toString();
@@ -817,11 +831,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         setTradingWallets(updatedWallets);
         setSelectedTradingWallet(walletToStore);
 
-        // Try to save to backend, but don't block if it fails
+        // Save to backend
         try {
             await tradingWalletService.saveWallet(ownerAddress, walletToStore);
+            console.log('Successfully saved wallet to backend');
         } catch (error) {
-            console.warn('Error saving wallet to database:', error);
+            console.error('Error saving wallet to database:', error);
+            // Remove from localStorage and state if backend save fails
+            allWallets[ownerAddress] = existingWallets;
+            localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+            setTradingWallets(existingWallets);
+            setSelectedTradingWallet(null);
+            throw new Error('Failed to save wallet to database');
         }
     } catch (error) {
         console.error('Error generating trading wallet:', error);
@@ -2534,6 +2555,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         setTradingWallets(allWallets[ownerAddress]);
       }
     }
+
+    // Remove wallet from localStorage
+    localStorage.removeItem(`wallet_${walletToDelete.publicKey}`);
+
+    // Remove wallet balances from localStorage
+    localStorage.removeItem(`wallet_balances_${walletToDelete.publicKey}`);
 
     // Remove all jobs associated with this wallet
     const updatedJobs = jobs.filter(job => job.tradingWalletPublicKey !== walletToDelete.publicKey);
