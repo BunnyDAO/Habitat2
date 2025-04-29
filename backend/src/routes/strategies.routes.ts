@@ -23,13 +23,14 @@ router.post('/',
         return res.status(401).json({ error: 'User not authenticated' });
       }
 
-      const { trading_wallet_id, strategy_type, config } = req.body;
+      const { trading_wallet_id, strategy_type, config, name } = req.body;
       
       // Verify trading wallet ownership
       if (trading_wallet_id !== req.user.trading_wallet_id) {
         return res.status(403).json({ error: 'Access denied to trading wallet' });
       }
 
+      // Create strategy in database
       const { data, error } = await supabase
         .from('strategies')
         .insert([{
@@ -37,12 +38,35 @@ router.post('/',
           main_wallet_pubkey: req.user.main_wallet_pubkey,
           strategy_type,
           config,
-          version: 1
+          name,
+          version: 1,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }])
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error creating strategy:', error);
+        throw error;
+      }
+
+      // Create strategy version record
+      const { error: versionError } = await supabase
+        .from('strategy_versions')
+        .insert([{
+          strategy_id: data.id,
+          version: 1,
+          config,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (versionError) {
+        console.error('Error creating strategy version:', versionError);
+        // Don't throw here, as the strategy was created successfully
+      }
+
       res.json(data);
     } catch (error) {
       console.error('Error creating strategy:', error);
@@ -110,18 +134,37 @@ router.put('/:id',
       // Increment version
       const newVersion = strategy.version + 1;
 
+      // Update strategy
       const { data, error } = await supabase
         .from('strategies')
         .update({ 
           config,
           version: newVersion,
-          change_reason
+          change_reason,
+          updated_at: new Date().toISOString()
         })
         .eq('id', id)
         .select()
         .single();
 
       if (error) throw error;
+
+      // Create new version record
+      const { error: versionError } = await supabase
+        .from('strategy_versions')
+        .insert([{
+          strategy_id: id,
+          version: newVersion,
+          config,
+          change_reason,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (versionError) {
+        console.error('Error creating strategy version:', versionError);
+        // Don't throw here, as the strategy was updated successfully
+      }
+
       res.json(data);
     } catch (error) {
       console.error('Error updating strategy:', error);
@@ -204,19 +247,40 @@ router.post('/:id/restore/:version',
         return res.status(404).json({ error: 'Version not found' });
       }
 
+      // Increment version
+      const newVersion = strategy.version + 1;
+
       // Restore version
       const { data, error } = await supabase
         .from('strategies')
         .update({ 
           config: versionData.config,
-          version: strategy.version + 1,
-          change_reason: `Restored to version ${version}`
+          version: newVersion,
+          change_reason: `Restored to version ${version}`,
+          updated_at: new Date().toISOString()
         })
         .eq('id', id)
         .select()
         .single();
 
       if (error) throw error;
+
+      // Create new version record
+      const { error: newVersionError } = await supabase
+        .from('strategy_versions')
+        .insert([{
+          strategy_id: id,
+          version: newVersion,
+          config: versionData.config,
+          change_reason: `Restored to version ${version}`,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (newVersionError) {
+        console.error('Error creating strategy version:', newVersionError);
+        // Don't throw here, as the strategy was restored successfully
+      }
+
       res.json(data);
     } catch (error) {
       console.error('Error restoring strategy version:', error);
@@ -248,6 +312,18 @@ router.delete('/:id',
         return res.status(404).json({ error: 'Strategy not found or access denied' });
       }
 
+      // Delete strategy versions first
+      const { error: versionsError } = await supabase
+        .from('strategy_versions')
+        .delete()
+        .eq('strategy_id', id);
+
+      if (versionsError) {
+        console.error('Error deleting strategy versions:', versionsError);
+        // Continue with strategy deletion even if version deletion fails
+      }
+
+      // Delete strategy
       const { error } = await supabase
         .from('strategies')
         .delete()
