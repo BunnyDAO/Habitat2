@@ -1739,6 +1739,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
+      
+      // Check if a strategy for this wallet already exists
+      const existingJob = jobs.find(
+        job => 
+          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
+          job.type === JobType.WALLET_MONITOR &&
+          (job as WalletMonitoringJob).walletAddress === monitoredWallet
+      );
+
       const newJob = await strategyInstance.createWalletMonitorStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
@@ -1751,7 +1760,22 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       jobManagerRef.current?.addJob(newJob);
 
       // Update local state
-      setJobs(prevJobs => [...prevJobs, newJob]);
+      if (existingJob) {
+        setJobs(prevJobs => prevJobs.map(job => 
+          job.id === existingJob.id ? newJob : job
+        ));
+        setNotification({
+          message: 'Updated existing wallet monitor strategy',
+          type: 'success'
+        });
+      } else {
+        setJobs(prevJobs => [...prevJobs, newJob]);
+        setNotification({
+          message: 'Created new wallet monitor strategy',
+          type: 'success'
+        });
+      }
+
       setMonitoredWallet('');
       setIsValidAddress(false);
     } catch (error) {
@@ -2187,22 +2211,54 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Update createVaultStrategy
   const createVaultStrategy = async () => {
-    if (!selectedTradingWallet || !vaultPercentage) return;
+    if (!selectedTradingWallet) {
+      setNotification({
+        message: 'Please select a trading wallet first',
+        type: 'error'
+      });
+      return;
+    }
 
     try {
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
+      
+      // Check if a vault strategy already exists for this trading wallet
+      const existingJob = jobs.find(
+        job => 
+          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
+          job.type === JobType.VAULT
+      );
+
       const newJob = await strategyInstance.createVaultStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
-        vaultPercentage
+        vaultPercentage: vaultPercentage
       });
 
+      // Add job to manager
+      jobManagerRef.current?.addJob(newJob);
+
       // Update local state
-      setJobs(prevJobs => [...prevJobs, newJob]);
-      setVaultPercentage(10);
+      if (existingJob) {
+        setJobs(prevJobs => prevJobs.map(job => 
+          job.id === existingJob.id ? newJob : job
+        ));
+        setNotification({
+          message: 'Updated existing vault strategy',
+          type: 'success'
+        });
+      } else {
+        setJobs(prevJobs => [...prevJobs, newJob]);
+        setNotification({
+          message: 'Created new vault strategy',
+          type: 'success'
+        });
+      }
+
+      setVaultPercentage(10); // Reset to default
     } catch (error) {
       console.error('Error creating vault strategy:', error);
       setNotification({
@@ -2452,21 +2508,62 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Update createLevelsStrategy
   const createLevelsStrategy = async () => {
-    if (!selectedTradingWallet || levels.length === 0) return;
+    if (!selectedTradingWallet) {
+      setNotification({
+        message: 'Please select a trading wallet first',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (levels.length === 0) {
+      setNotification({
+        message: 'Please add at least one price level',
+        type: 'error'
+      });
+      return;
+    }
 
     try {
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
+      
+      // Check if a levels strategy already exists for this trading wallet
+      const existingJob = jobs.find(
+        job => 
+          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
+          job.type === JobType.LEVELS
+      );
+
       const newJob = await strategyInstance.createLevelsStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
-        levels
+        levels: levels
       });
 
+      // Add job to manager
+      jobManagerRef.current?.addJob(newJob);
+
       // Update local state
-      setJobs(prevJobs => [...prevJobs, newJob]);
+      if (existingJob) {
+        setJobs(prevJobs => prevJobs.map(job => 
+          job.id === existingJob.id ? newJob : job
+        ));
+        setNotification({
+          message: 'Updated existing levels strategy',
+          type: 'success'
+        });
+      } else {
+        setJobs(prevJobs => [...prevJobs, newJob]);
+        setNotification({
+          message: 'Created new levels strategy',
+          type: 'success'
+        });
+      }
+
+      // Reset levels
       setLevels([]);
     } catch (error) {
       console.error('Error creating levels strategy:', error);
@@ -2646,6 +2743,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   const addLevel = () => {
     if (newLevelPrice > 0 && newLevelPercentage > 0) {
+      // Check if this price level already exists
+      const existingLevel = levels.find(level => level.price === newLevelPrice);
+      if (existingLevel) {
+        setNotification({
+          message: 'A level with this price already exists. Please use a different price.',
+          type: 'error'
+        });
+        return;
+      }
+
       setLevels(prevLevels => [...prevLevels, { price: newLevelPrice, percentage: newLevelPercentage }]);
       setNewLevelPrice(0);
       setNewLevelPercentage(0);

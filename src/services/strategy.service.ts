@@ -68,9 +68,16 @@ export class StrategyService {
     };
   }
 
-  private findExistingStrategy(tradingWalletPublicKey: string, type: JobType): Job | undefined {
+  private findExistingStrategy(tradingWalletPublicKey: string, type: JobType, walletAddress?: string): Job | undefined {
     return Array.from(this.jobs.values()).find(
-      job => job.tradingWalletPublicKey === tradingWalletPublicKey && job.type === type
+      job => {
+        const sameWallet = job.tradingWalletPublicKey === tradingWalletPublicKey;
+        const sameType = job.type === type;
+        const sameTargetWallet = type === JobType.WALLET_MONITOR 
+          ? (job as WalletMonitoringJob).walletAddress === walletAddress
+          : true;
+        return sameWallet && sameType && sameTargetWallet;
+      }
     );
   }
 
@@ -81,8 +88,12 @@ export class StrategyService {
   }
 
   async createWalletMonitorStrategy(params: WalletMonitorParams): Promise<WalletMonitoringJob> {
-    // Check for existing strategy
-    const existingJob = this.findExistingStrategy(params.tradingWallet.publicKey, JobType.WALLET_MONITOR);
+    // Check for existing strategy with the same target wallet
+    const existingJob = this.findExistingStrategy(
+      params.tradingWallet.publicKey, 
+      JobType.WALLET_MONITOR,
+      params.walletAddress
+    );
     
     if (existingJob && existingJob.type === JobType.WALLET_MONITOR) {
       // Update existing job
