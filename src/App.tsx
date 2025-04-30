@@ -19,6 +19,7 @@ import { exportWallets, storeWalletSecretKey } from './utils/walletExportImport'
 import { importLackeys, mergeLackeys } from './utils/lackeyExportImport';
 import WalletLimitDialog from './components/WalletLimitDialog';
 import DeleteWalletDialog from './components/DeleteWalletDialog';
+import DeleteLackeyDialog from './components/DeleteLackeyDialog';
 import LackeyImportExport from './components/LackeyImportExport';
 import { Graphs } from './pages/Graphs';
 import { WalletMonitorIcon } from './components/WalletMonitorIcon';
@@ -1403,9 +1404,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             className={`${walletStyles.strategyMenuButton} ${walletStyles.strategyMenuButtonDanger}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (confirm('Are you sure you want to delete this strategy?')) {
-                                deleteJob(job.id);
-                              }
+                              setLackeyToDelete({ id: job.id, name: job.name });
+                              setShowDeleteLackeyDialog(true);
                             }}
                           >
                             <span role="img" aria-label="Delete">🗑️</span>
@@ -2764,6 +2764,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
+  // Add state for delete lackey dialog
+  const [showDeleteLackeyDialog, setShowDeleteLackeyDialog] = useState(false);
+  const [lackeyToDelete, setLackeyToDelete] = useState<{ id: string; name?: string } | null>(null);
+
+  // Add confirmDeleteLackey function
+  const confirmDeleteLackey = () => {
+    if (!lackeyToDelete) return;
+    deleteJob(lackeyToDelete.id);
+    setLackeyToDelete(null);
+    setShowDeleteLackeyDialog(false);
+  };
+
   return (
     <div className={walletStyles.container}>
       <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} />
@@ -3078,9 +3090,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (confirm('Are you sure you want to delete this strategy?')) {
-                                          deleteJob(job.id);
-                                        }
+                                        setLackeyToDelete({ id: job.id, name: job.name });
+                                        setShowDeleteLackeyDialog(true);
                                       }}
                                       style={{
                                         padding: '0.25rem 0.5rem',
@@ -3642,13 +3653,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const updatedJobs = jobs.filter(j => j.id !== job.id);
-                                  setJobs(updatedJobs);
-                                  localStorage.setItem(`jobs_${wallet.publicKey?.toString()}`, JSON.stringify(updatedJobs));
-                                  setNotification({
-                                    message: 'Saved wallet removed successfully',
-                                    type: 'success'
-                                  });
+                                  setLackeyToDelete({ id: job.id, name: job.name });
+                                  setShowDeleteLackeyDialog(true);
                                 }}
                                 style={{
                                   width: '100%',
@@ -4396,6 +4402,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         onConfirm={handleOverrideConfirm}
         monitoredWallet={monitoredWallet}
         tradingWallet={selectedTradingWallet?.publicKey || ''}
+      />
+      <DeleteLackeyDialog
+        isOpen={showDeleteLackeyDialog}
+        onClose={() => {
+          setShowDeleteLackeyDialog(false);
+          setLackeyToDelete(null);
+        }}
+        onConfirm={confirmDeleteLackey}
+        lackeyName={lackeyToDelete?.name}
       />
     </div>
   );
