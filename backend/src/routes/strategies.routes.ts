@@ -37,6 +37,14 @@ router.post('/',
         return res.status(403).json({ error: 'Access denied to trading wallet' });
       }
 
+      // Check for existing strategy of the same type
+      const { data: existingStrategy, error: existingError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('trading_wallet_id', trading_wallet_id)
+        .eq('strategy_type', strategy_type)
+        .single();
+
       // Get the position of this trading wallet
       const { data: walletPosition, error: positionError } = await supabase
         .from('trading_wallets')
@@ -52,7 +60,37 @@ router.post('/',
       // Calculate position (1-based index)
       const position = walletPosition.findIndex(w => w.id === trading_wallet_id) + 1;
 
-      // Create strategy in database
+      if (existingStrategy) {
+        // Update existing strategy
+        const { data: updatedStrategy, error: updateError } = await supabase
+          .from('strategies')
+          .update({
+            config,
+            name,
+            version: existingStrategy.version + 1,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingStrategy.id)
+          .select()
+          .single();
+
+        if (updateError) throw updateError;
+
+        // Create version history entry
+        await supabase
+          .from('strategy_versions')
+          .insert({
+            strategy_id: existingStrategy.id,
+            version: existingStrategy.version,
+            config: existingStrategy.config,
+            created_by: req.user.main_wallet_pubkey,
+            change_reason: 'Strategy updated with new configuration'
+          });
+
+        return res.json(updatedStrategy);
+      }
+
+      // Create new strategy if no existing one found
       const { data, error } = await supabase
         .from('strategies')
         .insert([{
@@ -75,25 +113,10 @@ router.post('/',
         throw error;
       }
 
-      // Create strategy version record
-      const { error: versionError } = await supabase
-        .from('strategy_versions')
-        .insert([{
-          strategy_id: data.id,
-          version: 1,
-          config,
-          created_at: new Date().toISOString()
-        }]);
-
-      if (versionError) {
-        console.error('Error creating strategy version:', versionError);
-        // Don't throw here, as the strategy was created successfully
-      }
-
       res.json(data);
     } catch (error) {
-      console.error('Error creating strategy:', error);
-      res.status(500).json({ error: 'Failed to create strategy' });
+      console.error('Error in strategy creation:', error);
+      res.status(500).json({ error: 'Failed to create/update strategy' });
     }
   }
 );

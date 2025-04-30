@@ -1280,7 +1280,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           return {
                             title: 'Price Monitor',
                             details: [
-                                  `Target: $${priceJob.targetPrice} (${priceJob.direction === 'above' ? 'Sell Limit' : 'Stop Loss'})`,
+                              `Target: $${priceJob.targetPrice} (${priceJob.direction === 'above' ? 'Sell Limit' : 'Stop Loss'})`,
                               `Sell: ${priceJob.percentageToSell}% of SOL`,
                               priceJob.lastActivity ? `Last Activity: ${new Date(priceJob.lastActivity).toLocaleString()}` : null,
                               priceJob.lastTriggerPrice ? `Last Trigger: $${priceJob.lastTriggerPrice}` : null
@@ -1315,7 +1315,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
                     return (
                       <div 
-                        key={job.id}
+                        key={`${job.id}_${job.tradingWalletPublicKey}`}
                         className={`${walletStyles.strategyBadge} ${isPaused ? walletStyles.strategyBadgePaused : ''}`}
                       >
                         <span role="img" aria-label="Active Strategy" style={{ fontSize: '0.75rem', opacity: isPaused ? 0.7 : 1 }}>
