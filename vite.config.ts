@@ -26,6 +26,29 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
+        headers: {
+          'Connection': 'keep-alive',
+          'Keep-Alive': 'timeout=5'
+        },
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            console.log('proxy error', err);
+          });
+          proxy.on('proxyReq', (proxyReq, req) => {
+            console.log('Sending Request to the Target:', {
+              method: req.method,
+              url: req.url,
+              headers: req.headers
+            });
+          });
+          proxy.on('proxyRes', (proxyRes, req) => {
+            console.log('Received Response from the Target:', {
+              statusCode: proxyRes.statusCode,
+              url: req.url,
+              headers: proxyRes.headers
+            });
+          });
+        },
       },
     },
   },

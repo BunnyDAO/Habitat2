@@ -1,5 +1,6 @@
 import { TradingWallet } from '../types/wallet';
 import apiClient from './api/api-client';
+import { authService } from './auth.service';
 
 // Use the backend server URL
 const TRADING_WALLETS_ENDPOINT = '/trading-wallets';
@@ -43,16 +44,31 @@ export const tradingWalletService = {
 
   async saveWallet(ownerAddress: string, wallet: TradingWallet): Promise<void> {
     try {
+      // Ensure we have a valid auth token
+      const token = await authService.getSession();
+      if (!token) {
+        // Try to sign in first
+        const newToken = await authService.signIn(ownerAddress);
+        if (!newToken) {
+          throw new Error('Not authenticated');
+        }
+      }
+
       // Convert Uint8Array to base64 string for storage
       const walletToStore: RawWallet = {
         ...wallet,
         secretKey: Buffer.from(wallet.secretKey).toString('base64')
       };
       
-      await apiClient.post(TRADING_WALLETS_ENDPOINT, {
+      console.log('Saving wallet to endpoint:', TRADING_WALLETS_ENDPOINT);
+      console.log('Request data:', { ownerAddress, wallet: walletToStore });
+      
+      const response = await apiClient.post(TRADING_WALLETS_ENDPOINT, {
         ownerAddress,
         wallet: walletToStore
       });
+
+      console.log('Save wallet response:', response.data);
     } catch (error) {
       console.error('Error saving wallet:', error);
       throw error;
@@ -87,6 +103,9 @@ export const tradingWalletService = {
   async getWalletId(publicKey: string): Promise<number> {
     try {
       const response = await apiClient.get(`${TRADING_WALLETS_ENDPOINT}/by-pubkey/${publicKey}`);
+      if (!response.data || !response.data.id) {
+        throw new Error('Trading wallet not found');
+      }
       return response.data.id;
     } catch (error) {
       console.error('Error getting trading wallet ID:', error);

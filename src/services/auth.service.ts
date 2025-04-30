@@ -1,10 +1,12 @@
 import apiClient from './api/api-client';
+import { AxiosError } from 'axios';
 
 export class AuthService {
   private static instance: AuthService;
+
   private constructor() {}
 
-  static getInstance(): AuthService {
+  public static getInstance(): AuthService {
     if (!AuthService.instance) {
       AuthService.instance = new AuthService();
     }
@@ -35,22 +37,28 @@ export class AuthService {
       return access_token;
     } catch (error) {
       console.error('Error signing in:', error);
+      if (error instanceof AxiosError && error.response) {
+        console.error('Error response:', error.response.data);
+      }
       return null;
     }
   }
 
-  async signOut(): Promise<void> {
+  async signOut(): Promise<boolean> {
     try {
       const token = await this.getSession();
-      if (token) {
-        await apiClient.post('/auth/signout');
+      if (!token) {
+        return true; // Already signed out
       }
+
+      await apiClient.post('/auth/signout');
       localStorage.removeItem('auth.token');
-      console.log('Sign out successful');
+      return true;
     } catch (error) {
       console.error('Error signing out:', error);
-      // Still remove the token from localStorage even if the API call fails
+      // Still remove the token from localStorage even if the server request fails
       localStorage.removeItem('auth.token');
+      return true;
     }
   }
 
@@ -68,6 +76,10 @@ export class AuthService {
       console.error('Error getting session:', error);
       return null;
     }
+  }
+
+  isAuthenticated(): boolean {
+    return !!localStorage.getItem('auth.token');
   }
 }
 

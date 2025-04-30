@@ -1,6 +1,7 @@
 import express from 'express';
 import { Pool } from 'pg';
 import { TradingWallet } from '../../src/types/wallet';
+import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const router = express.Router();
 
@@ -15,10 +16,14 @@ export function createTradingWalletsRouter(pool: Pool) {
   });
 
   // Get trading wallets for an owner
-  router.get('/:ownerAddress', async (req, res) => {
+  router.get('/:ownerAddress', authMiddleware, async (req: AuthenticatedRequest, res) => {
     console.log('Received GET request for trading wallets');
     const { ownerAddress } = req.params;
     console.log('Owner address:', ownerAddress);
+    
+    if (req.user?.main_wallet_pubkey !== ownerAddress) {
+      return res.status(403).json({ error: 'Unauthorized access to trading wallets' });
+    }
     
     const client = await pool.connect();
     console.log('Got database client');
@@ -45,13 +50,17 @@ export function createTradingWalletsRouter(pool: Pool) {
   });
 
   // Save a trading wallet
-  router.post('/', async (req, res) => {
+  router.post('/', authMiddleware, async (req: AuthenticatedRequest, res) => {
     console.log('Received POST request to /trading-wallets');
     console.log('Request body:', req.body);
     
     const { ownerAddress, wallet } = req.body as { ownerAddress: string; wallet: TradingWallet };
     console.log('Extracted ownerAddress:', ownerAddress);
     console.log('Extracted wallet:', wallet);
+    
+    if (req.user?.main_wallet_pubkey !== ownerAddress) {
+      return res.status(403).json({ error: 'Unauthorized access to trading wallets' });
+    }
     
     const client = await pool.connect();
     console.log('Got database client');
@@ -105,12 +114,25 @@ export function createTradingWalletsRouter(pool: Pool) {
   });
 
   // Delete a trading wallet
-  router.delete('/:walletPubkey', async (req, res) => {
+  router.delete('/:walletPubkey', authMiddleware, async (req: AuthenticatedRequest, res) => {
     const { walletPubkey } = req.params;
     const client = await pool.connect();
 
     try {
       await client.query('BEGIN');
+
+      // Verify ownership
+      const walletResult = await client.query(`
+        SELECT main_wallet_pubkey FROM trading_wallets WHERE wallet_pubkey = $1
+      `, [walletPubkey]);
+
+      if (walletResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Trading wallet not found' });
+      }
+
+      if (walletResult.rows[0].main_wallet_pubkey !== req.user?.main_wallet_pubkey) {
+        return res.status(403).json({ error: 'Unauthorized access to trading wallet' });
+      }
 
       await client.query(`
         DELETE FROM trading_wallets
@@ -129,7 +151,7 @@ export function createTradingWalletsRouter(pool: Pool) {
   });
 
   // Get trading wallet ID by public key
-  router.get('/by-pubkey/:walletPubkey', async (req, res) => {
+  router.get('/by-pubkey/:walletPubkey', authMiddleware, async (req: AuthenticatedRequest, res) => {
     console.log('Received GET request for trading wallet ID by public key');
     const { walletPubkey } = req.params;
     console.log('Wallet public key:', walletPubkey);
@@ -139,7 +161,7 @@ export function createTradingWalletsRouter(pool: Pool) {
 
     try {
       const result = await client.query(`
-        SELECT id
+        SELECT id, main_wallet_pubkey
         FROM trading_wallets
         WHERE wallet_pubkey = $1
       `, [walletPubkey]);
@@ -147,6 +169,11 @@ export function createTradingWalletsRouter(pool: Pool) {
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Trading wallet not found' });
         return;
+      }
+
+      // Verify ownership
+      if (result.rows[0].main_wallet_pubkey !== req.user?.main_wallet_pubkey) {
+        return res.status(403).json({ error: 'Unauthorized access to trading wallet' });
       }
 
       console.log('Found trading wallet ID:', result.rows[0].id);

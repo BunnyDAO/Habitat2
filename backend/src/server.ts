@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createClient } from 'redis';
 import { HeliusService } from './services/helius.service';
 import dotenv from 'dotenv';
+import path from 'path';
 import { Pool } from 'pg';
 import { Connection } from '@solana/web3.js';
 import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
@@ -17,13 +18,14 @@ import { createProxyRouter } from './api/v1/routes/proxy.routes';
 import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
 import { createSwapRouter } from './api/v1/routes/swap.routes';
 import strategiesRouter from './routes/strategies.routes';
+import authRouter from './routes/auth.routes';
 import WebSocket from 'ws';
 import { createServer, Server as HttpServer } from 'http';
 import { Server as WebSocketServer } from 'ws';
 import { Socket } from 'net';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from the correct path
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -79,7 +81,7 @@ const initializeRedis = async () => {
     });
 
     await client.connect();
-  console.log('Connected to Redis successfully');
+    console.log('Connected to Redis successfully');
     redisClient = client;
   } catch (error) {
     console.error('Failed to connect to Redis, continuing without Redis:', error);
@@ -105,6 +107,7 @@ app.use(cors({
 app.use(express.json());
 
 // Register routes
+app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/trading-wallets', createTradingWalletsRouter(pool));
 app.use('/api/v1/wallet-balances', createWalletBalancesRouter(pool));
 app.use('/api/v1/tokens', createTokenRouter(tokenService));

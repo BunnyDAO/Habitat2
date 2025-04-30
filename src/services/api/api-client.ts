@@ -2,10 +2,11 @@ import axios from 'axios';
 import { authService } from '../auth.service';
 
 const apiClient = axios.create({
-  baseURL: 'http://localhost:3001/api/v1',  // Point to the backend server
+  baseURL: '/api/v1',  // Use the proxied path
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Enable sending cookies
 });
 
 // Add request interceptor to include auth token
