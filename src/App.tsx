@@ -6,7 +6,7 @@ import { ConnectionProvider, WalletProvider, useWallet, useConnection } from '@s
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import '@solana/wallet-adapter-react-ui/styles.css';
-import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, Transaction, TransactionInstruction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, Transaction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js';
 import { JobManager } from './managers/JobManager';
 import { JobType, WalletMonitoringJob, AnyJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, Level, ensureUint8Array } from './types/jobs';
 import { Buffer } from 'buffer';
@@ -33,6 +33,7 @@ import { WalletBalanceService } from './services/walletBalanceService';
 import { executeSwap } from './services/api/swap.service';
 import { StrategyService } from './services/strategy.service';
 import { authService } from './services/auth.service';
+import { PortfolioProvider } from './contexts/PortfolioContext';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -873,61 +874,89 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Update fetchTradingWalletBalance to fetch all balances
   const fetchTradingWalletBalances = async () => {
-    if (!connection) return;
+    if (!connection || isUpdatingBalances) return;
     
-    const newBalances: Record<string, number> = {};
-    for (const tw of tradingWallets) {
-      try {
-        // Get SOL balance from chain
-        const balance = await connection.getBalance(new PublicKey(tw.publicKey));
-        newBalances[tw.publicKey] = balance / 1e9; // Convert lamports to SOL
-
-        // Get token accounts
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-          new PublicKey(tw.publicKey),
-          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-        );
-
-        // Process each token account
-        for (const { account } of tokenAccounts.value) {
-          const parsedInfo = account.data.parsed.info;
-          const tokenMint = parsedInfo.mint;
-          const tokenAmount = parsedInfo.tokenAmount;
+    try {
+      setIsUpdatingBalances(true);
+      
+      const balancePromises = tradingWallets.map(async (tw) => {
+        try {
+          // Get SOL balance
+          const balance = await connection.getBalance(new PublicKey(tw.publicKey));
+          const solBalance = balance / LAMPORTS_PER_SOL;
           
-          // Only include tokens with non-zero balance
-          if (tokenAmount.uiAmount > 0) {
-            // Get token metadata
-            const metadata = await fetchTokenMetadata(tokenMint, connection);
-            
-            // Update backend with this token balance using WalletBalanceService
-            try {
-              await walletBalanceService.updateBalance(
-                tw.publicKey,
-                tokenMint,
-                tokenAmount.uiAmount,
-                tokenAmount.decimals
-              );
-            } catch (error) {
-              console.error('Error updating backend balance:', error);
-            }
-          }
+          // Get token accounts
+          const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+            new PublicKey(tw.publicKey),
+            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+          );
+
+          // Calculate total value in SOL
+          let totalValue = solBalance;
+
+          // Update the trading wallet balances state
+          setTradingWalletBalances(prev => ({
+            ...prev,
+            [tw.publicKey]: totalValue
+          }));
+
+          return totalValue;
+        } catch (error) {
+          console.error(`Error fetching balance for wallet ${tw.publicKey}:`, error);
+          return 0;
         }
-      } catch (error) {
-        console.error('Error fetching balance for wallet:', tw.publicKey, error);
-        newBalances[tw.publicKey] = 0;
+      });
+
+      const balances = await Promise.all(balancePromises);
+      const totalValue = balances.reduce((sum, val) => sum + val, 0);
+      
+      // Update total portfolio value
+      setTotalPortfolioValue(totalValue);
+      
+      // Clear any existing timeout
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
       }
+      
+      // Schedule next update
+      updateTimeoutRef.current = setTimeout(fetchTradingWalletBalances, 15000);
+      
+    } catch (error) {
+      console.error('Error fetching trading wallet balances:', error);
+    } finally {
+      setIsUpdatingBalances(false);
     }
-    setTradingWalletBalances(newBalances);
   };
 
-  // Update the balance fetch effect
+  // Debounced version of balance update
+  const debouncedBalanceUpdate = useCallback(
+    debounce(() => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+      updateTimeoutRef.current = setTimeout(() => {
+        fetchTradingWalletBalances();
+      }, 1000);
+    }, 2000),
+    [connection, tradingWallets]
+  );
+
   useEffect(() => {
     if (tradingWallets.length === 0) return;
     
+    // Initial fetch
     fetchTradingWalletBalances();
-    const interval = setInterval(fetchTradingWalletBalances, 30000);
     
-    return () => clearInterval(interval);
+    // Set up interval with longer delay
+    const interval = setInterval(debouncedBalanceUpdate, 30000); // Update every 30 seconds
+    
+    // Clean up
+    return () => {
+      clearInterval(interval);
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
   }, [tradingWallets, connection]);
 
   // Add effect to listen for balance updates
@@ -2027,34 +2056,47 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
-  // Update fund wallet function to refresh all balances
-  const fundWallet = async (tradingWallet: TradingWallet, amount: number) => {
-    if (!wallet.publicKey || !connection || !wallet.signTransaction) return;
-
+  const handleSuccessfulTransaction = async (walletPublicKey: string) => {
     try {
-      const transaction = new VersionedTransaction(
-        new TransactionMessage({
-          payerKey: wallet.publicKey,
-          recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
-          instructions: [
-            SystemProgram.transfer({
-              fromPubkey: wallet.publicKey,
-              toPubkey: new PublicKey(tradingWallet.publicKey),
-              lamports: amount * LAMPORTS_PER_SOL
-            })
-          ]
-        }).compileToV0Message()
-      );
+      // Show success notification
+      setNotification({ 
+        type: 'success', 
+        message: 'Transaction confirmed! Updating balances...' 
+      });
 
-      const signed = await wallet.signTransaction(transaction);
-      const signature = await connection.sendTransaction(signed);
-      await connection.confirmTransaction(signature);
-      window.dispatchEvent(new Event('update-balances'));
-      
-      // Refresh all balances after funding
-      fetchTradingWalletBalances();
+      // Force immediate balance updates
+      await Promise.all([
+        // Update trading wallet balances
+        fetchTradingWalletBalances(),
+        // Update backend balances
+        fetchBackendBalances(walletPublicKey)
+      ]);
+
+      // Dispatch custom event for any other components that need to update
+      window.dispatchEvent(new CustomEvent('balances-updated', {
+        detail: { walletAddress: walletPublicKey }
+      }));
+
+      // Schedule another update after 2 seconds to ensure everything is in sync
+      setTimeout(async () => {
+        await Promise.all([
+          fetchTradingWalletBalances(),
+          fetchBackendBalances(walletPublicKey)
+        ]);
+        
+        // Show final success notification
+        setNotification({ 
+          type: 'success', 
+          message: 'Balances updated successfully!' 
+        });
+      }, 2000);
+
     } catch (error) {
-      console.error('Error funding wallet:', error);
+      console.error('Error updating balances after successful transaction:', error);
+      setNotification({ 
+        type: 'error', 
+        message: 'Transaction succeeded but failed to update balances. Please refresh the page.' 
+      });
     }
   };
 
@@ -2883,6 +2925,137 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     deleteJob(lackeyToDelete.id);
     setLackeyToDelete(null);
     setShowDeleteLackeyDialog(false);
+  };
+
+  // Add state for funding modal
+  const [showFundingModal, setShowFundingModal] = useState(false);
+  const [isUpdatingBalances, setIsUpdatingBalances] = useState(false);
+  const [totalPortfolioValue, setTotalPortfolioValue] = useState(0);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const balanceUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fundWallet = async (tradingWallet: TradingWallet, amount: number) => {
+    if (!wallet.publicKey || !connection) return;
+    
+    try {
+      // Show preparing notification
+      setNotification({ type: 'info', message: 'Preparing transaction...' });
+      console.log('Preparing funding transaction...');
+      
+      // Create and send transaction
+      const transaction = new Transaction();
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: new PublicKey(tradingWallet.publicKey),
+          lamports: amount * LAMPORTS_PER_SOL,
+        })
+      );
+
+      const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+      console.log('Got latest blockhash:', latestBlockhash.blockhash);
+      transaction.recentBlockhash = latestBlockhash.blockhash;
+      transaction.feePayer = wallet.publicKey;
+
+      const signed = await wallet.signTransaction(transaction);
+      console.log('Transaction signed, sending...');
+      const signature = await connection.sendRawTransaction(signed.serialize());
+      console.log('Transaction sent with signature:', signature);
+      
+      // Show sending notification
+      setNotification({ type: 'info', message: 'Transaction sent, waiting for confirmation...' });
+      setShowFundingModal(false);
+      setFundingWallet(null);
+      setFundingAmount('');
+
+      // Wait for confirmation using getSignatureStatus instead of confirmTransaction
+      let retryCount = 0;
+      const maxRetries = 30; // More retries with shorter intervals
+      let confirmed = false;
+
+      while (retryCount < maxRetries && !confirmed) {
+        try {
+          console.log(`Checking transaction status attempt ${retryCount + 1}...`);
+          const status = await connection.getSignatureStatus(signature);
+          console.log('Transaction status:', status);
+
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+            confirmed = true;
+            console.log('Transaction confirmed:', signature);
+
+            // Show success notification
+            setNotification({ 
+              type: 'success', 
+              message: 'Transaction confirmed! Updating balances...' 
+            });
+
+            // Force immediate balance updates
+            console.log('Updating balances...');
+            
+            // Update trading wallet balances first
+            await fetchTradingWalletBalances();
+            
+            // Small delay before fetching backend balances
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Update backend balances
+            await fetchBackendBalances(tradingWallet.publicKey);
+            
+            console.log('Initial balance update complete');
+
+            // Dispatch custom event for any other components that need to update
+            window.dispatchEvent(new CustomEvent('balances-updated', {
+              detail: { walletAddress: tradingWallet.publicKey }
+            }));
+
+            // Schedule another update after 2 seconds to ensure everything is in sync
+            setTimeout(async () => {
+              console.log('Performing follow-up balance update...');
+              
+              // Update trading wallet balances first
+              await fetchTradingWalletBalances();
+              
+              // Small delay before fetching backend balances
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              // Update backend balances
+              await fetchBackendBalances(tradingWallet.publicKey);
+              
+              console.log('Follow-up balance update complete');
+              
+              // Show final success notification
+              setNotification({ 
+                type: 'success', 
+                message: 'Balances updated successfully!' 
+              });
+            }, 2000);
+
+            break;
+          }
+
+          if (status.value?.err) {
+            throw new Error(`Transaction failed: ${status.value.err}`);
+          }
+
+          retryCount++;
+          await new Promise(resolve => setTimeout(resolve, 500)); // Check every 500ms
+        } catch (error) {
+          console.error('Error checking transaction status:', error);
+          retryCount++;
+          if (retryCount === maxRetries) {
+            throw new Error('Failed to confirm transaction after maximum retries');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+    } catch (error) {
+      console.error('Error in funding transaction:', error);
+      setNotification({ 
+        type: 'error', 
+        message: error instanceof Error ? error.message : 'Transaction failed' 
+      });
+    }
   };
 
   return (
@@ -4467,7 +4640,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               justifyContent: 'flex-end'
             }}>
               <button
-                onClick={() => setFundingWallet(null)}
+                onClick={() => {
+                  setFundingWallet(null);
+                  setFundingAmount('');
+                }}
                 className={`${walletStyles.button} ${walletStyles.secondary}`}
               >
                 Cancel
@@ -4475,9 +4651,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               <button
                 onClick={async () => {
                   if (!fundingAmount || !fundingWallet) return;
-                  await fundWallet(fundingWallet, parseFloat(fundingAmount));
-                  setFundingWallet(null);
-                  setFundingAmount('');
+                  try {
+                    await fundWallet(fundingWallet, parseFloat(fundingAmount));
+                  } catch (error) {
+                    console.error('Error in funding transaction:', error);
+                    // Modal will be closed by fundWallet function
+                    // Error notification will be shown by fundWallet function
+                  }
                 }}
                 disabled={!fundingAmount || parseFloat(fundingAmount) <= 0}
                 className={`${walletStyles.button} ${walletStyles.primary}`}
@@ -5466,6 +5646,12 @@ const App = () => {
 
   const [endpoint, setEndpoint] = useState<string>(defaultEndpoint);
   
+  // Create connection configuration with WebSocket endpoint
+  const connectionConfig = useMemo(() => ({
+    commitment: 'confirmed',
+    wsEndpoint: 'ws://localhost:3001/api/v1/ws'
+  }), []);
+  
   // Add keyframe animation for spinner
   useEffect(() => {
     // Create a style element
@@ -5500,10 +5686,12 @@ const App = () => {
   };
   
   return (
-    <ConnectionProvider endpoint={endpoint}>
+    <ConnectionProvider endpoint={endpoint} config={connectionConfig}>
       <WalletProvider {...walletConfig}>
         <WalletModalProvider>
-          <AppContent onRpcError={handleRpcError} currentEndpoint={endpoint} />
+          <PortfolioProvider>
+            <AppContent onRpcError={handleRpcError} currentEndpoint={endpoint} />
+          </PortfolioProvider>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

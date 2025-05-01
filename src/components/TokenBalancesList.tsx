@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { TokenBalance } from '../types/balance';
 import { TokenLogo } from './TokenLogo';
 import { WalletBalancesService } from '../services/WalletBalancesService';
+import { usePortfolio } from '../contexts/PortfolioContext';
 
 interface TokenBalancesListProps {
   walletAddress: string;
@@ -23,6 +24,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   const [showHidden, setShowHidden] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { updatePortfolioValue } = usePortfolio();
 
   const fetchBalances = useCallback(async () => {
     if (!walletAddress) return;
@@ -44,6 +46,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       
       setBalances(response.balances);
       setTotalUsdValue(total);
+      updatePortfolioValue(walletAddress, total);
       setFetchProgress(100);
     } catch (error) {
       console.error('Error fetching balances:', error);
@@ -52,7 +55,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       setIsFetching(false);
       setIsInitialLoad(false);
     }
-  }, [walletAddress, onRpcError]);
+  }, [walletAddress, onRpcError, updatePortfolioValue]);
 
   // Initial fetch
   useEffect(() => {

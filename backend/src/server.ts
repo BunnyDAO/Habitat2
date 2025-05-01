@@ -161,20 +161,54 @@ app.post('/api/rpc', async (req, res) => {
     const { method, params } = req.body;
     console.log('Received RPC request:', { method, params });
     
+    // Check if Helius API key is available
+    const heliusApiKey = process.env.HELIUS_API_KEY;
+    if (!heliusApiKey) {
+      console.error('Helius API key not found');
+      return res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Helius API key not configured'
+        },
+        id: req.body.id
+      });
+    }
+
     // Forward the request to Helius
-    const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`, {
+    const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(req.body)
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: req.body.id || Date.now(),
+        method: req.body.method,
+        params: req.body.params
+      })
     });
 
     if (!response.ok) {
-      throw new Error(`Helius API error: ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('Helius API error:', errorText);
+      return res.status(response.status).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: `Helius API error: ${response.statusText}`,
+          data: errorText
+        },
+        id: req.body.id
+      });
     }
 
     const data = await response.json();
+    if (data.error) {
+      console.error('Helius RPC error:', data.error);
+      return res.status(500).json(data);
+    }
+
     res.json(data);
   } catch (error) {
     console.error('Error handling RPC request:', error);
@@ -182,7 +216,8 @@ app.post('/api/rpc', async (req, res) => {
       jsonrpc: '2.0',
       error: {
         code: -32000,
-        message: 'Internal error'
+        message: error instanceof Error ? error.message : 'Internal error',
+        data: error instanceof Error ? error.stack : undefined
       },
       id: req.body.id
     });
@@ -211,7 +246,8 @@ server.on('upgrade', (request, socket: Socket, head) => {
   const url = request.url || '/';
   const pathname = new URL(url, `http://${request.headers.host || 'localhost'}`).pathname;
 
-  if (pathname === '/api/v1/ws') {
+  // Handle both /api/v1/ws and /api/rpc paths
+  if (pathname === '/api/v1/ws' || pathname === '/api/rpc') {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws);
     });

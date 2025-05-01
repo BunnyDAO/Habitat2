@@ -1,11 +1,13 @@
 import { PublicKey } from '@solana/web3.js';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, AnyJob } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, AnyJob } from '../types/jobs';
 import { WalletMonitorWorker } from '../workers/WalletMonitorWorker';
 import { PriceMonitorWorker } from '../workers/PriceMonitorWorker';
+import { VaultWorker } from '../workers/VaultWorker';
+import { LevelsWorker } from '../workers/LevelsWorker';
 import { PriceFeedService } from '../services/PriceFeedService';
 
 export class JobManager {
-  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker> = new Map();
+  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker> = new Map();
   private endpoint: string;
   private userWallet: PublicKey;
   private priceFeedService: PriceFeedService;
@@ -23,7 +25,7 @@ export class JobManager {
       return;
     }
 
-    let worker: WalletMonitorWorker | PriceMonitorWorker;
+    let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker;
 
     switch (job.type) {
       case JobType.WALLET_MONITOR:
@@ -35,6 +37,12 @@ export class JobManager {
         break;
       case JobType.PRICE_MONITOR:
         worker = new PriceMonitorWorker(job as PriceMonitoringJob, this.endpoint);
+        break;
+      case JobType.VAULT:
+        worker = new VaultWorker(job as VaultStrategy, this.endpoint);
+        break;
+      case JobType.LEVELS:
+        worker = new LevelsWorker(job as LevelsStrategy, this.endpoint);
         break;
       default:
         throw new Error(`Unknown job type: ${job.type}`);

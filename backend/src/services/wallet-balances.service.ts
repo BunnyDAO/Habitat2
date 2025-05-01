@@ -188,43 +188,66 @@ export class WalletBalancesService {
 
   async populateWalletBalances(walletAddress: string): Promise<void> {
     try {
-      // First get SOL balance
-      const solBalance = await this.connection.getBalance(new PublicKey(walletAddress));
-      const solBalanceInSol = solBalance / 1e9;
+      console.log(`Starting to populate balances for wallet: ${walletAddress}`);
       
-      // Update SOL balance
-      if (solBalanceInSol > 0) {
-        await this.updateBalance(
-          walletAddress,
-          'So11111111111111111111111111111111111111112', // Native SOL mint address
-          solBalanceInSol,
-          9, // SOL decimals
-          Date.now()
-        );
-      }
-
-      // Get token accounts
-      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
-        new PublicKey(walletAddress),
-        { programId: TOKEN_PROGRAM_ID }
-      );
-
-      // Process each token account
-      for (const { account } of tokenAccounts.value) {
-        const parsedInfo = account.data.parsed.info;
-        const tokenMint = parsedInfo.mint;
-        const tokenAmount = parsedInfo.tokenAmount;
+      // First get SOL balance
+      try {
+        const solBalance = await this.connection.getBalance(new PublicKey(walletAddress));
+        const solBalanceInSol = solBalance / 1e9;
         
-        // Only include tokens with non-zero balance
-        if (tokenAmount.uiAmount > 0) {
+        // Update SOL balance
+        if (solBalanceInSol > 0) {
+          console.log(`Updating SOL balance: ${solBalanceInSol} SOL`);
           await this.updateBalance(
             walletAddress,
-            tokenMint,
-            tokenAmount.uiAmount,
-            tokenAmount.decimals,
+            'So11111111111111111111111111111111111111112', // Native SOL mint address
+            solBalanceInSol,
+            9, // SOL decimals
             Date.now()
           );
         }
+      } catch (error: any) {
+        console.error(`Error fetching SOL balance for ${walletAddress}:`, error);
+        // Continue with token balances even if SOL balance fails
+      }
+
+      // Get token accounts
+      try {
+        console.log(`Fetching token accounts for ${walletAddress}`);
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          new PublicKey(walletAddress),
+          { programId: TOKEN_PROGRAM_ID }
+        );
+
+        console.log(`Found ${tokenAccounts.value.length} token accounts`);
+
+        // Process each token account
+        for (const { account } of tokenAccounts.value) {
+          try {
+            const parsedInfo = account.data.parsed.info;
+            const tokenMint = parsedInfo.mint;
+            const tokenAmount = parsedInfo.tokenAmount;
+            
+            console.log(`Processing token ${tokenMint}: ${tokenAmount.uiAmount} (${tokenAmount.decimals} decimals)`);
+            
+            // Only include tokens with non-zero balance
+            if (tokenAmount.uiAmount > 0) {
+              await this.updateBalance(
+                walletAddress,
+                tokenMint,
+                tokenAmount.uiAmount,
+                tokenAmount.decimals,
+                Date.now()
+              );
+            }
+          } catch (tokenError: any) {
+            console.error(`Error processing token account:`, tokenError);
+            // Continue with next token even if one fails
+          }
+        }
+      } catch (tokenAccountsError: any) {
+        console.error(`Error fetching token accounts for ${walletAddress}:`, tokenAccountsError);
+        throw new Error(`Failed to fetch token accounts: ${tokenAccountsError?.message || 'Unknown error'}`);
       }
 
       // Invalidate cache after population
@@ -232,9 +255,11 @@ export class WalletBalancesService {
         const cacheKey = this.getCacheKey(walletAddress);
         await this.redisClient.del(cacheKey);
       }
-    } catch (error) {
-      console.error('Error populating wallet balances:', error);
-      throw error;
+
+      console.log(`Successfully populated balances for ${walletAddress}`);
+    } catch (error: any) {
+      console.error(`Error populating wallet balances for ${walletAddress}:`, error);
+      throw new Error(`Failed to populate wallet balances: ${error?.message || 'Unknown error'}`);
     }
   }
 

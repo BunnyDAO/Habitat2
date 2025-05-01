@@ -40,7 +40,7 @@ export class WalletMonitorWorker extends BaseWorker {
   private transactionTimestamps: Map<string, number> = new Map();
   private processingTransactions: Set<string> = new Set();
   private lastProcessedSignature: string | null = null;
-  private tradingWalletKeypair: Keypair;
+  private tradingWalletKeypair: Keypair | null = null;
 
   constructor(job: WalletMonitoringJob, endpoint: string, tradingWallet: PublicKey) {
     super(job, endpoint);
@@ -49,37 +49,40 @@ export class WalletMonitorWorker extends BaseWorker {
     this.walletAddress = job.walletAddress;
     this.percentage = job.percentage;
     
-    // Ensure the secret key is a Uint8Array
-    let secretKey: Uint8Array;
-    try {
-      if (job.tradingWalletSecretKey instanceof Uint8Array) {
-        secretKey = job.tradingWalletSecretKey;
-      } else if (Array.isArray(job.tradingWalletSecretKey)) {
-        secretKey = new Uint8Array(job.tradingWalletSecretKey);
-      } else if (typeof job.tradingWalletSecretKey === 'string') {
-        // Handle base64 encoded secret key
-        try {
-          const decoded = Buffer.from(job.tradingWalletSecretKey, 'base64');
-          if (decoded.length !== 64) {
-            throw new Error(`Invalid secret key size: expected 64 bytes, got ${decoded.length}`);
+    // Only initialize keypair if secret key is provided
+    if (job.tradingWalletSecretKey) {
+      let secretKey: Uint8Array;
+      try {
+        if (job.tradingWalletSecretKey instanceof Uint8Array) {
+          secretKey = job.tradingWalletSecretKey;
+        } else if (Array.isArray(job.tradingWalletSecretKey)) {
+          secretKey = new Uint8Array(job.tradingWalletSecretKey);
+        } else if (typeof job.tradingWalletSecretKey === 'string') {
+          // Handle base64 encoded secret key
+          try {
+            const decoded = Buffer.from(job.tradingWalletSecretKey, 'base64');
+            if (decoded.length !== 64) {
+              throw new Error(`Invalid secret key size: expected 64 bytes, got ${decoded.length}`);
+            }
+            secretKey = new Uint8Array(decoded);
+          } catch (e) {
+            throw new Error('Invalid secret key format: not a valid base64 string');
           }
-          secretKey = new Uint8Array(decoded);
-        } catch (e) {
-          throw new Error('Invalid secret key format: not a valid base64 string');
+        } else {
+          throw new Error('Invalid secret key format: must be Uint8Array, number[], or base64 string');
         }
-      } else {
-        throw new Error('Invalid secret key format: must be Uint8Array, number[], or base64 string');
+        
+        // Validate secret key size
+        if (secretKey.length !== 64) {
+          throw new Error(`Invalid secret key size: expected 64 bytes, got ${secretKey.length}`);
+        }
+        
+        this.tradingWalletKeypair = Keypair.fromSecretKey(secretKey);
+      } catch (error) {
+        console.error('Error initializing trading wallet keypair:', error);
+        // Don't throw, just set keypair to null
+        this.tradingWalletKeypair = null;
       }
-      
-      // Validate secret key size
-      if (secretKey.length !== 64) {
-        throw new Error(`Invalid secret key size: expected 64 bytes, got ${secretKey.length}`);
-      }
-      
-      this.tradingWalletKeypair = Keypair.fromSecretKey(secretKey);
-    } catch (error) {
-      console.error('Error initializing trading wallet keypair:', error);
-      throw error;
     }
 
     if (job.recentTransactions) {
@@ -455,7 +458,7 @@ export class WalletMonitorWorker extends BaseWorker {
         },
         body: JSON.stringify({
           quoteResponse: quote,
-          userPublicKey: this.tradingWalletKeypair.publicKey.toString(),
+          userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
           feeAccount: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL'
         }),
       });
