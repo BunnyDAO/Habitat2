@@ -1555,7 +1555,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         {(() => {
                           const privateKeyStr = localStorage.getItem(`wallet_${tw.publicKey}`);
                           if (!privateKeyStr) return '';
-                          const privateKeyBytes = new Uint8Array(JSON.parse(privateKeyStr));
+                          // Convert from base64 to Uint8Array directly
+                          const privateKeyBytes = new Uint8Array(Buffer.from(privateKeyStr, 'base64'));
                           return bs58.encode(privateKeyBytes);
                         })()}
                       </div>
@@ -1563,7 +1564,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         onClick={() => {
                           const privateKeyStr = localStorage.getItem(`wallet_${tw.publicKey}`);
                           if (!privateKeyStr) return;
-                          const privateKeyBytes = new Uint8Array(JSON.parse(privateKeyStr));
+                          // Convert from base64 to Uint8Array directly
+                          const privateKeyBytes = new Uint8Array(Buffer.from(privateKeyStr, 'base64'));
                           navigator.clipboard.writeText(bs58.encode(privateKeyBytes));
                         }}
                         className={walletStyles.button}
