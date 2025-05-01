@@ -1,4 +1,4 @@
-import { TokenBalance, WalletBalanceResponse, WalletBalanceMap } from '../types/balance';
+import { WalletBalanceMap, WalletBalanceResponse } from '../types/balance';
 
 const WALLET_BALANCES_ENDPOINT = 'http://localhost:3001/api/v1/wallet-balances';
 
@@ -11,6 +11,8 @@ export class WalletBalanceService {
 
   async initializeWallet(walletAddress: string) {
     try {
+      console.log(`Initializing wallet: ${walletAddress}`);
+      
       // Initial population of database
       await this.populateDatabase(walletAddress);
       
@@ -24,9 +26,18 @@ export class WalletBalanceService {
 
   private async populateDatabase(walletAddress: string) {
     try {
-      await fetch(`${WALLET_BALANCES_ENDPOINT}/${walletAddress}/populate`, {
+      console.log(`Populating database for wallet: ${walletAddress}`);
+      const response = await fetch(`${WALLET_BALANCES_ENDPOINT}/${walletAddress}/populate`, {
         method: 'POST',
       });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to populate database: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      // After populating, immediately fetch the balances
+      return await this.fetchBalances(walletAddress);
     } catch (error) {
       console.error('Error populating database:', error);
       throw error;
@@ -34,19 +45,47 @@ export class WalletBalanceService {
   }
 
   private startPeriodicRefresh(walletAddress: string) {
-    // Clear any existing interval
     if (this.refreshInterval) {
       clearInterval(this.refreshInterval);
     }
 
-    // Refresh every 2 minutes
     this.refreshInterval = setInterval(async () => {
       try {
-        await this.populateDatabase(walletAddress);
+        await this.updateBalances(walletAddress);
       } catch (error) {
         console.error('Error in periodic refresh:', error);
       }
-    }, 2 * 60 * 1000); // 2 minutes
+    }, 120000); // 2 minutes
+  }
+
+  async updateBalances(walletAddress: string) {
+    try {
+      console.log(`Updating balances for wallet: ${walletAddress}`);
+      const response = await fetch(`${WALLET_BALANCES_ENDPOINT}/${walletAddress}/update`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update balances: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      // After updating, immediately fetch the latest balances
+      const balances = await this.fetchBalances(walletAddress);
+
+      // Dispatch event for UI update
+      window.dispatchEvent(new CustomEvent('balanceUpdate', {
+        detail: { walletAddress, balances }
+      }));
+
+      return balances;
+    } catch (error) {
+      console.error('Error updating balances:', error);
+      throw error;
+    }
   }
 
   cleanup() {
@@ -58,20 +97,25 @@ export class WalletBalanceService {
 
   async fetchBalances(walletAddress: string): Promise<WalletBalanceMap> {
     try {
+      console.log(`Fetching balances for wallet: ${walletAddress}`);
       const response = await fetch(`${WALLET_BALANCES_ENDPOINT}/${walletAddress}`);
+      
       if (!response.ok) {
-        throw new Error('Failed to fetch balances');
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch balances: ${response.status} ${response.statusText} - ${errorText}`);
       }
+      
       const data: WalletBalanceResponse = await response.json();
+      console.log(`Received balances for ${walletAddress}:`, data);
       
       // Convert array to map
       return data.balances.reduce((map, balance) => {
-        map[balance.mintAddress] = balance;
+        map[balance.mint] = balance;
         return map;
       }, {} as WalletBalanceMap);
     } catch (error) {
       console.error('Error fetching balances:', error);
-      return {};
+      throw error;
     }
   }
 
@@ -82,6 +126,7 @@ export class WalletBalanceService {
     decimals: number
   ): Promise<void> {
     try {
+      console.log(`Updating single balance: ${walletAddress} ${mintAddress} ${amount}`);
       const response = await fetch(WALLET_BALANCES_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -97,7 +142,8 @@ export class WalletBalanceService {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update balance');
+        const errorText = await response.text();
+        throw new Error(`Failed to update balance: ${response.status} ${response.statusText} - ${errorText}`);
       }
     } catch (error) {
       console.error('Error updating balance:', error);
@@ -107,12 +153,14 @@ export class WalletBalanceService {
 
   async deleteBalances(walletAddress: string): Promise<void> {
     try {
+      console.log(`Deleting balances for wallet: ${walletAddress}`);
       const response = await fetch(`${WALLET_BALANCES_ENDPOINT}/${walletAddress}`, {
         method: 'DELETE',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete balances');
+        const errorText = await response.text();
+        throw new Error(`Failed to delete balances: ${response.status} ${response.statusText} - ${errorText}`);
       }
     } catch (error) {
       console.error('Error deleting balances:', error);
@@ -120,9 +168,11 @@ export class WalletBalanceService {
     }
   }
 
-  subscribeToBalanceUpdates(walletAddress: string, callback: (balances: WalletBalanceMap) => void) {
-    // TODO: Implement real-time updates
-    // For now, just return an empty unsubscribe function
-    return () => {};
+  subscribeToBalanceUpdates(walletAddress: string): () => void {
+    // TODO: Implement real-time updates using WebSocket
+    console.log(`Balance updates subscription requested for ${walletAddress}`);
+    return () => {
+      console.log(`Unsubscribing from balance updates for ${walletAddress}`);
+    };
   }
 } 

@@ -3,7 +3,7 @@ export interface TokenBalance {
   symbol: string;
   name: string;
   decimals: number;
-  logoURI: string;
+  logoURI?: string;
   balance: number;
   uiBalance: number;
   usdValue: number;

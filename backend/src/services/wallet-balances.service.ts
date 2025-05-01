@@ -113,56 +113,48 @@ export class WalletBalancesService {
     lastUpdated: number
   ): Promise<void> {
     try {
-      // For SOL, we don't need to check Jupiter
-      if (mintAddress === 'So11111111111111111111111111111111111111112') {
-        await this.insertOrUpdateBalance(walletAddress, mintAddress, amount, decimals, lastUpdated);
-        return;
-      }
+      console.log(`Updating balance for wallet ${walletAddress}, mint ${mintAddress}`);
+      console.log(`Raw amount: ${amount}, decimals: ${decimals}`);
 
-      // Check if token exists in Jupiter
-      const tokenMetadata = await this.tokenService.getTokenMetadata(mintAddress);
-      
-      // Only insert balance if token exists in Jupiter
-      if (tokenMetadata) {
-        await this.insertOrUpdateBalance(walletAddress, mintAddress, amount, decimals, lastUpdated);
-      } else {
-        console.log(`Skipping unknown token ${mintAddress} - not found in Jupiter`);
+      // Calculate UI amount
+      const uiAmount = amount / Math.pow(10, decimals);
+      console.log(`Calculated UI amount: ${uiAmount}`);
+
+      const query = `
+        INSERT INTO wallet_balances (
+          wallet_address, 
+          mint_address, 
+          amount, 
+          decimals, 
+          last_updated
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (wallet_address, mint_address) 
+        DO UPDATE SET
+          amount = EXCLUDED.amount,
+          decimals = EXCLUDED.decimals,
+          last_updated = EXCLUDED.last_updated
+      `;
+
+      await this.pool.query(query, [
+        walletAddress,
+        mintAddress,
+        amount.toString(), // Convert to string to preserve precision
+        decimals,
+        new Date(lastUpdated)
+      ]);
+
+      console.log(`Successfully updated balance for ${walletAddress}`);
+
+      // Invalidate cache
+      if (this.redisClient) {
+        const cacheKey = this.getCacheKey(walletAddress);
+        await this.redisClient.del(cacheKey);
+        console.log(`Invalidated cache for ${walletAddress}`);
       }
     } catch (error) {
       console.error('Error updating wallet balance:', error);
       throw error;
-    }
-  }
-
-  private async insertOrUpdateBalance(
-    walletAddress: string,
-    mintAddress: string,
-    amount: number,
-    decimals: number,
-    lastUpdated: number
-  ): Promise<void> {
-    const query = `
-      INSERT INTO wallet_balances (wallet_address, mint_address, amount, decimals, last_updated)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (wallet_address, mint_address)
-      DO UPDATE SET
-        amount = EXCLUDED.amount,
-        decimals = EXCLUDED.decimals,
-        last_updated = EXCLUDED.last_updated
-    `;
-
-    await this.pool.query(query, [
-      walletAddress,
-      mintAddress,
-      amount,
-      decimals,
-      new Date(lastUpdated)
-    ]);
-
-    // Invalidate cache
-    if (this.redisClient) {
-      const cacheKey = this.getCacheKey(walletAddress);
-      await this.redisClient.del(cacheKey);
     }
   }
 
@@ -181,7 +173,7 @@ export class WalletBalancesService {
         await this.redisClient.del(cacheKey);
       }
     } catch (error) {
-      console.error('Error deleting wallet balances:', error);
+      console.error('Error deleting balances:', error);
       throw error;
     }
   }
@@ -193,20 +185,20 @@ export class WalletBalancesService {
       // First get SOL balance
       try {
         const solBalance = await this.connection.getBalance(new PublicKey(walletAddress));
-        const solBalanceInSol = solBalance / 1e9;
+        console.log(`Raw SOL balance: ${solBalance}`);
         
-        // Update SOL balance
-        if (solBalanceInSol > 0) {
-          console.log(`Updating SOL balance: ${solBalanceInSol} SOL`);
+        // Update SOL balance - Note: solBalance is in lamports (raw units)
+        if (solBalance > 0) {
+          console.log(`Updating SOL balance: ${solBalance} lamports`);
           await this.updateBalance(
             walletAddress,
             'So11111111111111111111111111111111111111112', // Native SOL mint address
-            solBalanceInSol,
+            solBalance, // Pass raw lamports amount
             9, // SOL decimals
             Date.now()
           );
         }
-      } catch (error: any) {
+      } catch (error) {
         console.error(`Error fetching SOL balance for ${walletAddress}:`, error);
         // Continue with token balances even if SOL balance fails
       }
@@ -228,26 +220,26 @@ export class WalletBalancesService {
             const tokenMint = parsedInfo.mint;
             const tokenAmount = parsedInfo.tokenAmount;
             
-            console.log(`Processing token ${tokenMint}: ${tokenAmount.uiAmount} (${tokenAmount.decimals} decimals)`);
+            console.log(`Processing token ${tokenMint}: ${tokenAmount.amount} (${tokenAmount.decimals} decimals)`);
             
             // Only include tokens with non-zero balance
-            if (tokenAmount.uiAmount > 0) {
+            if (Number(tokenAmount.amount) > 0) {
               await this.updateBalance(
                 walletAddress,
                 tokenMint,
-                tokenAmount.uiAmount,
+                Number(tokenAmount.amount), // Use raw token amount
                 tokenAmount.decimals,
                 Date.now()
               );
             }
-          } catch (tokenError: any) {
-            console.error(`Error processing token account:`, tokenError);
+          } catch (error) {
+            console.error(`Error processing token account:`, error);
             // Continue with next token even if one fails
           }
         }
-      } catch (tokenAccountsError: any) {
-        console.error(`Error fetching token accounts for ${walletAddress}:`, tokenAccountsError);
-        throw new Error(`Failed to fetch token accounts: ${tokenAccountsError?.message || 'Unknown error'}`);
+      } catch (error) {
+        console.error(`Error fetching token accounts for ${walletAddress}:`, error);
+        throw new Error(`Failed to fetch token accounts: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
       // Invalidate cache after population
@@ -257,9 +249,9 @@ export class WalletBalancesService {
       }
 
       console.log(`Successfully populated balances for ${walletAddress}`);
-    } catch (error: any) {
+    } catch (error) {
       console.error(`Error populating wallet balances for ${walletAddress}:`, error);
-      throw new Error(`Failed to populate wallet balances: ${error?.message || 'Unknown error'}`);
+      throw new Error(`Failed to populate wallet balances: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

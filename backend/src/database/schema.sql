@@ -95,6 +95,8 @@ CREATE TABLE wallet_balances (
     wallet_address TEXT NOT NULL,
     mint_address TEXT REFERENCES tokens(mint_address),
     amount DECIMAL(20, 10) NOT NULL,
+    ui_amount DECIMAL(20, 10),
+    usd_value DECIMAL(20, 2),
     decimals INTEGER NOT NULL,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(wallet_address, mint_address)
@@ -103,6 +105,7 @@ CREATE TABLE wallet_balances (
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_wallet_balances_wallet ON wallet_balances(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_wallet_balances_mint ON wallet_balances(mint_address);
+CREATE INDEX IF NOT EXISTS idx_wallet_balances_last_updated ON wallet_balances(last_updated);
 CREATE INDEX IF NOT EXISTS idx_token_prices_updated ON token_prices(last_updated);
 CREATE INDEX IF NOT EXISTS idx_token_prices_volume ON token_prices(volume_24h_usd);
 CREATE INDEX IF NOT EXISTS idx_token_prices_mcap ON token_prices(market_cap_usd);

@@ -34,6 +34,7 @@ import { executeSwap } from './services/api/swap.service';
 import { StrategyService } from './services/strategy.service';
 import { authService } from './services/auth.service';
 import { PortfolioProvider } from './contexts/PortfolioContext';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -881,24 +882,57 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       const balancePromises = tradingWallets.map(async (tw) => {
         try {
-          // Get SOL balance
+          // Get SOL balance from chain
           const balance = await connection.getBalance(new PublicKey(tw.publicKey));
           const solBalance = balance / LAMPORTS_PER_SOL;
           
           // Get token accounts
           const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
             new PublicKey(tw.publicKey),
-            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+            { programId: TOKEN_PROGRAM_ID }
           );
 
           // Calculate total value in SOL
           let totalValue = solBalance;
 
           // Update the trading wallet balances state
-          setTradingWalletBalances(prev => ({
+          setTradingWalletBalances((prev: Record<string, number>) => ({
             ...prev,
             [tw.publicKey]: totalValue
           }));
+
+          // Update backend with new balance
+          try {
+            await fetch(`http://localhost:3001/api/v1/wallet-balances/${tw.publicKey}/update`, {
+              method: 'POST',
+              headers: {
+                'Accept': 'application/json',
+              },
+            });
+
+            // Wait a moment for the update to complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Fetch updated balances from backend
+            const backendBalances = await fetchBackendBalances(tw.publicKey);
+            if (backendBalances && backendBalances.length > 0) {
+              const solBalance = backendBalances.find((b: { symbol: string }) => b.symbol === 'SOL');
+              if (solBalance) {
+                totalValue = solBalance.balance;
+                
+                // Update trading wallet balances with the latest value
+                setTradingWalletBalances((prev: Record<string, number>) => ({
+                  ...prev,
+                  [tw.publicKey]: totalValue
+                }));
+
+                // Update total portfolio value immediately
+                setTotalPortfolioValue((prevTotal: number) => prevTotal + totalValue);
+              }
+            }
+          } catch (error) {
+            console.error('Error updating backend balances:', error);
+          }
 
           return totalValue;
         } catch (error) {
@@ -908,7 +942,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       });
 
       const balances = await Promise.all(balancePromises);
-      const totalValue = balances.reduce((sum, val) => sum + val, 0);
+      const totalValue = balances.reduce((sum: number, val: number) => sum + val, 0);
       
       // Update total portfolio value
       setTotalPortfolioValue(totalValue);
@@ -1521,27 +1555,64 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <button
                       onClick={async () => {
                         if (!wallet.publicKey || !connection) return;
-                        const balance = await connection.getBalance(new PublicKey(tw.publicKey));
-                        const transaction = new VersionedTransaction(
-                          new TransactionMessage({
-                            payerKey: new PublicKey(tw.publicKey),
-                            recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
-                            instructions: [
-                              SystemProgram.transfer({
-                                fromPubkey: new PublicKey(tw.publicKey),
-                                toPubkey: wallet.publicKey,
-                                lamports: balance - 5000 // Leave 5000 lamports for rent
-                              })
-                            ]
-                          }).compileToV0Message()
-                        );
-                        
-                        const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(tw.secretKey));
-                        transaction.sign([tradingKeypair]);
-                        const signature = await connection.sendTransaction(transaction);
-                        await connection.confirmTransaction(signature);
-                        fetchTradingWalletBalances();
-                        window.dispatchEvent(new Event('update-balances'));
+                        try {
+                          const balance = await connection.getBalance(new PublicKey(tw.publicKey));
+                          if (balance <= 5000) {
+                            setNotification({ 
+                              type: 'error', 
+                              message: 'Insufficient balance to withdraw (minimum 0.000005 SOL required)' 
+                            });
+                            return;
+                          }
+
+                          const transaction = new VersionedTransaction(
+                            new TransactionMessage({
+                              payerKey: new PublicKey(tw.publicKey),
+                              recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
+                              instructions: [
+                                SystemProgram.transfer({
+                                  fromPubkey: new PublicKey(tw.publicKey),
+                                  toPubkey: wallet.publicKey,
+                                  lamports: balance - 5000 // Leave 5000 lamports for rent
+                                })
+                              ]
+                            }).compileToV0Message()
+                          );
+                          
+                          // Get the secret key from localStorage and decode from base64
+                          const privateKey = localStorage.getItem(`wallet_${tw.publicKey}`);
+                          if (!privateKey) {
+                            throw new Error('Trading wallet private key not found');
+                          }
+
+                          // Decode the base64 string to Uint8Array
+                          const secretKey = Uint8Array.from(atob(privateKey), c => c.charCodeAt(0));
+                          const tradingKeypair = Keypair.fromSecretKey(secretKey);
+                          
+                          transaction.sign([tradingKeypair]);
+                          
+                          const signature = await connection.sendTransaction(transaction);
+                          console.log('Withdrawal sent:', signature);
+                          
+                          // Wait for confirmation
+                          await connection.confirmTransaction(signature);
+                          console.log('Withdrawal confirmed');
+                          
+                          // Refresh balance
+                          fetchTradingWalletBalances();
+                          window.dispatchEvent(new Event('update-balances'));
+                          
+                          setNotification({ 
+                            type: 'success', 
+                            message: 'Successfully returned SOL to main wallet' 
+                          });
+                        } catch (error) {
+                          console.error('Error withdrawing:', error);
+                          setNotification({ 
+                            type: 'error', 
+                            message: error instanceof Error ? error.message : 'Failed to withdraw SOL' 
+                          });
+                        }
                       }}
                       className={walletStyles.button}
                     >
@@ -2058,44 +2129,64 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   const handleSuccessfulTransaction = async (walletPublicKey: string) => {
     try {
-      // Show success notification
-      setNotification({ 
-        type: 'success', 
-        message: 'Transaction confirmed! Updating balances...' 
+      // Show initial notification
+      setNotification({ type: 'info', message: 'Transaction confirmed! Updating balances...' });
+      console.log('Updating balances...');
+
+      // First get the chain balance
+      const chainBalance = await connection.getBalance(new PublicKey(walletPublicKey));
+      console.log('Chain balance:', chainBalance / LAMPORTS_PER_SOL, 'SOL');
+
+      // Update backend with new balance
+      const updateResponse = await fetch(`http://localhost:3001/api/v1/wallet-balances/${walletPublicKey}/update`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
       });
 
-      // Force immediate balance updates
-      await Promise.all([
-        // Update trading wallet balances
-        fetchTradingWalletBalances(),
-        // Update backend balances
-        fetchBackendBalances(walletPublicKey)
-      ]);
+      if (!updateResponse.ok) {
+        throw new Error('Failed to update backend balances');
+      }
 
-      // Dispatch custom event for any other components that need to update
-      window.dispatchEvent(new CustomEvent('balances-updated', {
+      // Wait a moment for the update to complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Now fetch the updated balances
+      const balances = await fetchBackendBalances(walletPublicKey);
+      console.log('Backend balances:', balances);
+
+      // Update local state with the chain balance immediately
+      setTradingWalletBalances(prev => {
+        const newBalances = { ...prev };
+        newBalances[walletPublicKey] = chainBalance / LAMPORTS_PER_SOL;
+        
+        // Calculate new total portfolio value
+        const totalValue = Object.values(newBalances).reduce((sum, val) => sum + val, 0);
+        setTotalPortfolioValue(totalValue);
+        
+        return newBalances;
+      });
+
+      // Force a UI update by dispatching multiple events
+      window.dispatchEvent(new CustomEvent('balanceUpdate', {
         detail: { walletAddress: walletPublicKey }
       }));
+      window.dispatchEvent(new Event('update-balances'));
 
-      // Schedule another update after 2 seconds to ensure everything is in sync
+      // Schedule another update after 2 seconds
       setTimeout(async () => {
-        await Promise.all([
-          fetchTradingWalletBalances(),
-          fetchBackendBalances(walletPublicKey)
-        ]);
-        
-        // Show final success notification
-        setNotification({ 
-          type: 'success', 
-          message: 'Balances updated successfully!' 
-        });
+        await fetchTradingWalletBalances();
       }, 2000);
 
+      // Show success notification
+      setNotification({ type: 'success', message: 'Balances updated successfully!' });
+
     } catch (error) {
-      console.error('Error updating balances after successful transaction:', error);
+      console.error('Error updating balances:', error);
       setNotification({ 
         type: 'error', 
-        message: 'Transaction succeeded but failed to update balances. Please refresh the page.' 
+        message: 'Failed to update balances. Please try refreshing manually.' 
       });
     }
   };

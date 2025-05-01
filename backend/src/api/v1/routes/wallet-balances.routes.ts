@@ -14,6 +14,9 @@ export function createWalletBalancesRouter(pool: Pool): Router {
   // Update wallet balances
   router.post('/:walletAddress/update', (req, res) => controller.updateBalances(req, res));
 
+  // Populate wallet balances
+  router.post('/:walletAddress/populate', (req, res) => controller.updateBalances(req, res));
+
   // Delete wallet balances
   router.delete('/:walletAddress', (req, res) => controller.deleteBalances(req, res));
 

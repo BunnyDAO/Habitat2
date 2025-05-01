@@ -130,10 +130,6 @@ app.use('/api/v1/proxy', createProxyRouter());
 const tokenMetadataRouter = createTokenMetadataRouter(pool, redisClient);
 app.use('/api/v1/token-metadata', tokenMetadataRouter);
 
-// Add wallet balances routes
-const walletBalancesRouter = createWalletBalancesRouter(pool);
-app.use('/api/v1/wallet-balances', walletBalancesRouter);
-
 // Add swap routes
 const swapRouter = createSwapRouter(pool, connection);
 app.use('/api/v1/swap', swapRouter);

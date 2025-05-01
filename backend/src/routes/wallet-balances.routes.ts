@@ -60,6 +60,18 @@ export function createWalletBalancesRouter(pool: Pool): Router {
     }
   });
 
+  // Update balances from blockchain
+  router.post('/:walletAddress/update', async (req, res) => {
+    try {
+      const { walletAddress } = req.params;
+      await service.populateWalletBalances(walletAddress);
+      res.status(200).json({ message: 'Balances updated successfully' });
+    } catch (error) {
+      console.error('Error updating balances:', error);
+      res.status(500).json({ error: 'Failed to update balances' });
+    }
+  });
+
   // Hide a token
   router.post('/hide', async (req, res) => {
     try {
