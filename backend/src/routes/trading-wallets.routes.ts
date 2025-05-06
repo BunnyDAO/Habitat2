@@ -1,19 +1,30 @@
 import express from 'express';
-import { Pool } from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import { TradingWallet } from '../../src/types/wallet';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { WalletService } from '../services/wallet.service';
 
 const router = express.Router();
 
-export function createTradingWalletsRouter(pool: Pool) {
+export function createTradingWalletsRouter() {
+  // Initialize Supabase client
+  const supabase = createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!
+  );
+
+  // Initialize WalletService
+  const walletService = WalletService.getInstance();
+
   // Test database connection on router creation
-  pool.query('SELECT NOW()', (err) => {
-    if (err) {
-      console.error('Error testing database connection:', err);
-    } else {
-      console.log('Successfully connected to database');
+  (async () => {
+    try {
+      await supabase.from('users').select('count').single();
+      console.log('Successfully connected to Supabase');
+    } catch (error) {
+      console.error('Error testing Supabase connection:', error);
     }
-  });
+  })();
 
   // Get trading wallets for an owner
   router.get('/:ownerAddress', authMiddleware, async (req: AuthenticatedRequest, res) => {
@@ -24,28 +35,25 @@ export function createTradingWalletsRouter(pool: Pool) {
     if (req.user?.main_wallet_pubkey !== ownerAddress) {
       return res.status(403).json({ error: 'Unauthorized access to trading wallets' });
     }
-    
-    const client = await pool.connect();
-    console.log('Got database client');
 
     try {
-      // Get all trading wallets for this user directly
-      const walletsResult = await client.query(`
-        SELECT wallet_pubkey as "publicKey", name, 
-               EXTRACT(EPOCH FROM created_at) * 1000 as "createdAt"
-        FROM trading_wallets
-        WHERE main_wallet_pubkey = $1
-        ORDER BY created_at DESC
-      `, [ownerAddress]);
+      // Get all trading wallets for this user
+      const { data: wallets, error } = await supabase
+        .from('trading_wallets')
+        .select('wallet_pubkey as "publicKey", name, created_at as "createdAt"')
+        .eq('main_wallet_pubkey', ownerAddress)
+        .order('created_at', { ascending: false });
 
-      console.log('Found wallets:', walletsResult.rows);
-      res.json(walletsResult.rows);
+      if (error) {
+        console.error('Error fetching trading wallets:', error);
+        throw error;
+      }
+
+      console.log('Found wallets:', wallets);
+      res.json(wallets);
     } catch (error) {
       console.error('Error fetching trading wallets:', error);
       res.status(500).json({ error: 'Failed to fetch trading wallets' });
-    } finally {
-      client.release();
-      console.log('Released database client');
     }
   });
 
@@ -61,92 +69,36 @@ export function createTradingWalletsRouter(pool: Pool) {
     if (req.user?.main_wallet_pubkey !== ownerAddress) {
       return res.status(403).json({ error: 'Unauthorized access to trading wallets' });
     }
-    
-    const client = await pool.connect();
-    console.log('Got database client');
 
     try {
-      await client.query('BEGIN');
-      console.log('Started transaction');
+      // Create wallet using WalletService
+      const newWallet = await walletService.createWallet(
+        ownerAddress,
+        wallet.name
+      );
 
-      // First check if user exists
-      const userResult = await client.query(`
-        SELECT main_wallet_pubkey FROM users WHERE main_wallet_pubkey = $1
-      `, [ownerAddress]);
-
-      if (userResult.rows.length === 0) {
-        // Insert user if not exists
-        console.log('User does not exist, creating new user');
-        await client.query(`
-          INSERT INTO users (main_wallet_pubkey)
-          VALUES ($1)
-        `, [ownerAddress]);
-        console.log('Created new user');
-      }
-
-      // Insert trading wallet
-      console.log('Inserting trading wallet:', wallet.publicKey);
-      const result = await client.query(`
-        INSERT INTO trading_wallets (main_wallet_pubkey, wallet_pubkey, name, created_at)
-        VALUES ($1, $2, $3, to_timestamp($4 / 1000.0))
-        RETURNING id, wallet_pubkey as "publicKey", name, 
-                 EXTRACT(EPOCH FROM created_at) * 1000 as "createdAt"
-      `, [ownerAddress, wallet.publicKey, wallet.name || null, wallet.createdAt]);
-
-      await client.query('COMMIT');
-      console.log('Successfully committed transaction');
-      console.log('Inserted wallet:', result.rows[0]);
-      res.status(200).json(result.rows[0]);
+      console.log('Successfully created trading wallet:', newWallet);
+      res.status(200).json(newWallet);
     } catch (error) {
-      await client.query('ROLLBACK');
       console.error('Error saving trading wallet:', error);
-      // Send more detailed error information
-      const err = error as { message?: string; code?: string };
-      res.status(500).json({ 
-        error: 'Failed to save trading wallet',
-        details: err.message || 'Unknown error',
-        code: err.code || 'UNKNOWN'
-      });
-    } finally {
-      client.release();
-      console.log('Released database client');
+      res.status(500).json({ error: 'Failed to save trading wallet' });
     }
   });
 
   // Delete a trading wallet
   router.delete('/:walletPubkey', authMiddleware, async (req: AuthenticatedRequest, res) => {
     const { walletPubkey } = req.params;
-    const client = await pool.connect();
+    const supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!
+    );
 
     try {
-      await client.query('BEGIN');
-
-      // Verify ownership
-      const walletResult = await client.query(`
-        SELECT main_wallet_pubkey FROM trading_wallets WHERE wallet_pubkey = $1
-      `, [walletPubkey]);
-
-      if (walletResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Trading wallet not found' });
-      }
-
-      if (walletResult.rows[0].main_wallet_pubkey !== req.user?.main_wallet_pubkey) {
-        return res.status(403).json({ error: 'Unauthorized access to trading wallet' });
-      }
-
-      await client.query(`
-        DELETE FROM trading_wallets
-        WHERE wallet_pubkey = $1
-      `, [walletPubkey]);
-
-      await client.query('COMMIT');
+      await supabase.from('trading_wallets').delete().eq('wallet_pubkey', walletPubkey);
       res.status(200).json({ success: true });
     } catch (error) {
-      await client.query('ROLLBACK');
       console.error('Error deleting trading wallet:', error);
       res.status(500).json({ error: 'Failed to delete trading wallet' });
-    } finally {
-      client.release();
     }
   });
 
@@ -156,34 +108,32 @@ export function createTradingWalletsRouter(pool: Pool) {
     const { walletPubkey } = req.params;
     console.log('Wallet public key:', walletPubkey);
     
-    const client = await pool.connect();
-    console.log('Got database client');
+    const supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!
+    );
 
     try {
-      const result = await client.query(`
-        SELECT id, main_wallet_pubkey
-        FROM trading_wallets
-        WHERE wallet_pubkey = $1
-      `, [walletPubkey]);
+      const { data: result, error } = await supabase
+        .from('trading_wallets')
+        .select('id, main_wallet_pubkey')
+        .eq('wallet_pubkey', walletPubkey)
+        .single();
 
-      if (result.rows.length === 0) {
-        res.status(404).json({ error: 'Trading wallet not found' });
-        return;
+      if (error) {
+        console.error('Error fetching trading wallet ID:', error);
+        throw error;
       }
 
-      // Verify ownership
-      if (result.rows[0].main_wallet_pubkey !== req.user?.main_wallet_pubkey) {
+      if (result.main_wallet_pubkey !== req.user?.main_wallet_pubkey) {
         return res.status(403).json({ error: 'Unauthorized access to trading wallet' });
       }
 
-      console.log('Found trading wallet ID:', result.rows[0].id);
-      res.json({ id: result.rows[0].id });
+      console.log('Found trading wallet ID:', result.id);
+      res.json({ id: result.id });
     } catch (error) {
       console.error('Error fetching trading wallet ID:', error);
       res.status(500).json({ error: 'Failed to fetch trading wallet ID' });
-    } finally {
-      client.release();
-      console.log('Released database client');
     }
   });
 

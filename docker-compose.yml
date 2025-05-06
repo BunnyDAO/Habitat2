@@ -1,0 +1,24 @@
+version: '3.8'
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    # Uncomment if you want to expose a port (e.g., for an API)
+    # ports:
+    #   - "3000:3000"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    # Uncomment for persistent data
+    # volumes:
+    #   - redis-data:/data
+
+# Uncomment for persistent Redis data
+# volumes:
+#   redis-data: 

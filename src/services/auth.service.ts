@@ -1,4 +1,4 @@
-import apiClient from './api/api-client';
+import apiClient, { unauthenticatedClient } from './api/api-client';
 import { AxiosError } from 'axios';
 
 export class AuthService {
@@ -16,7 +16,7 @@ export class AuthService {
   async signIn(walletAddress: string): Promise<string | null> {
     try {
       console.log('Attempting sign in with wallet:', walletAddress);
-      const response = await apiClient.post('/auth/signin', { walletAddress });
+      const response = await unauthenticatedClient.post('/auth/signin', { walletAddress });
       const { access_token } = response.data;
       
       if (!access_token) {

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import { authMiddleware } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -9,7 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 // Check for required environment variables
-if (!process.env.JWT_SECRET || !process.env.DATABASE_URL) {
+if (!process.env.JWT_SECRET || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
   throw new Error('Missing required environment variables. Please check your .env file.');
 }
 
@@ -19,10 +19,11 @@ console.log('Initializing auth routes...');
 
 const router = Router();
 
-// Initialize database pool
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 // Debug middleware to log all requests
 router.use((req, res, next) => {
@@ -54,44 +55,51 @@ router.post('/signin', async (req, res) => {
 
     console.log('Processing wallet authentication for:', walletAddress);
 
-    const client = await pool.connect();
-    try {
-      // Check if user exists in our database
-      const userResult = await client.query(`
-        SELECT main_wallet_pubkey
-        FROM users
-        WHERE main_wallet_pubkey = $1
-      `, [walletAddress]);
+    // Check if user exists in Supabase
+    const { data: existingUser, error: fetchError } = await supabase
+      .from('users')
+      .select('main_wallet_pubkey')
+      .eq('main_wallet_pubkey', walletAddress)
+      .single();
 
-      if (userResult.rows.length === 0) {
-        // Create new user
-        console.log('Creating new user for wallet:', walletAddress);
-        const newUserResult = await client.query(`
-          INSERT INTO users (main_wallet_pubkey, created_at)
-          VALUES ($1, CURRENT_TIMESTAMP)
-          RETURNING main_wallet_pubkey
-        `, [walletAddress]);
+    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+      console.error('Error checking user:', fetchError);
+      throw fetchError;
+    }
 
-        if (newUserResult.rows.length === 0) {
-          throw new Error('Failed to create user');
-        }
+    if (!existingUser) {
+      // Create new user
+      console.log('Creating new user for wallet:', walletAddress);
+      const { data: newUser, error: insertError } = await supabase
+        .from('users')
+        .insert([
+          { main_wallet_pubkey: walletAddress }
+        ])
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Error creating user:', insertError);
+        throw insertError;
       }
 
-      console.log('Creating JWT token for wallet:', walletAddress);
-      // Create JWT token
-      const token = jwt.sign(
-        { 
-          walletAddress,
-          userId: walletAddress // Use wallet address as userId for simplicity
-        },
-        JWT_SECRET
-      );
-
-      console.log('JWT token created successfully');
-      res.json({ access_token: token });
-    } finally {
-      client.release();
+      if (!newUser) {
+        throw new Error('Failed to create user');
+      }
     }
+
+    console.log('Creating JWT token for wallet:', walletAddress);
+    // Create JWT token
+    const token = jwt.sign(
+      { 
+        walletAddress,
+        userId: walletAddress // Use wallet address as userId for simplicity
+      },
+      JWT_SECRET
+    );
+
+    console.log('JWT token created successfully');
+    res.json({ access_token: token });
   } catch (error) {
     console.error('Sign in error:', error);
     res.status(500).json({ error: 'Internal server error' });

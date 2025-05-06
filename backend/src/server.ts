@@ -100,7 +100,7 @@ const tokenService = new TokenService(pool);
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'OPTIONS', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'solana-client'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'solana-client'],
   credentials: true
 }));
 
@@ -108,7 +108,7 @@ app.use(express.json());
 
 // Register routes
 app.use('/api/v1/auth', authRouter);
-app.use('/api/v1/trading-wallets', createTradingWalletsRouter(pool));
+app.use('/api/v1/trading-wallets', createTradingWalletsRouter());
 app.use('/api/v1/wallet-balances', createWalletBalancesRouter(pool));
 app.use('/api/v1/tokens', createTokenRouter(tokenService));
 

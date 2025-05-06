@@ -779,82 +779,61 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
 
     try {
-        // Check if user is authenticated
-        const token = await authService.getSession();
-        if (!token) {
-            // Try to sign in first
-            const newToken = await authService.signIn(wallet.publicKey.toString());
-            if (!newToken) {
-                setNotification({
-                    message: 'Please sign in to create a trading wallet',
-                    type: 'error'
-                });
-                return;
-            }
-        }
-
-        // Check wallet limit
-        const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
-        const ownerAddress = wallet.publicKey.toString();
-        const existingWallets = allWallets[ownerAddress] || [];
-        
-        if (existingWallets.length >= 3) {
-            setShowWalletLimitDialog(true);
-            return;
-        }
-
-        const newWallet = Keypair.generate();
-        
-        // Generate unique name
-        const baseName = `Trading Wallet ${existingWallets.length + 1}`;
-        const uniqueName = generateUniqueWalletName(baseName, existingWallets);
-        
-        // Create the wallet object
-        const walletToStore: TradingWallet = {
-            publicKey: newWallet.publicKey.toString(),
-            secretKey: newWallet.secretKey,
-            mnemonic: '', // We don't use mnemonic in this implementation
-            name: uniqueName,
-            createdAt: Date.now()
-        };
-        
-        // Store the secret key in wallet_<publickey> format
-        storeWalletSecretKey(walletToStore.publicKey, walletToStore.secretKey);
-        
-        // Save to localStorage without the secretKey
-        const walletForStorage = {
-            ...walletToStore,
-            secretKey: undefined // Don't store secretKey in tradingWallets
-        };
-        allWallets[ownerAddress] = [...existingWallets, walletForStorage];
-        localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
-        
-        // Update state with the wallet (with secretKey from storeWalletSecretKey)
-        const updatedWallets = [...existingWallets, walletToStore];
-        setTradingWallets(updatedWallets);
-        setSelectedTradingWallet(walletToStore);
-
-        // Save to backend
-        try {
-            await tradingWalletService.saveWallet(ownerAddress, walletToStore);
-            console.log('Successfully saved wallet to backend');
-        } catch (error) {
-            console.error('Error saving wallet to database:', error);
-            // Remove from localStorage and state if backend save fails
-            allWallets[ownerAddress] = existingWallets;
-            localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
-            setTradingWallets(existingWallets);
-            setSelectedTradingWallet(null);
-            throw new Error('Failed to save wallet to database');
-        }
-    } catch (error) {
-        console.error('Error generating trading wallet:', error);
+      // Always sign in with the currently connected wallet first
+      const mainWalletAddress = wallet.publicKey.toString();
+      const token = await authService.signIn(mainWalletAddress);
+      if (!token) {
         setNotification({
-            message: 'Failed to generate trading wallet',
-            type: 'error'
+          message: 'Failed to authenticate with wallet',
+          type: 'error'
         });
+        return;
+      }
+
+      // Check wallet limit
+      const allWallets = JSON.parse(localStorage.getItem('tradingWallets') || '{}');
+      const existingWallets = allWallets[mainWalletAddress] || [];
+      if (existingWallets.length >= 3) {
+        setShowWalletLimitDialog(true);
+        return;
+      }
+
+      // Generate unique name
+      const baseName = `Trading Wallet ${existingWallets.length + 1}`;
+      const uniqueName = generateUniqueWalletName(baseName, existingWallets);
+
+      // Call backend to create wallet
+      const backendWallet = await tradingWalletService.saveWallet(mainWalletAddress, { name: uniqueName });
+
+      if (!backendWallet) {
+        setNotification({
+          message: 'Failed to create wallet on backend',
+          type: 'error'
+        });
+        return;
+      }
+
+      // Update localStorage and state with backendWallet
+      const walletForStorage = {
+        ...backendWallet,
+        secretKey: undefined,
+        mnemonic: '', // if needed
+      };
+      allWallets[mainWalletAddress] = [...existingWallets, walletForStorage];
+      localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
+      setTradingWallets([...existingWallets, walletForStorage]);
+      setNotification({
+        message: 'Trading wallet created successfully!',
+        type: 'success'
+      });
+    } catch (error) {
+      setNotification({
+        message: error instanceof Error ? error.message : 'Error creating trading wallet',
+        type: 'error'
+      });
+      console.error('Error generating trading wallet:', error);
     }
-};
+  };
 
   // fetch Backend Balances - Add this helper function
   const fetchBackendBalances = async (walletAddress: string) => {

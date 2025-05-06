@@ -1,12 +1,22 @@
 import axios from 'axios';
 import { authService } from '../auth.service';
 
-const apiClient = axios.create({
-  baseURL: '/api/v1',  // Use the proxied path
+// Create an unauthenticated client for auth requests
+const unauthenticatedClient = axios.create({
+  baseURL: 'http://localhost:3001/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: true, // Enable sending cookies
+  withCredentials: true,
+});
+
+// Create the main authenticated client
+const apiClient = axios.create({
+  baseURL: 'http://localhost:3001/api/v1',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  withCredentials: true,
 });
 
 // Add request interceptor to include auth token
@@ -44,4 +54,5 @@ apiClient.interceptors.response.use(
   }
 );
 
+export { unauthenticatedClient };
 export default apiClient; 

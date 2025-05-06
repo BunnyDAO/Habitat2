@@ -6,11 +6,12 @@
  * Represents a trading wallet
  */
 export interface TradingWallet {
+  id?: string;
   publicKey: string;
-  secretKey: Uint8Array;
-  mnemonic: string;
+  secretKey?: Uint8Array; // optional, may be undefined
+  mnemonic?: string;
   name?: string;  // Optional name for the trading wallet
-  createdAt: number;  // Timestamp when wallet was created (Unix timestamp in milliseconds)
+  createdAt: string;  // Timestamp when wallet was created (ISO string)
 }
 
 /**

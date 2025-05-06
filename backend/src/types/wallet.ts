@@ -1,5 +1,7 @@
 export interface TradingWallet {
+  id: string;
   publicKey: string;
   name?: string;
-  createdAt: number;
+  createdAt: string;
+  secretKey?: string; // base64-encoded secret key
 } 

@@ -1,11 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
 import { Keypair } from '@solana/web3.js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { WalletEncryptionService } from './wallet-encryption.service';
-import { TradingWallet } from '../types/wallet';
+import { TradingWallet } from '../../src/types/wallet';
 
-interface WalletRow {
-  id: number;
-  main_wallet_pubkey: string;
+interface DatabaseRow {
+  id: string;
   wallet_pubkey: string;
   name: string;
   created_at: string;
@@ -13,18 +12,14 @@ interface WalletRow {
 
 export class WalletService {
   private static instance: WalletService;
-  private supabase;
+  private supabase: SupabaseClient;
   private walletEncryptionService: WalletEncryptionService;
 
   private constructor() {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_ANON_KEY;
-    
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY environment variables must be set');
-    }
-    
-    this.supabase = createClient(supabaseUrl, supabaseKey);
+    this.supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!
+    );
     this.walletEncryptionService = WalletEncryptionService.getInstance();
   }
 
@@ -40,7 +35,34 @@ export class WalletService {
     name?: string
   ): Promise<TradingWallet> {
     console.log('Creating new wallet for user:', userId);
+    
     try {
+      // First check if user exists
+      const { data: existingUser, error: userError } = await this.supabase
+        .from('users')
+        .select('main_wallet_pubkey')
+        .eq('main_wallet_pubkey', userId)
+        .single();
+
+      if (userError && userError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+        console.error('Error checking user:', userError);
+        throw userError;
+      }
+
+      if (!existingUser) {
+        // Insert user if not exists
+        console.log('User does not exist, creating new user');
+        const { error: insertError } = await this.supabase
+          .from('users')
+          .insert([{ main_wallet_pubkey: userId }]);
+
+        if (insertError) {
+          console.error('Error creating user:', insertError);
+          throw insertError;
+        }
+        console.log('Created new user');
+      }
+
       // Generate new wallet
       const keypair = Keypair.generate();
       const publicKey = keypair.publicKey.toString();
@@ -48,38 +70,44 @@ export class WalletService {
       console.log('Generated new wallet with public key:', publicKey);
 
       // Store wallet in database
-      const { data: wallet, error: walletError } = await this.supabase
+      const { data: newWallet, error: walletError } = await this.supabase
         .from('trading_wallets')
-        .insert({
+        .insert([{
           main_wallet_pubkey: userId,
           wallet_pubkey: publicKey,
           name: name || 'New Wallet',
           created_at: new Date().toISOString()
-        })
-        .select()
+        }])
+        .select('id, wallet_pubkey, name, created_at')
         .single();
 
-      if (walletError) throw walletError;
+      if (walletError) {
+        console.error('Error storing wallet:', walletError);
+        throw walletError;
+      }
 
-      const tradingWalletId = wallet.id;
+      if (!newWallet) {
+        throw new Error('Failed to create wallet');
+      }
+
+      const tradingWalletId = newWallet.id;
       console.log('Stored wallet in database with ID:', tradingWalletId);
 
       // Encrypt and store private key
       console.log('Encrypting and storing private key...');
       await this.walletEncryptionService.encryptAndStoreWallet(
         userId,
-        tradingWalletId,
+        parseInt(tradingWalletId),
         privateKey
       );
       console.log('Successfully encrypted and stored private key');
 
-      console.log('Wallet creation completed successfully');
-
       return {
         id: tradingWalletId,
-        publicKey,
-        name: name || 'New Wallet',
-        createdAt: new Date().toISOString()
+        publicKey: newWallet.wallet_pubkey,
+        secretKey: privateKey,
+        name: newWallet.name,
+        createdAt: newWallet.created_at
       };
     } catch (error) {
       console.error('Error creating wallet:', error);
@@ -93,6 +121,7 @@ export class WalletService {
     name?: string
   ): Promise<TradingWallet> {
     console.log('Importing wallet for user:', userId);
+    
     try {
       // Convert private key to keypair
       const secretKey = Buffer.from(privateKey, 'base64');
@@ -107,7 +136,8 @@ export class WalletService {
         .eq('wallet_pubkey', publicKey)
         .single();
 
-      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "not found" error
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error checking existing wallet:', checkError);
         throw checkError;
       }
 
@@ -117,38 +147,44 @@ export class WalletService {
       }
 
       // Store wallet in database
-      const { data: wallet, error: walletError } = await this.supabase
+      const { data: newWallet, error: walletError } = await this.supabase
         .from('trading_wallets')
-        .insert({
+        .insert([{
           main_wallet_pubkey: userId,
           wallet_pubkey: publicKey,
           name: name || 'Imported Wallet',
           created_at: new Date().toISOString()
-        })
-        .select()
+        }])
+        .select('id, wallet_pubkey, name, created_at')
         .single();
 
-      if (walletError) throw walletError;
+      if (walletError) {
+        console.error('Error storing wallet:', walletError);
+        throw walletError;
+      }
 
-      const tradingWalletId = wallet.id;
+      if (!newWallet) {
+        throw new Error('Failed to create wallet');
+      }
+
+      const tradingWalletId = newWallet.id;
       console.log('Stored wallet in database with ID:', tradingWalletId);
 
       // Encrypt and store private key
       console.log('Encrypting and storing private key...');
       await this.walletEncryptionService.encryptAndStoreWallet(
         userId,
-        tradingWalletId,
+        parseInt(tradingWalletId),
         privateKey
       );
       console.log('Successfully encrypted and stored private key');
 
-      console.log('Wallet import completed successfully');
-
       return {
         id: tradingWalletId,
-        publicKey,
-        name: name || 'Imported Wallet',
-        createdAt: new Date().toISOString()
+        publicKey: newWallet.wallet_pubkey,
+        secretKey: privateKey,
+        name: newWallet.name,
+        createdAt: newWallet.created_at
       };
     } catch (error) {
       console.error('Error importing wallet:', error);
@@ -156,7 +192,32 @@ export class WalletService {
     }
   }
 
-  public async deleteWallet(tradingWalletId: number): Promise<void> {
+  public async getWallets(userId: string): Promise<TradingWallet[]> {
+    try {
+      const { data: wallets, error } = await this.supabase
+        .from('trading_wallets')
+        .select('id, wallet_pubkey, name, created_at')
+        .eq('main_wallet_pubkey', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching wallets:', error);
+        throw error;
+      }
+
+      return (wallets || []).map((row: DatabaseRow) => ({
+        id: row.id,
+        publicKey: row.wallet_pubkey,
+        name: row.name,
+        createdAt: row.created_at
+      }));
+    } catch (error) {
+      console.error('Error getting wallets:', error);
+      throw error;
+    }
+  }
+
+  public async deleteWallet(tradingWalletId: string): Promise<void> {
     try {
       // Delete wallet
       const { error: walletError } = await this.supabase
@@ -164,15 +225,21 @@ export class WalletService {
         .delete()
         .eq('id', tradingWalletId);
 
-      if (walletError) throw walletError;
+      if (walletError) {
+        console.error('Error deleting wallet:', walletError);
+        throw walletError;
+      }
 
       // Delete encrypted keys
-      const { error: keyError } = await this.supabase
+      const { error: keysError } = await this.supabase
         .from('encrypted_wallet_keys')
         .delete()
-        .eq('trading_wallet_id', tradingWalletId);
+        .eq('trading_wallet_id', parseInt(tradingWalletId));
 
-      if (keyError) throw keyError;
+      if (keysError) {
+        console.error('Error deleting encrypted keys:', keysError);
+        throw keysError;
+      }
     } catch (error) {
       console.error('Error deleting wallet:', error);
       throw error;

@@ -6,19 +6,12 @@ import { authService } from './auth.service';
 const TRADING_WALLETS_ENDPOINT = '/trading-wallets';
 
 interface RawWallet {
+  id: string;
   publicKey: string;
-  secretKey: string;
-  mnemonic: string;
+  secretKey?: string; // base64
+  mnemonic?: string;
   name?: string;
-  createdAt: number;
-}
-
-interface ErrorResponse {
-  error: string;
-}
-
-interface StoredTradingWallets {
-  [ownerAddress: string]: TradingWallet[];
+  createdAt: string;
 }
 
 export const tradingWalletService = {
@@ -28,10 +21,10 @@ export const tradingWalletService = {
       const response = await apiClient.get(`${TRADING_WALLETS_ENDPOINT}/${ownerAddress}`);
       const wallets: RawWallet[] = response.data;
       
-      // Convert secretKey back to Uint8Array
+      // Convert secretKey back to Uint8Array if present
       const processedWallets = wallets.map((wallet) => ({
         ...wallet,
-        secretKey: new Uint8Array(Buffer.from(wallet.secretKey, 'base64'))
+        secretKey: wallet.secretKey ? new Uint8Array(Buffer.from(wallet.secretKey, 'base64')) : undefined
       }));
       
       console.log('Fetched wallets:', processedWallets);
@@ -42,7 +35,7 @@ export const tradingWalletService = {
     }
   },
 
-  async saveWallet(ownerAddress: string, wallet: TradingWallet): Promise<void> {
+  async saveWallet(ownerAddress: string, wallet: Partial<TradingWallet> & { name?: string }): Promise<RawWallet | undefined> {
     try {
       // Ensure we have a valid auth token
       const token = await authService.getSession();
@@ -54,21 +47,29 @@ export const tradingWalletService = {
         }
       }
 
-      // Convert Uint8Array to base64 string for storage
-      const walletToStore: RawWallet = {
-        ...wallet,
-        secretKey: Buffer.from(wallet.secretKey).toString('base64')
-      };
-      
+      // Only send name to backend for creation
+      const requestWallet = { name: wallet.name };
       console.log('Saving wallet to endpoint:', TRADING_WALLETS_ENDPOINT);
-      console.log('Request data:', { ownerAddress, wallet: walletToStore });
+      console.log('Request data:', { ownerAddress, wallet: requestWallet });
       
+      // Call backend to create wallet
       const response = await apiClient.post(TRADING_WALLETS_ENDPOINT, {
         ownerAddress,
-        wallet: walletToStore
+        wallet: requestWallet
       });
+      
+      if (!response.data) {
+        throw new Error('No data received from backend');
+      }
+      
+      const backendWallet: RawWallet = response.data;
+      console.log('Save wallet response:', backendWallet);
 
-      console.log('Save wallet response:', response.data);
+      // Store secretKey in localStorage if present
+      if (backendWallet.secretKey) {
+        localStorage.setItem(`wallet_${backendWallet.publicKey}`, backendWallet.secretKey);
+      }
+      return backendWallet;
     } catch (error) {
       console.error('Error saving wallet:', error);
       throw error;
@@ -89,10 +90,10 @@ export const tradingWalletService = {
       const response = await apiClient.get(`${TRADING_WALLETS_ENDPOINT}/${ownerAddress}`);
       const wallets: RawWallet[] = response.data;
       
-      // Convert base64 secret keys back to Uint8Array
+      // Convert base64 secret keys back to Uint8Array if present
       return wallets.map((wallet: RawWallet) => ({
         ...wallet,
-        secretKey: new Uint8Array(Buffer.from(wallet.secretKey, 'base64'))
+        secretKey: wallet.secretKey ? new Uint8Array(Buffer.from(wallet.secretKey, 'base64')) : undefined
       }));
     } catch (error) {
       console.warn('Error fetching wallets from backend:', error);

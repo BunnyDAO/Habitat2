@@ -5,6 +5,24 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+interface PostgresError extends Error {
+  code?: string;
+  detail?: string;
+  hint?: string;
+  position?: string;
+  internalPosition?: string;
+  internalQuery?: string;
+  where?: string;
+  schema?: string;
+  table?: string;
+  column?: string;
+  dataType?: string;
+  constraint?: string;
+  file?: string;
+  line?: string;
+  routine?: string;
+}
+
 async function applyMigrations() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -44,18 +62,34 @@ async function applyMigrations() {
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
+          let shouldCommit = true;
           
           // Apply the migration
-          await client.query(migration);
+          try {
+            await client.query(migration);
+          } catch (error) {
+            const pgError = error as PostgresError;
+            // If the error is about columns already existing, skip it
+            if (pgError.code === '42701') {
+              console.log(`Skipping migration ${file} as columns already exist`);
+              shouldCommit = false;
+              await client.query('ROLLBACK');
+            } else {
+              throw error;
+            }
+          }
           
-          // Record the migration
-          await client.query(
-            'INSERT INTO migrations (name) VALUES ($1)',
-            [file]
-          );
-          
-          await client.query('COMMIT');
-          console.log(`Successfully applied migration: ${file}`);
+          // Only record the migration and commit if we didn't skip it
+          if (shouldCommit) {
+            // Record the migration
+            await client.query(
+              'INSERT INTO migrations (name) VALUES ($1)',
+              [file]
+            );
+            
+            await client.query('COMMIT');
+            console.log(`Successfully applied migration: ${file}`);
+          }
         } catch (error) {
           await client.query('ROLLBACK');
           console.error(`Error applying migration ${file}:`, error);
@@ -63,6 +97,8 @@ async function applyMigrations() {
         } finally {
           client.release();
         }
+      } else {
+        console.log(`Skipping already applied migration: ${file}`);
       }
     }
 
@@ -78,4 +114,3 @@ async function applyMigrations() {
 // Run migrations if this file is run directly
 if (require.main === module) {
   applyMigrations().catch(console.error);
-} 
