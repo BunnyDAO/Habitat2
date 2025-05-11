@@ -2,22 +2,42 @@ version: '3.8'
 services:
   backend:
     build: ./backend
-    env_file: ./backend/.env
-    volumes:
-      - ./backend:/app
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=development
+      - BACKEND_API_URL=http://backend:3001
+      - FRONTEND_URL=http://localhost:5173
+      - SERVICE_MODE=api
     depends_on:
+      - db
       - redis
-    # Uncomment if you want to expose a port (e.g., for an API)
-    # ports:
-    #   - "3000:3000"
-
+  daemon:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      - BACKEND_API_URL=http://backend:3001
+      - NODE_ENV=development
+      - SERVICE_MODE=daemon
+    depends_on:
+      - backend
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: habitat
+    ports:
+      - "5432:5432"
   redis:
     image: redis:7
+    restart: always
     ports:
       - "6379:6379"
-    # Uncomment for persistent data
-    # volumes:
-    #   - redis-data:/data
 
 # Uncomment for persistent Redis data
 # volumes:

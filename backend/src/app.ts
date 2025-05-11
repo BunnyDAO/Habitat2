@@ -7,6 +7,7 @@ import { createSwapRouter } from './api/v1/routes/swap.routes';
 import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 import authRouter from './routes/auth.routes';
 import cors from 'cors';
+import { createHeliusRouter } from './api/v1/routes/helius.routes';
 
 console.log('Starting server initialization...');
 
@@ -56,12 +57,19 @@ app.use(express.json());
 console.log('Registering routes...');
 app.use('/api/v1/auth', authRouter);
 console.log('Auth routes registered');
-app.use('/api/v1/trading-wallets', createTradingWalletsRouter(pool));
+app.use('/api/v1/trading-wallets', createTradingWalletsRouter());
 console.log('Trading wallets routes registered');
 app.use('/api/v1/swap', createSwapRouter(pool, connection));
 console.log('Swap routes registered');
-app.use('/api/v1/jupiter', createJupiterRouter(redisClient));
+app.use('/api/v1/jupiter', createJupiterRouter(pool, redisClient));
 console.log('Jupiter routes registered');
+
+const heliusApiKey = process.env.HELIUS_API_KEY;
+if (!heliusApiKey) {
+  throw new Error('HELIUS_API_KEY is not set in environment variables');
+}
+app.use('/api/v1/helius', createHeliusRouter(heliusApiKey, redisClient));
+console.log('Helius routes registered');
 
 // Add a catch-all route for debugging
 app.use('*', (req, res) => {

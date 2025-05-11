@@ -1,12 +1,15 @@
 import { Router } from 'express';
 import { JupiterController } from '../controllers/jupiter.controller';
-import { JupiterService } from '../services/jupiter.service';
+import { JupiterService } from '../../services/jupiter.service';
 import { createClient } from 'redis';
+import { Pool } from 'pg';
+import { Connection } from '@solana/web3.js';
 
-export const createJupiterRouter = (redisClient: ReturnType<typeof createClient> | null) => {
+export const createJupiterRouter = (pool: Pool, redisClient: ReturnType<typeof createClient> | null) => {
   const router = Router();
-  const jupiterService = new JupiterService(redisClient);
-  const jupiterController = new JupiterController(jupiterService);
+  const jupiterService = new JupiterService(pool, redisClient);
+  const connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com');
+  const jupiterController = new JupiterController(jupiterService, pool, connection, redisClient);
 
   router.get('/price/:token', jupiterController.getTokenPrice);
   router.get('/prices', jupiterController.getTokenPrices);

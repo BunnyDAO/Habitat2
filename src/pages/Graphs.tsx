@@ -5,6 +5,7 @@ import { TradingWallet } from '../types/wallet';
 import { Connection } from '@solana/web3.js';
 import { createRoot } from 'react-dom/client';
 import { TokenBalancesList } from '../components/TokenBalancesList';
+import { API_CONFIG } from '../config/api';
 
 interface GraphsProps {
   tradingWallets: TradingWallet[];
@@ -56,7 +57,7 @@ export const Graphs: React.FC<GraphsProps> = ({
   const [selectedWallet, setSelectedWallet] = useState<TradingWallet | null>(null);
   const [portfolioValues, setPortfolioValues] = useState<Record<string, number>>({});
   const connection = useRef(new Connection(
-    endpoint.startsWith('http') ? endpoint : `http://localhost:3001${endpoint}`
+    endpoint.startsWith('http') ? endpoint : `${API_CONFIG.BASE_URL}${endpoint}`
   ));
 
   // Handle token selection

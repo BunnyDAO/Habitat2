@@ -35,6 +35,7 @@ import { StrategyService } from './services/strategy.service';
 import { authService } from './services/auth.service';
 import { PortfolioProvider } from './contexts/PortfolioContext';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { API_CONFIG } from './config/api';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -47,7 +48,7 @@ interface SelectedToken {
 
 // Add at the top with other imports and constants
 const JUPITER_API_BASE = 'https://quote-api.jup.ag/v6';
-const BACKEND_ENDPOINT = 'http://localhost:3001/api/rpc';
+const BACKEND_ENDPOINT = API_CONFIG.RPC_BASE;
 
 interface JupiterConfig {
     endpoint: string;
@@ -839,7 +840,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const fetchBackendBalances = async (walletAddress: string) => {
     try {
       console.log('Fetching balances from backend for:', walletAddress);
-      const response = await fetch(`http://localhost:3001/api/wallet/${walletAddress}/balances`);
+      const response = await fetch(API_CONFIG.WALLET.BALANCES);
       if (!response.ok) {
         throw new Error(`Backend error: ${response.statusText}`);
       }
@@ -882,7 +883,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
           // Update backend with new balance
           try {
-            await fetch(`http://localhost:3001/api/v1/wallet-balances/${tw.publicKey}/update`, {
+            await fetch(API_CONFIG.WALLET.UPDATE(tw.publicKey), {
               method: 'POST',
               headers: {
                 'Accept': 'application/json',
@@ -2117,7 +2118,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       console.log('Chain balance:', chainBalance / LAMPORTS_PER_SOL, 'SOL');
 
       // Update backend with new balance
-      const updateResponse = await fetch(`http://localhost:3001/api/v1/wallet-balances/${walletPublicKey}/update`, {
+      const updateResponse = await fetch(API_CONFIG.WALLET.UPDATE(walletPublicKey), {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -4913,7 +4914,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   const fetchTokenMetadata = async (mintAddresses: string[]): Promise<Map<string, TokenMetadata>> => {
     try {
       console.log('Fetching metadata for:', mintAddresses);
-      const response = await fetch('http://localhost:3001/api/v1/tokens/batch', {
+      const response = await fetch(API_CONFIG.TOKENS.BATCH, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -5719,7 +5720,7 @@ const App = () => {
   // Create connection configuration with WebSocket endpoint
   const connectionConfig = useMemo(() => ({
     commitment: 'confirmed',
-    wsEndpoint: 'ws://localhost:3001/api/v1/ws'
+    wsEndpoint: API_CONFIG.WS_BASE
   }), []);
   
   // Add keyframe animation for spinner

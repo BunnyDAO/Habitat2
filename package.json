@@ -4,11 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "npm run config:dev && vite",
+    "build": "npm run config:prod && vite build",
+    "build:staging": "npm run config:staging && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start:partitions": "cd backend && npm run start:partitions"
+    "start:partitions": "cd backend && npm run start:partitions",
+    "config:dev": "node scripts/setup-config.js development",
+    "config:staging": "node scripts/setup-config.js staging",
+    "config:prod": "node scripts/setup-config.js production"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

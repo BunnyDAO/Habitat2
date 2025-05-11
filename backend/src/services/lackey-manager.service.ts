@@ -3,9 +3,9 @@ import { Strategy, StrategyConfig } from '../types/strategy';
 import { TradingWallet } from '../../src/types/wallet';
 
 interface LackeyConfig {
-    originalWalletPubkey: string;
+    original_wallet_pubkey: string;
     position: number;
-    strategyConfig: StrategyConfig;
+    strategy_config: StrategyConfig;
 }
 
 export class LackeyManager {
@@ -20,23 +20,23 @@ export class LackeyManager {
         
         // Create strategy with lackey flag
         const strategy = await this.createStrategy({
-            strategyType: config.strategyConfig.type,
-            config: config.strategyConfig,
-            isLackey: true,
-            originalWalletPubkey: config.originalWalletPubkey,
+            strategy_type: config.strategy_config.type,
+            config: config.strategy_config,
+            is_lackey: true,
+            original_wallet_pubkey: config.original_wallet_pubkey,
             position: config.position,
-            isActive: true
+            is_active: true
         });
 
         // If target wallet provided, assign to it
         if (targetWallet) {
-            strategy.currentWalletPubkey = targetWallet.publicKey;
+            strategy.current_wallet_pubkey = targetWallet.publicKey;
             await this.updateStrategy(strategy);
         } else {
             // Try to find appropriate wallet
             const wallet = await this.findWalletForLackey(strategy);
             if (wallet) {
-                strategy.currentWalletPubkey = wallet.publicKey;
+                strategy.current_wallet_pubkey = wallet.publicKey;
                 await this.updateStrategy(strategy);
             }
         }
@@ -46,14 +46,14 @@ export class LackeyManager {
 
     async exportLackey(strategyId: number): Promise<string> {
         const strategy = await this.getStrategy(strategyId);
-        if (!strategy.isLackey) {
+        if (!strategy.is_lackey) {
             throw new Error('Not a lackey strategy');
         }
 
         return this.encryptLackey({
-            originalWalletPubkey: strategy.originalWalletPubkey || '',
+            original_wallet_pubkey: strategy.original_wallet_pubkey || '',
             position: strategy.position || 0,
-            strategyConfig: strategy.config
+            strategy_config: strategy.config
         });
     }
 
@@ -75,16 +75,16 @@ export class LackeyManager {
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING *
             `, [
-                strategyData.tradingWalletId,
-                strategyData.mainWalletPubkey,
-                strategyData.strategyType,
+                strategyData.trading_wallet_id,
+                strategyData.main_wallet_pubkey,
+                strategyData.strategy_type,
                 strategyData.config,
-                strategyData.isActive,
+                strategyData.is_active,
                 strategyData.name,
-                strategyData.isLackey,
-                strategyData.originalWalletPubkey,
+                strategyData.is_lackey,
+                strategyData.original_wallet_pubkey,
                 strategyData.position,
-                strategyData.currentWalletPubkey
+                strategyData.current_wallet_pubkey
             ]);
 
             return result.rows[0];
@@ -118,7 +118,7 @@ export class LackeyManager {
                 SET current_wallet_pubkey = $1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $2
-            `, [strategy.currentWalletPubkey, strategy.id]);
+            `, [strategy.current_wallet_pubkey, strategy.id]);
         } finally {
             client.release();
         }
@@ -128,11 +128,11 @@ export class LackeyManager {
         const client = await this.pool.connect();
         try {
             // First try to find by original wallet
-            if (strategy.originalWalletPubkey) {
+            if (strategy.original_wallet_pubkey) {
                 const result = await client.query(`
                     SELECT * FROM trading_wallets 
                     WHERE wallet_pubkey = $1
-                `, [strategy.originalWalletPubkey]);
+                `, [strategy.original_wallet_pubkey]);
                 
                 if (result.rows.length > 0) {
                     return result.rows[0];
@@ -146,7 +146,7 @@ export class LackeyManager {
                     WHERE main_wallet_pubkey = $1
                     ORDER BY created_at
                     OFFSET $2 LIMIT 1
-                `, [strategy.mainWalletPubkey, strategy.position - 1]);
+                `, [strategy.main_wallet_pubkey, strategy.position - 1]);
                 
                 if (result.rows.length > 0) {
                     return result.rows[0];

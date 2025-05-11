@@ -1,4 +1,5 @@
 import { Keypair } from '@solana/web3.js';
+import { API_CONFIG } from '../config/api';
 
 // Interface for swap parameters
 interface SwapParams {
@@ -20,7 +21,8 @@ interface SwapResult {
   fee?: number;                // Fee amount in token's native format (if applicable)
 }
 
-const API_BASE_URL = 'http://localhost:3001';
+// Replace hardcoded URL with API_CONFIG
+const API_BASE_URL = API_CONFIG.BASE_URL;
 const MIN_SOL_AMOUNT = 0.005; // Minimum SOL amount for swaps
 
 /**

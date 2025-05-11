@@ -1,11 +1,12 @@
 import { WhaleWallet, Trade, WhaleTrackerConfig, WhaleAnalytics } from '../../types/whale-tracker/types';
+import { API_CONFIG } from '../../config/api';
 
 export class HeliusService {
   private static instance: HeliusService;
   private baseUrl: string;
 
   private constructor() {
-    this.baseUrl = 'http://localhost:3001/api/v1/whale-tracking';
+    this.baseUrl = API_CONFIG.WHALE.TRACKING;
   }
 
   public static getInstance(): HeliusService {

@@ -1,8 +1,8 @@
 import { Pool } from 'pg';
-import { Connection, Keypair } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
 import { createClient } from 'redis';
 import { HeliusService } from './helius.service';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, Level } from '../types/jobs';
 import { EncryptionService } from './encryption.service';
 import { PriceService } from './price.service';
 
@@ -15,17 +15,17 @@ export class StrategyExecutorService {
   private priceService: PriceService;
   private isRunning: boolean = false;
 
-  private constructor() {
-    this.pool = new Pool();
-    this.redisClient = null;
-    this.heliusService = new HeliusService();
+  private constructor(pool: Pool, redisClient: ReturnType<typeof createClient> | null, heliusService: HeliusService) {
+    this.pool = pool;
+    this.redisClient = redisClient;
+    this.heliusService = heliusService;
     this.encryptionService = EncryptionService.getInstance();
     this.priceService = new PriceService();
   }
 
-  public static getInstance(): StrategyExecutorService {
+  public static getInstance(pool: Pool, redisClient: ReturnType<typeof createClient> | null, heliusService: HeliusService): StrategyExecutorService {
     if (!StrategyExecutorService.instance) {
-      StrategyExecutorService.instance = new StrategyExecutorService();
+      StrategyExecutorService.instance = new StrategyExecutorService(pool, redisClient, heliusService);
     }
     return StrategyExecutorService.instance;
   }
@@ -110,29 +110,28 @@ export class StrategyExecutorService {
     }
   }
 
-  private async executeWalletMonitor(strategy: any, keypair: Keypair) {
-    const config = strategy.config as WalletMonitoringJob;
-    
+  private async executeWalletMonitor(strategy: WalletMonitoringJob, keypair: Keypair) {
     // Get recent transactions for monitored wallet
-    const transactions = await this.heliusService.getTransactions(config.walletAddress);
-    
+    const transactions = await this.heliusService.getTransactions(strategy.walletAddress);
     // Filter out already processed transactions
     const newTransactions = transactions.filter(tx => 
-      !config.recentTransactions?.includes(tx.signature)
+      !strategy.recentTransactions?.includes(tx.signature)
     );
-      
     // Process new transactions
     for (const tx of newTransactions) {
       try {
         // Mirror the trade
-        await this.mirrorTrade(tx, keypair, config.percentage);
-        
+        await this.mirrorTrade();
         // Update recent transactions list
-        await this.updateRecentTransactions(strategy.id, tx.signature);
-        
+        const strategyId = Number(strategy.id);
+        if (isNaN(strategyId)) {
+          console.error(`Strategy id is not numeric: ${strategy.id}`);
+          continue;
+        }
+        await this.updateRecentTransactions(strategyId, tx.signature);
         // Log the mirror trade
-        await this.logMirrorTrade(strategy, tx);
-    } catch (error) {
+        await this.logMirrorTrade(strategy, tx.signature);
+      } catch (error) {
         console.error(`Error mirroring trade ${tx.signature}:`, error);
         await this.logError('mirror_trade', error, { 
           strategyId: strategy.id,
@@ -142,48 +141,26 @@ export class StrategyExecutorService {
     }
   }
 
-  private async executePriceMonitor(strategy: any, keypair: Keypair) {
-    const config = strategy.config as PriceMonitoringJob;
-    
-    // Get current SOL price
+  private async executePriceMonitor(strategy: PriceMonitoringJob, keypair: Keypair) {
     const currentPrice = await this.priceService.getSolPrice();
-    
-    // Check if price condition is met
-    const shouldExecute = config.direction === 'above' 
-      ? currentPrice > config.targetPrice
-      : currentPrice < config.targetPrice;
-
+    const shouldExecute = strategy.direction === 'above' 
+      ? currentPrice > strategy.targetPrice
+      : currentPrice < strategy.targetPrice;
     if (shouldExecute) {
       try {
-        // Execute the trade
-        await this.executePriceBasedTrade(keypair, config);
-        
-        // Log the trade
+        await this.executePriceBasedTrade();
         await this.logPriceBasedTrade(strategy, currentPrice);
       } catch (error) {
         console.error(`Error executing price-based trade:`, error);
-        await this.logError('price_trade', error, { 
-          strategyId: strategy.id,
-          currentPrice 
-        });
       }
     }
   }
 
-  private async executeVaultStrategy(strategy: any, keypair: Keypair) {
-    const config = strategy.config as VaultStrategy;
-    
+  private async executeVaultStrategy(strategy: VaultStrategy, keypair: Keypair) {
     try {
-      // Get current wallet balance
       const balance = await this.getWalletBalance(keypair.publicKey);
-      
-      // Calculate vault amount
-      const vaultAmount = balance * (config.vaultPercentage / 100);
-      
-      // Execute vault trade if needed
-      await this.executeVaultTrade(keypair, vaultAmount);
-      
-      // Log the vault trade
+      const vaultAmount = balance * (strategy.vaultPercentage / 100);
+      await this.executeVaultTrade();
       await this.logVaultTrade(strategy, vaultAmount);
     } catch (error) {
       console.error(`Error executing vault strategy:`, error);
@@ -191,23 +168,14 @@ export class StrategyExecutorService {
     }
   }
 
-  private async executeLevelsStrategy(strategy: any, keypair: Keypair) {
-    const config = strategy.config as LevelsStrategy;
-    
-    // Get current SOL price
+  private async executeLevelsStrategy(strategy: LevelsStrategy, keypair: Keypair) {
     const currentPrice = await this.priceService.getSolPrice();
-    
-    // Find triggered level
-    const triggeredLevel = config.levels.find(level => 
-      Math.abs(currentPrice - level.price) < 0.01 // 1 cent threshold
+    const triggeredLevel = strategy.levels.find(level => 
+      Math.abs(currentPrice - level.price) < 0.01
     );
-
     if (triggeredLevel) {
       try {
-        // Execute level-based trade
-        await this.executeLevelTrade(keypair, triggeredLevel);
-    
-        // Log the level trade
+        await this.executeLevelTrade();
         await this.logLevelTrade(strategy, triggeredLevel, currentPrice);
       } catch (error) {
         console.error(`Error executing level trade:`, error);
@@ -220,9 +188,15 @@ export class StrategyExecutorService {
     }
   }
 
-  private async logError(context: string, error: any, metadata: any = {}) {
+  private async logError(context: string, error: unknown, metadata: Record<string, unknown> = {}) {
     const client = await this.pool.connect();
     try {
+      let message = 'Unknown error';
+      let stack = '';
+      if (error && typeof error === 'object' && 'message' in error) {
+        message = (error as any).message;
+        stack = (error as any).stack;
+      }
       await client.query(`
         INSERT INTO transactions (
           type,
@@ -238,8 +212,8 @@ export class StrategyExecutorService {
         JSON.stringify({
           context,
           error: {
-            message: error.message,
-            stack: error.stack
+            message,
+            stack
           },
           metadata
         })
@@ -250,21 +224,20 @@ export class StrategyExecutorService {
   }
 
   // Helper methods for trade execution and logging
-  private async mirrorTrade(tx: any, keypair: Keypair, percentage: number) {
+  private async mirrorTrade() {
     // Implementation for mirroring trades
   }
 
-  private async executePriceBasedTrade(keypair: Keypair, config: PriceMonitoringJob) {
+  private async executePriceBasedTrade() {
     // Implementation for price-based trades
   }
 
-  private async executeVaultTrade(keypair: Keypair, vaultAmount: number) {
+  private async executeVaultTrade() {
     // Implementation for vault trades
   }
 
-  private async executeLevelTrade(keypair: Keypair, level: any) {
-    // Implementation for level-based trades
-  }
+  private async executeLevelTrade() {}
+  
 
   private async updateRecentTransactions(strategyId: number, signature: string) {
     const client = await this.pool.connect();
@@ -283,8 +256,103 @@ export class StrategyExecutorService {
     }
   }
 
-  private async getWalletBalance(publicKey: string): Promise<number> {
-    // Implementation for getting wallet balance
-    return 0;
+  private async logMirrorTrade(strategy: WalletMonitoringJob, txSignature: string) {
+    const client = await this.pool.connect();
+    try {
+      const strategyId = Number(strategy.id);
+      if (isNaN(strategyId)) {
+        console.error(`Strategy id is not numeric: ${strategy.id}`);
+        return;
+      }
+      await client.query(`
+        INSERT INTO strategy_logs (
+          strategy_id,
+          type,
+          details
+        ) VALUES ($1, $2, $3)
+      `, [
+        strategyId,
+        'mirror_trade',
+        JSON.stringify({
+          transactionSignature: txSignature,
+          timestamp: new Date().toISOString()
+        })
+      ]);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async logPriceBasedTrade(strategy: PriceMonitoringJob, currentPrice: number) {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO strategy_logs (
+          strategy_id,
+          type,
+          details
+        ) VALUES ($1, $2, $3)
+      `, [
+        strategy.id,
+        'price_trade',
+        JSON.stringify({
+          currentPrice,
+          timestamp: new Date().toISOString()
+        })
+      ]);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async logVaultTrade(strategy: VaultStrategy, vaultAmount: number) {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO strategy_logs (
+          strategy_id,
+          type,
+          details
+        ) VALUES ($1, $2, $3)
+      `, [
+        strategy.id,
+        'vault_trade',
+        JSON.stringify({
+          vaultAmount,
+          timestamp: new Date().toISOString()
+        })
+      ]);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async logLevelTrade(strategy: LevelsStrategy, triggeredLevel: Level, currentPrice: number) {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO strategy_logs (
+          strategy_id,
+          type,
+          details
+        ) VALUES ($1, $2, $3)
+      `, [
+        strategy.id,
+        'level_trade',
+        JSON.stringify({
+          triggeredLevel,
+          currentPrice,
+          timestamp: new Date().toISOString()
+        })
+      ]);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async getWalletBalance(publicKey: PublicKey): Promise<number> {
+    const balances = await this.heliusService.getWalletBalances(publicKey.toBase58());
+    const solBalance = balances.find(b => b.mint === 'So11111111111111111111111111111111111111112');
+    return solBalance?.balance || 0;
   }
 } 

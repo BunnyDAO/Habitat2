@@ -9,6 +9,12 @@ export interface Strategy {
   version: number;
   created_at: string;
   updated_at: string;
+  current_wallet_pubkey?: string;
+  original_wallet_pubkey?: string;
+  position?: number;
+  is_lackey?: boolean;
+  last_executed?: string | null;
+  next_execution?: string | null;
 }
 
 export interface StrategyConfig {

@@ -96,10 +96,10 @@ export class StrategyManager {
 
     private async queueStrategy(strategy: Strategy) {
         // If it's a lackey, check if we need to reassign it
-        if (strategy.isLackey) {
+        if (strategy.is_lackey) {
             const currentWallet = await this.findWalletForLackey(strategy);
             if (currentWallet) {
-                strategy.currentWalletPubkey = currentWallet.publicKey;
+                strategy.current_wallet_pubkey = currentWallet.publicKey;
                 await this.updateStrategy(strategy);
             }
         }
@@ -107,10 +107,10 @@ export class StrategyManager {
         // Queue the strategy for execution
         this.jobQueue.push({
             strategyId: strategy.id,
-            tradingWalletId: strategy.tradingWalletId,
-            walletPublicKey: strategy.currentWalletPubkey || strategy.originalWalletPubkey || '',
-            lastExecuted: strategy.lastExecuted || null,
-            nextExecution: strategy.nextExecution || null
+            tradingWalletId: strategy.trading_wallet_id,
+            walletPublicKey: strategy.current_wallet_pubkey || strategy.original_wallet_pubkey || '',
+            lastExecuted: strategy.last_executed ? new Date(strategy.last_executed) : null,
+            nextExecution: strategy.next_execution ? new Date(strategy.next_execution) : null
         });
     }
 
@@ -118,11 +118,11 @@ export class StrategyManager {
         const client = await this.pool.connect();
         try {
             // First try to find by original wallet
-            if (strategy.originalWalletPubkey) {
+            if (strategy.original_wallet_pubkey) {
                 const result = await client.query(`
                     SELECT * FROM trading_wallets 
                     WHERE wallet_pubkey = $1
-                `, [strategy.originalWalletPubkey]);
+                `, [strategy.original_wallet_pubkey]);
                 
                 if (result.rows.length > 0) {
                     return result.rows[0];
@@ -136,7 +136,7 @@ export class StrategyManager {
                     WHERE main_wallet_pubkey = $1
                     ORDER BY created_at
                     OFFSET $2 LIMIT 1
-                `, [strategy.mainWalletPubkey, strategy.position - 1]);
+                `, [strategy.main_wallet_pubkey, strategy.position - 1]);
                 
                 if (result.rows.length > 0) {
                     return result.rows[0];
@@ -157,7 +157,7 @@ export class StrategyManager {
                 SET current_wallet_pubkey = $1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $2
-            `, [strategy.currentWalletPubkey, strategy.id]);
+            `, [strategy.current_wallet_pubkey, strategy.id]);
         } finally {
             client.release();
         }

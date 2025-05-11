@@ -2,6 +2,7 @@ import { Connection, PublicKey, Keypair, Message, VersionedMessage } from '@sola
 import { BaseWorker } from './BaseWorker';
 import { WalletMonitoringJob } from '../types/jobs';
 import { createRateLimitedConnection } from '../utils/connection';
+import { API_CONFIG } from '../config/api';
 
 const MAX_RECENT_TRANSACTIONS = 50;
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -429,20 +430,8 @@ export class WalletMonitorWorker extends BaseWorker {
       console.log(`Mirroring swap: ${inputMint} -> ${outputMint}, amount: ${amount}`);
       
       // First get a quote from Jupiter
-      const quoteResponse = await fetch(
-        `http://localhost:3001/api/v1/jupiter/quote?` +
-        `inputMint=${inputMint}&` +
-        `outputMint=${outputMint}&` +
-        `amount=${amount.toString()}&` +
-        `slippageBps=50&` +
-        `platformFeeBps=10`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          }
-        }
-      );
+      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=10`;
+      const quoteResponse = await fetch(API_CONFIG.JUPITER.QUOTE + queryString);
 
       if (!quoteResponse.ok) {
         throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
@@ -451,7 +440,7 @@ export class WalletMonitorWorker extends BaseWorker {
       const quote = await quoteResponse.json();
 
       // Execute the swap using the quote
-      const response = await fetch('http://localhost:3001/api/v1/jupiter/swap', {
+      const swapResponse = await fetch(API_CONFIG.JUPITER.SWAP, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -463,12 +452,12 @@ export class WalletMonitorWorker extends BaseWorker {
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
+      if (!swapResponse.ok) {
+        const errorData = await swapResponse.json();
         throw new Error(`Swap failed: ${JSON.stringify(errorData)}`);
       }
 
-      const result = await response.json();
+      const result = await swapResponse.json();
       console.log('Mirror swap completed successfully:', result);
     } catch (error) {
       console.error('Error mirroring swap:', error);

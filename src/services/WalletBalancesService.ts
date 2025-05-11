@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events';
 import { WalletBalanceResponse } from '../types/balance';
+import { API_CONFIG } from '../config/api';
 
-const BACKEND_ENDPOINT = 'http://localhost:3001/api/v1';
+const BACKEND_ENDPOINT = API_CONFIG.WALLET.BALANCES;
 const UPDATE_INTERVAL = 30000; // 30 seconds
 
 export class WalletBalancesService extends EventEmitter {

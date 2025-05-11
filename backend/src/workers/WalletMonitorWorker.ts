@@ -2,6 +2,7 @@ import { PublicKey, Keypair } from '@solana/web3.js';
 import { BaseWorker } from './BaseWorker';
 import { WalletMonitoringJob } from '../types/jobs';
 import { createRateLimitedConnection } from '../utils/connection';
+import { API_CONFIG } from '../config/api';
 
 const MAX_RECENT_TRANSACTIONS = 50;
 
@@ -503,14 +504,8 @@ export class WalletMonitorWorker extends BaseWorker {
 
     try {
       // Get quote
-      const quoteResponse = await fetch(
-        `http://localhost:3001/api/v1/jupiter/quote?` +
-        `inputMint=${inputMint}&` +
-        `outputMint=${outputMint}&` +
-        `amount=${amount.toString()}&` +
-        `slippageBps=50&` +
-        `platformFeeBps=10`
-      );
+      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=10`;
+      const quoteResponse = await fetch(API_CONFIG.JUPITER.QUOTE + queryString);
 
       if (!quoteResponse.ok) {
         throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
@@ -520,7 +515,7 @@ export class WalletMonitorWorker extends BaseWorker {
       const quote = await quoteResponse.json();
 
       // Execute swap
-      const swapResponse = await fetch('http://localhost:3001/api/v1/jupiter/swap', {
+      const swapResponse = await fetch(API_CONFIG.JUPITER.SWAP, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -639,20 +634,13 @@ export class WalletMonitorWorker extends BaseWorker {
     try {
       console.log(`[Mirror] Mirroring swap: ${inputMint} -> ${outputMint}, amount: ${amount}`);
       // First get a quote from Jupiter
-      const quoteResponse = await fetch(
-        `http://localhost:3001/api/v1/jupiter/quote?` +
-        `inputMint=${inputMint}&` +
-        `outputMint=${outputMint}&` +
-        `amount=${amount.toString()}&` +
-        `slippageBps=50&` +
-        `platformFeeBps=10`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          }
+      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=10`;
+      const quoteResponse = await fetch(API_CONFIG.JUPITER.QUOTE + queryString, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
         }
-      );
+      });
 
       if (!quoteResponse.ok) {
         throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
@@ -661,7 +649,7 @@ export class WalletMonitorWorker extends BaseWorker {
       const quote = await quoteResponse.json();
 
       // Execute the swap using the quote
-      const response = await fetch('http://localhost:3001/api/v1/jupiter/swap', {
+      const response = await fetch(API_CONFIG.JUPITER.SWAP, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

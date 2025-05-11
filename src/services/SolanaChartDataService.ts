@@ -1,5 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { createRateLimitedConnection } from '../utils/connection';
+import { API_CONFIG } from '../config/api';
 
 interface PriceData {
   time: number;  // Unix timestamp
@@ -213,7 +214,7 @@ export class SolanaChartDataService {
 
   async getTokenPriceChartData(tokenMint: string): Promise<any> {
     try {
-      const response = await fetch(`http://localhost:3001/api/v1/chart-data/${tokenMint}`);
+      const response = await fetch(API_CONFIG.CHART.DATA(tokenMint));
       
       if (!response.ok) {
         throw new Error(`Failed to fetch chart data: ${response.statusText}`);

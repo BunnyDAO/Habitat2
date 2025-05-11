@@ -2,16 +2,16 @@ import { Request, Response } from 'express';
 import { JupiterService } from '../../../services/jupiter.service';
 import { SwapService } from '../../../services/swap.service';
 import { Connection } from '@solana/web3.js';
+import { Pool } from 'pg';
+import { createClient } from 'redis';
 
 export class JupiterController {
   private jupiterService: JupiterService;
   private swapService: SwapService;
 
-  constructor(jupiterService: JupiterService) {
+  constructor(jupiterService: JupiterService, pool: Pool, connection: Connection, redisClient: ReturnType<typeof createClient> | null) {
     this.jupiterService = jupiterService;
-    // Initialize swap service with connection
-    const connection = new Connection('https://api.mainnet-beta.solana.com');
-    this.swapService = new SwapService(connection);
+    this.swapService = new SwapService(pool, connection, redisClient);
   }
 
   getTokenPrice = async (req: Request, res: Response) => {
@@ -91,7 +91,8 @@ export class JupiterController {
       res.json(result);
     } catch (error) {
       console.error('Swap execution error:', error);
-      res.status(500).json({ error: error.message });
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ error: message });
     }
   };
 } 

@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { authService } from '../auth.service';
+import { API_CONFIG } from '../../config/api';
 
 // Create an unauthenticated client for auth requests
 const unauthenticatedClient = axios.create({
-  baseURL: 'http://localhost:3001/api/v1',
+  baseURL: API_CONFIG.API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -12,7 +13,7 @@ const unauthenticatedClient = axios.create({
 
 // Create the main authenticated client
 const apiClient = axios.create({
-  baseURL: 'http://localhost:3001/api/v1',
+  baseURL: API_CONFIG.API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },

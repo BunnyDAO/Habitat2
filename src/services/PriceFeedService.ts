@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events';
+import { API_CONFIG } from '../config/api';
 
 const PRICE_UPDATE_INTERVAL = 10000; // 10 seconds to match backend cache
-const BACKEND_ENDPOINT = 'http://localhost:3001/api/v1/price';
+const BACKEND_ENDPOINT = API_CONFIG.PRICE.FEED;
 const RECONNECT_DELAY = 5000; // 5 seconds delay before reconnecting
 const MAX_RETRIES = 3;
 

@@ -114,3 +114,4 @@ async function applyMigrations() {
 // Run migrations if this file is run directly
 if (require.main === module) {
   applyMigrations().catch(console.error);
+}

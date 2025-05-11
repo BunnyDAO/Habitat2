@@ -1,8 +1,9 @@
 import { Connection, ConnectionConfig, LogsFilter, Logs, Context, LogsCallback, Commitment } from '@solana/web3.js';
+import { API_CONFIG } from '../config/api';
 
 // Use the backend endpoint for RPC calls
-const BACKEND_ENDPOINT = 'http://localhost:3001/api/rpc';
-const WS_ENDPOINT = 'ws://localhost:3001/api/v1/ws';
+const BACKEND_ENDPOINT = API_CONFIG.RPC_BASE;
+const WS_ENDPOINT = API_CONFIG.WS_BASE;
 
 // Rate limiting configuration
 const RATE_LIMIT = {

@@ -1,7 +1,8 @@
 import { Connection, ConnectionConfig, PublicKey, AccountChangeCallback, ProgramAccountChangeCallback, Commitment } from '@solana/web3.js';
+import { API_CONFIG } from '../config/api';
 
 const HELIUS_ENDPOINT = '/api/rpc';
-const WS_ENDPOINT = 'ws://localhost:3001/api/v1/ws';
+const WS_ENDPOINT = API_CONFIG.WS_BASE;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
 

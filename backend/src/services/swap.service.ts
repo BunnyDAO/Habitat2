@@ -1,6 +1,5 @@
 import { Connection, PublicKey, Keypair, VersionedTransaction, ParsedAccountData } from '@solana/web3.js';
 import { Pool } from 'pg';
-import { JupiterService } from './jupiter.service';
 import { createClient } from 'redis';
 
 // Common token decimals
@@ -55,8 +54,8 @@ interface JupiterQuoteResponse {
             label: string;
             inputMint: string;
             outputMint: string;
-  inAmount: string;
-  outAmount: string;
+            inAmount: string;
+            outAmount: string;
             feeAmount: string;
             feeMint: string;
         };
@@ -69,116 +68,94 @@ interface JupiterQuoteResponse {
 export class SwapService {
   private pool: Pool;
   private connection: Connection;
-  private jupiterService: JupiterService;
+  private redisClient: ReturnType<typeof createClient> | null;
 
   constructor(pool: Pool, connection: Connection, redisClient: ReturnType<typeof createClient> | null = null) {
     this.pool = pool;
     this.connection = connection;
-    this.jupiterService = new JupiterService(pool, redisClient);
+    this.redisClient = redisClient;
   }
 
-    async executeSwap(request: SwapRequest): Promise<SwapResponse> {
+  async getQuote(
+    inputMint: PublicKey,
+    outputMint: PublicKey,
+    amount: number,
+    slippageBps: number = 50
+  ): Promise<JupiterQuoteResponse> {
+    // TODO: Implement Jupiter quote API call
+    throw new Error('Not implemented');
+  }
+
+  async executeSwap(request: SwapRequest): Promise<SwapResponse> {
     try {
       const {
         inputMint,
         outputMint,
         amount,
-                slippageBps = 50,
+        slippageBps = 50,
         walletKeypair,
         feeWalletPubkey,
-                feeBps = 100
-            } = request;
+        feeBps = 100
+      } = request;
 
-            console.log('Starting swap execution with request:', {
-                inputMint,
-                outputMint,
-                amount,
-                slippageBps
-            });
+      console.log('Starting swap execution with request:', {
+        inputMint,
+        outputMint,
+        amount,
+        slippageBps
+      });
 
-            // Create keypair from provided secret key
-            const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
-            console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
-        
-            // Check SOL balance for fees and rent
-            const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
-            console.log('Current SOL balance:', solBalance / 1e9, 'SOL');
-            
-            // Calculate required SOL for the transaction
-            const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
-            const REQUIRED_SOL = inputMint === WSOL_MINT ? 
-                Math.max(MIN_SOL_BALANCE, Math.ceil(amount * 1e9)) : // If swapping SOL, need amount + fees
-                MIN_SOL_BALANCE; // If swapping tokens, just need fees
-            
-            if (solBalance < REQUIRED_SOL) {
-                const requiredSol = REQUIRED_SOL / 1e9;
-                const currentSol = solBalance / 1e9;
-                throw new Error(
-                    `Insufficient SOL balance for transaction. ` +
-                    `Need at least ${requiredSol} SOL (${inputMint === WSOL_MINT ? 'amount + fees' : 'fees'}), ` +
-                    `have ${currentSol} SOL`
-                );
+      // Create keypair from provided secret key
+      const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
+      console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
+    
+      // Check SOL balance for fees and rent
+      const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
+      console.log('Current SOL balance:', solBalance / 1e9, 'SOL');
+      
+      // Calculate required SOL for the transaction
+      const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
+      const REQUIRED_SOL = inputMint === WSOL_MINT ? 
+        Math.max(MIN_SOL_BALANCE, Math.ceil(amount * 1e9)) : // If swapping SOL, need amount + fees
+        MIN_SOL_BALANCE; // If swapping tokens, just need fees
+      
+      if (solBalance < REQUIRED_SOL) {
+        const requiredSol = REQUIRED_SOL / 1e9;
+        const currentSol = solBalance / 1e9;
+        throw new Error(
+          `Insufficient SOL balance for transaction. ` +
+          `Need at least ${requiredSol} SOL (${inputMint === WSOL_MINT ? 'amount + fees' : 'fees'}), ` +
+          `have ${currentSol} SOL`
+        );
       }
 
       // Get token decimals
       const inputDecimals = await this.getTokenDecimals(inputMint);
       const outputDecimals = await this.getTokenDecimals(outputMint);
 
-            // Convert amount to base units using correct decimals
-            // If amount is already in base units (no decimal point), use it directly
-            // Otherwise, multiply by 10^decimals
-            const baseAmount = Number.isInteger(amount) ? 
-                amount : // If it's already in base units
-                Math.floor(amount * Math.pow(10, inputDecimals)); // If it's in token units
+      // Convert amount to base units using correct decimals
+      const baseAmount = Number.isInteger(amount) ? 
+        amount : // If it's already in base units
+        Math.floor(amount * Math.pow(10, inputDecimals)); // If it's in token units
 
-            console.log('Converting amount:', {
-                originalAmount: amount,
-                inputDecimals,
-                baseAmount,
-                isInteger: Number.isInteger(amount)
-            });
-
-      // Get quote from Jupiter API
-            const quoteData = await this.jupiterService.getQuote(
-                inputMint,
-                outputMint,
-                baseAmount,
-                slippageBps,
-                feeBps
-            );
-
-      // Execute swap through Jupiter API
-            const swapResult = await this.jupiterService.executeSwap(
-                quoteData,
-                tradingKeypair.publicKey.toString(),
-                feeWalletPubkey
-            );
-
-      const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
-      const swapTransaction = VersionedTransaction.deserialize(swapTransactionBuf);
-
-      // Sign and send transaction
-            swapTransaction.sign([tradingKeypair]);
-      const signature = await this.connection.sendTransaction(swapTransaction);
-
-      // Log the swap in the database
-      await this.logSwap({
-                walletPubkey: tradingKeypair.publicKey.toString(),
-        inputMint,
-        outputMint,
-        inputAmount: amount,
-        outputAmount: Number(quoteData.outAmount) / Math.pow(10, outputDecimals),
-        txid: signature,
-                feeBps
+      console.log('Converting amount:', {
+        originalAmount: amount,
+        inputDecimals,
+        baseAmount,
+        isInteger: Number.isInteger(amount)
       });
 
-            return {
-                signature,
-                inputAmount: amount.toString(),
-                outputAmount: (Number(quoteData.outAmount) / Math.pow(10, outputDecimals)).toString(),
-                routePlan: quoteData.routePlan,
-                message: 'Swap executed successfully!'
-            };
+      // Get quote from Jupiter API
+      const quoteData = await this.getQuote(
+        new PublicKey(inputMint),
+        new PublicKey(outputMint),
+        baseAmount,
+        slippageBps
+      );
+
+      // TODO: Implement swap execution
+      throw new Error('Not implemented');
+
     } catch (error) {
       console.error('Error executing swap:', error);
       throw error;
@@ -198,17 +175,11 @@ export class SwapService {
         throw new Error(`Token mint ${mint} not found`);
       }
       
-      if ('parsed' in accountInfo.value.data) {
-        const parsedData = accountInfo.value.data as ParsedAccountData;
-        const decimals = parsedData.parsed?.info?.decimals;
-        if (typeof decimals === 'number') {
-          return decimals;
-        }
-      }
-      throw new Error(`Could not parse decimals for token ${mint}`);
+      const parsedData = accountInfo.value.data as ParsedAccountData;
+      return parsedData.parsed.info.decimals;
     } catch (error) {
-      console.error(`Error fetching token info for ${mint}:`, error);
-      throw new Error(`Failed to get decimals for token ${mint}`);
+      console.error('Error getting token decimals:', error);
+      throw error;
     }
   }
 
@@ -219,56 +190,29 @@ export class SwapService {
     inputAmount: number;
     outputAmount: number;
     txid: string;
-        feeBps?: number;
+    feeBps?: number;
   }): Promise<void> {
     const client = await this.pool.connect();
     try {
-      // First check if the trading wallet exists
-      const walletResult = await client.query(
-        'SELECT id, main_wallet_pubkey FROM trading_wallets WHERE wallet_pubkey = $1',
-        [params.walletPubkey]
-      );
-
-      if (walletResult.rows.length === 0) {
-        console.warn(`Trading wallet ${params.walletPubkey} not found in database, skipping transaction log`);
-        return;
-      }
-
-      const { id: tradingWalletId, main_wallet_pubkey: mainWalletPubkey } = walletResult.rows[0];
-
-      // Prepare transaction details
-      const details = {
-        inputMint: params.inputMint,
-        outputMint: params.outputMint,
-        outputAmount: params.outputAmount,
-                feeBps: params.feeBps
-      };
-
       await client.query(`
-        INSERT INTO transactions (
-          trading_wallet_id,
-          main_wallet_pubkey,
+        INSERT INTO swaps (
           wallet_pubkey,
-          signature,
-          type,
-          amount,
-          token_mint,
-          timestamp,
-          details
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+          input_mint,
+          output_mint,
+          input_amount,
+          output_amount,
+          txid,
+          fee_bps
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       `, [
-        tradingWalletId,
-        mainWalletPubkey,
         params.walletPubkey,
-        params.txid,
-        'swap',
-        params.inputAmount,
         params.inputMint,
-        JSON.stringify(details)
+        params.outputMint,
+        params.inputAmount,
+        params.outputAmount,
+        params.txid,
+        params.feeBps
       ]);
-    } catch (error) {
-      console.error('Error logging swap transaction:', error);
-      // Don't throw the error as we don't want to fail the swap if logging fails
     } finally {
       client.release();
     }
