@@ -40,7 +40,6 @@ if (!process.env.HELIUS_API_KEY) {
 
 const heliusService = new HeliusService(
   process.env.HELIUS_API_KEY,
-  pool,
   redisClient
 );
 

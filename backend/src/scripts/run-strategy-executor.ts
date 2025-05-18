@@ -34,7 +34,7 @@ async function main() {
   const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '');
 
   // Initialize strategy executor service
-  const strategyExecutor = new StrategyExecutorService(pool, redisClient, heliusService);
+  const strategyExecutor = StrategyExecutorService.getInstance(pool, redisClient, heliusService);
 
   // Start the strategy executor service
   await strategyExecutor.start();

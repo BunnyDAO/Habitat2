@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { WhaleTrackingController } from '../controllers/whale-tracking.controller';
 import { WebSocketServer } from 'ws';
+import { HeliusService } from '../services/helius.service';
+
+if (!process.env.HELIUS_API_KEY) {
+  throw new Error('HELIUS_API_KEY environment variable is required');
+}
 
 const router = Router();
-const controller = new WhaleTrackingController();
+const heliusService = new HeliusService(process.env.HELIUS_API_KEY);
+const controller = new WhaleTrackingController(heliusService);
 
 // Create WebSocket server
 const wss = new WebSocketServer({ noServer: true });

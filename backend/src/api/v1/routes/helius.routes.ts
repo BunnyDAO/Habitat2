@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { HeliusController } from '../controllers/helius.controller';
-import { HeliusService } from '../../services/helius.service';
+import { HeliusService } from '../../../services/helius.service';
 import { createClient } from 'redis';
 
 export const createHeliusRouter = (

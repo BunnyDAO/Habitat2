@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
 import { HeliusService } from '../services/helius.service';
-import { WhaleTrackerConfig, WhaleAnalytics, Trade } from '../../types/whale-tracker/types';
+import { WhaleTrackerConfig, WhaleAnalytics, Trade } from '../types/whale-tracker/types';
 
 export class WhaleTrackingController {
   private heliusService: HeliusService;
 
-  constructor() {
-    this.heliusService = HeliusService.getInstance();
+  constructor(heliusService: HeliusService) {
+    this.heliusService = heliusService;
   }
 
   async getTokenHolders(req: Request, res: Response) {

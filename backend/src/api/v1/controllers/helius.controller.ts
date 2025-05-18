@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { HeliusService } from '../services/helius.service';
+import { HeliusService } from '../../../services/helius.service';
 
 export class HeliusController {
   private heliusService: HeliusService;
