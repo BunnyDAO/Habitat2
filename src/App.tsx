@@ -36,6 +36,7 @@ import { authService } from './services/auth.service';
 import { PortfolioProvider } from './contexts/PortfolioContext';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { API_CONFIG } from './config/api';
+import { strategyApiService } from './services/api/strategy.service';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -2692,6 +2693,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // Add deleteJob function before the return statement
   const deleteJob = async (jobId: string) => {
     try {
+      // Call backend to delete strategy
+      await strategyApiService.deleteStrategy(jobId);
+
       // Stop the job in the job manager
       await jobManagerRef.current?.removeJob(jobId);
       

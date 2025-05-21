@@ -345,6 +345,8 @@ router.delete('/:id',
       }
 
       const { id } = req.params;
+      console.log('Attempting to delete strategy with ID:', id);
+      console.log('User attempting deletion:', req.user.main_wallet_pubkey);
 
       // Verify strategy ownership
       const { data: strategy, error: strategyError } = await supabase
@@ -354,11 +356,25 @@ router.delete('/:id',
         .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
         .single();
 
-      if (strategyError || !strategy) {
+      if (strategyError) {
+        console.error('Error finding strategy:', strategyError);
         return res.status(404).json({ error: 'Strategy not found or access denied' });
       }
 
+      if (!strategy) {
+        console.log('Strategy not found for ID:', id);
+        return res.status(404).json({ error: 'Strategy not found or access denied' });
+      }
+
+      console.log('Found strategy to delete:', {
+        id: strategy.id,
+        name: strategy.name,
+        type: strategy.strategy_type,
+        trading_wallet_id: strategy.trading_wallet_id
+      });
+
       // Delete strategy versions first
+      console.log('Deleting strategy versions for strategy ID:', id);
       const { error: versionsError } = await supabase
         .from('strategy_versions')
         .delete()
@@ -367,15 +383,23 @@ router.delete('/:id',
       if (versionsError) {
         console.error('Error deleting strategy versions:', versionsError);
         // Continue with strategy deletion even if version deletion fails
+      } else {
+        console.log('Successfully deleted strategy versions');
       }
 
       // Delete strategy
+      console.log('Deleting strategy with ID:', id);
       const { error } = await supabase
         .from('strategies')
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error deleting strategy:', error);
+        throw error;
+      }
+
+      console.log('Successfully deleted strategy with ID:', id);
       res.json({ success: true });
     } catch (error) {
       console.error('Error deleting strategy:', error);
