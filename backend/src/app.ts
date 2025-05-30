@@ -8,6 +8,7 @@ import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 import authRouter from './routes/auth.routes';
 import cors from 'cors';
 import { createHeliusRouter } from './api/v1/routes/helius.routes';
+import savedWalletsRouter from './routes/saved-wallets.routes';
 
 console.log('Starting server initialization...');
 
@@ -59,6 +60,8 @@ app.use('/api/v1/auth', authRouter);
 console.log('Auth routes registered');
 app.use('/api/v1/trading-wallets', createTradingWalletsRouter());
 console.log('Trading wallets routes registered');
+app.use('/api/v1/saved-wallets', savedWalletsRouter);
+console.log('Saved wallets routes registered');
 app.use('/api/v1/swap', createSwapRouter(pool, connection));
 console.log('Swap routes registered');
 app.use('/api/v1/jupiter', createJupiterRouter(pool, redisClient));

@@ -1,10 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { exportLackeys, importLackeys, mergeLackeys } from '../utils/lackeyExportImport';
 import { AnyJob } from '../types/jobs';
-import ExportLackeysModal from './ExportLackeysModal';
-import ImportLackeysModal from './ImportLackeysModal';
 import PasswordModal from './PasswordModal';
 import { PublicKey } from '@solana/web3.js';
+import { savedWalletsApi } from '../services/api/savedWallets.service';
 
 interface LackeyImportExportProps {
   jobs: AnyJob[];
@@ -145,18 +144,22 @@ const LackeyImportExport: React.FC<LackeyImportExportProps> = ({
       
       // If there are saved wallets, merge them
       if (savedWallets && savedWallets.length > 0) {
-        const existingWallets = localStorage.getItem(`saved_wallets_${walletPublicKey}`);
-        const parsedExistingWallets = existingWallets ? JSON.parse(existingWallets) : [];
+        const owner_id = wallet.publicKey?.toString();
+        if (!owner_id) {
+          throw new Error('Wallet not connected');
+        }
+        const existingWallets = await savedWalletsApi.getAll(owner_id);
         
         // Merge wallets, avoiding duplicates by public key
-        const uniqueWallets = [...parsedExistingWallets];
+        const uniqueWallets = [...existingWallets];
         for (const newWallet of savedWallets) {
-          if (!uniqueWallets.some(w => w.publicKey === newWallet.publicKey)) {
-            uniqueWallets.push(newWallet);
+          if (!uniqueWallets.some(w => w.wallet_address === newWallet.publicKey)) {
+            await savedWalletsApi.create({
+              owner_id,
+              wallet_address: newWallet.publicKey,
+            });
           }
         }
-        
-        localStorage.setItem(`saved_wallets_${walletPublicKey}`, JSON.stringify(uniqueWallets));
       }
       
       setIsImportModalOpen(false);

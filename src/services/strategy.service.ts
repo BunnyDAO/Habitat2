@@ -1,7 +1,6 @@
-import { Connection, PublicKey } from '@solana/web3.js';
+import { Connection } from '@solana/web3.js';
 import { strategyApiService } from './api/strategy.service';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy } from '../types/jobs';
-import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, ensureUint8Array } from '../types/jobs';
 import { TradingWallet } from '../types/wallet';
 import type { ProfitTracking } from '../types/profit';
 
@@ -88,51 +87,8 @@ export class StrategyService {
   }
 
   async createWalletMonitorStrategy(params: WalletMonitorParams): Promise<WalletMonitoringJob> {
-    // Check for existing strategy with the same target wallet
-    const existingJob = this.findExistingStrategy(
-      params.tradingWallet.publicKey, 
-      JobType.WALLET_MONITOR,
-      params.walletAddress
-    );
-    
-    if (existingJob && existingJob.type === JobType.WALLET_MONITOR) {
-      // Update existing job
-      const updatedJob = this.updateExistingJob<WalletMonitoringJob>(existingJob, {
-        walletAddress: params.walletAddress,
-        percentage: params.percentage,
-        isActive: true
-      });
-
-      // Update in backend
-      await strategyApiService.createStrategy({
-        tradingWalletPublicKey: params.tradingWallet.publicKey,
-        strategy_type: JobType.WALLET_MONITOR,
-        config: {
-          walletAddress: params.walletAddress,
-          percentage: params.percentage
-        }
-      });
-
-      return updatedJob;
-    }
-
-    // Create new job if none exists
-    const newJob: WalletMonitoringJob = {
-      id: this.generateUniqueId('wm'),
-      type: JobType.WALLET_MONITOR,
-      walletAddress: params.walletAddress,
-      percentage: params.percentage,
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      tradingWalletSecretKey: params.tradingWallet.secretKey,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      recentTransactions: [],
-      mirroredTokens: {},
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
-    };
-
-    // Save to backend
-    await strategyApiService.createStrategy({
+    // Always create a new strategy in the backend and use its returned id
+    const backendStrategy = await strategyApiService.createStrategy({
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       strategy_type: JobType.WALLET_MONITOR,
       config: {
@@ -141,26 +97,27 @@ export class StrategyService {
       }
     });
 
+    const newJob: WalletMonitoringJob = {
+      id: backendStrategy.id.toString(),
+      type: JobType.WALLET_MONITOR,
+      walletAddress: params.walletAddress,
+      percentage: params.percentage,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      recentTransactions: [],
+      mirroredTokens: {},
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
+
     this.jobs.set(newJob.id, newJob);
     return newJob;
   }
 
   async createPriceMonitorStrategy(params: PriceMonitorParams): Promise<PriceMonitoringJob> {
-    const newJob: PriceMonitoringJob = {
-      id: Date.now().toString(),
-      type: JobType.PRICE_MONITOR,
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      tradingWalletSecretKey: params.tradingWallet.secretKey,
-      targetPrice: params.targetPrice,
-      direction: params.direction,
-      percentageToSell: params.percentageToSell,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
-    };
-
-    // Save to backend
-    await strategyApiService.createStrategy({
+    // Save to backend and get backend ID
+    const backendStrategy = await strategyApiService.createStrategy({
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       strategy_type: JobType.PRICE_MONITOR,
       config: {
@@ -169,6 +126,19 @@ export class StrategyService {
         percentageToSell: params.percentageToSell
       }
     });
+
+    const newJob: PriceMonitoringJob = {
+      id: backendStrategy.id.toString(),
+      type: JobType.PRICE_MONITOR,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      targetPrice: params.targetPrice,
+      direction: params.direction,
+      percentageToSell: params.percentageToSell,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
 
     return newJob;
   }
@@ -196,26 +166,25 @@ export class StrategyService {
       return updatedJob;
     }
 
-    // Create new job if none exists
-    const newJob: VaultStrategy = {
-      id: this.generateUniqueId('vault'),
-      type: JobType.VAULT,
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      tradingWalletSecretKey: params.tradingWallet.secretKey,
-      vaultPercentage: params.vaultPercentage,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
-    };
-
-    // Save to backend
-    await strategyApiService.createStrategy({
+    // Save to backend and get backend ID
+    const backendStrategy = await strategyApiService.createStrategy({
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       strategy_type: JobType.VAULT,
       config: {
         vaultPercentage: params.vaultPercentage
       }
     });
+
+    const newJob: VaultStrategy = {
+      id: backendStrategy.id.toString(),
+      type: JobType.VAULT,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      vaultPercentage: params.vaultPercentage,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
 
     this.jobs.set(newJob.id, newJob);
     return newJob;
@@ -244,26 +213,25 @@ export class StrategyService {
       return updatedJob;
     }
 
-    // Create new job if none exists
-    const newJob: LevelsStrategy = {
-      id: this.generateUniqueId('levels'),
-      type: JobType.LEVELS,
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      tradingWalletSecretKey: params.tradingWallet.secretKey,
-      levels: params.levels,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
-    };
-
-    // Save to backend
-    await strategyApiService.createStrategy({
+    // Save to backend and get backend ID
+    const backendStrategy = await strategyApiService.createStrategy({
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       strategy_type: JobType.LEVELS,
       config: {
         levels: params.levels
       }
     });
+
+    const newJob: LevelsStrategy = {
+      id: backendStrategy.id.toString(),
+      type: JobType.LEVELS,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      levels: params.levels,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
 
     this.jobs.set(newJob.id, newJob);
     return newJob;

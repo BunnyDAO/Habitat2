@@ -37,6 +37,7 @@ import { PortfolioProvider } from './contexts/PortfolioContext';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { API_CONFIG } from './config/api';
 import { strategyApiService } from './services/api/strategy.service';
+import { savedWalletsApi } from './services/api/savedWallets.service';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -561,10 +562,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [jobs, setJobs] = useState<AnyJob[]>([]);
   const [targetPrice, setTargetPrice] = useState(0);
   const [priceDirection, setPriceDirection] = useState<'above' | 'below'>('above');
-  const [sellPercentage, setSellPercentage] = useState(10);
+  const [sellPercentage, setSellPercentage] = useState<string | number>('');
   const [jupiterInitialized, setJupiterInitialized] = useState(false);
   const [jupiterError, setJupiterError] = useState<string | null>(null);
-  const [vaultPercentage, setVaultPercentage] = useState(10);
+  const [vaultPercentage, setVaultPercentage] = useState<string | number>('');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -582,7 +583,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // Add state for levels
   const [levels, setLevels] = useState<Level[]>([]);
   const [newLevelPrice, setNewLevelPrice] = useState(0);
-  const [newLevelPercentage, setNewLevelPercentage] = useState(0);
+  const [newLevelPercentage, setNewLevelPercentage] = useState<string | number>('');
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
@@ -705,7 +706,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const storedJobs = localStorage.getItem(`jobs_${wallet.publicKey.toString()}`);
       if (storedJobs) {
         const parsedJobs = JSON.parse(storedJobs);
-        setJobs(parsedJobs);
+        // Only keep jobs with numeric IDs (backend jobs)
+        const filteredJobs = parsedJobs.filter((job: any) => /^\d+$/.test(job.id));
+        setJobs(filteredJobs);
       }
     } else {
       // Clear jobs and trading wallets when wallet disconnects
@@ -1822,15 +1825,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
-      
-      // Check if a strategy for this wallet already exists
-      const existingJob = jobs.find(
-        job => 
-          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
-          job.type === JobType.WALLET_MONITOR &&
-          (job as WalletMonitoringJob).walletAddress === monitoredWallet
-      );
 
+      // Always create a new job and use the backend's returned id
       const newJob = await strategyInstance.createWalletMonitorStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
@@ -1842,22 +1838,22 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       // Add job to manager
       jobManagerRef.current?.addJob(newJob);
 
-      // Update local state
-      if (existingJob) {
-        setJobs(prevJobs => prevJobs.map(job => 
-          job.id === existingJob.id ? newJob : job
-        ));
-        setNotification({
-          message: 'Updated existing wallet monitor strategy',
-          type: 'success'
-        });
-      } else {
-        setJobs(prevJobs => [...prevJobs, newJob]);
-        setNotification({
-          message: 'Created new wallet monitor strategy',
-          type: 'success'
-        });
-      }
+      // Remove any previous job for this trading wallet and monitored wallet, then add the new job
+      setJobs(prevJobs => [
+        ...prevJobs.filter(job =>
+          !(
+            job.tradingWalletPublicKey === selectedTradingWallet.publicKey &&
+            job.type === JobType.WALLET_MONITOR &&
+            (job as WalletMonitoringJob).walletAddress === monitoredWallet
+          )
+        ),
+        newJob
+      ]);
+
+      setNotification({
+        message: 'Created new wallet monitor strategy',
+        type: 'success'
+      });
 
       setMonitoredWallet('');
       setIsValidAddress(false);
@@ -1942,7 +1938,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       await jobManagerRef.current.removeJob(jobId);
     }
     setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
-    
+    // Also clear from localStorage
+    if (wallet.publicKey) {
+      const storedJobs = localStorage.getItem(`jobs_${wallet.publicKey.toString()}`);
+      if (storedJobs) {
+        const parsedJobs = JSON.parse(storedJobs);
+        const filteredJobs = parsedJobs.filter((job: any) => job.id !== jobId);
+        localStorage.setItem(`jobs_${wallet.publicKey.toString()}`, JSON.stringify(filteredJobs));
+      }
+    }
     // Notify service worker
     serviceWorkerRef.current?.active?.postMessage({
       type: 'REMOVE_JOB',
@@ -2189,7 +2193,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     lastUpdated: new Date().toISOString()
   });
 
-  // Update createPriceMonitorJob
+  // Update createPriceMonitorJob to parse sellPercentage
   const createPriceMonitorJob = async () => {
     if (!selectedTradingWallet || !targetPrice) return;
 
@@ -2197,20 +2201,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
+      const percentageToSell = sellPercentage === '' ? 0 : Number(sellPercentage);
       const newJob = await strategyInstance.createPriceMonitorStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
         targetPrice,
         direction: priceDirection,
-        percentageToSell: sellPercentage
+        percentageToSell
       });
 
       // Update local state
       setJobs(prevJobs => [...prevJobs, newJob]);
       setTargetPrice(0);
       setPriceDirection('above');
-      setSellPercentage(10);
+      setSellPercentage('');
     } catch (error) {
       console.error('Error creating price monitor strategy:', error);
       setNotification({
@@ -2325,7 +2330,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
-  // Update createVaultStrategy
+  // Update createVaultStrategy to parse vaultPercentage
   const createVaultStrategy = async () => {
     if (!selectedTradingWallet) {
       setNotification({
@@ -2339,7 +2344,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
-      
+      const vaultPercent = vaultPercentage === '' ? 0 : Number(vaultPercentage);
       // Check if a vault strategy already exists for this trading wallet
       const existingJob = jobs.find(
         job => 
@@ -2351,7 +2356,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
-        vaultPercentage: vaultPercentage
+        vaultPercentage: vaultPercent
       });
 
       // Add job to manager
@@ -2374,7 +2379,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         });
       }
 
-      setVaultPercentage(10); // Reset to default
+      setVaultPercentage(''); // Reset to default
     } catch (error) {
       console.error('Error creating vault strategy:', error);
       setNotification({
@@ -2622,7 +2627,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     });
   };
 
-  // Update createLevelsStrategy
+  // Update createLevelsStrategy to parse newLevelPercentage
   const createLevelsStrategy = async () => {
     if (!selectedTradingWallet) {
       setNotification({
@@ -2644,7 +2649,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
       const strategyInstance = StrategyService.getInstance(connection);
-      
       // Check if a levels strategy already exists for this trading wallet
       const existingJob = jobs.find(
         job => 
@@ -2681,6 +2685,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
       // Reset levels
       setLevels([]);
+      setNewLevelPercentage('');
     } catch (error) {
       console.error('Error creating levels strategy:', error);
       setNotification({
@@ -2861,9 +2866,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   }, [tradingWallets]);
 
   const addLevel = () => {
-    if (newLevelPrice > 0 && newLevelPercentage > 0) {
+    const price = Number(newLevelPrice);
+    const percentage = newLevelPercentage === '' ? 0 : Number(newLevelPercentage);
+    if (price > 0 && percentage > 0) {
       // Check if this price level already exists
-      const existingLevel = levels.find(level => level.price === newLevelPrice);
+      const existingLevel = levels.find(level => level.price === price);
       if (existingLevel) {
         setNotification({
           message: 'A level with this price already exists. Please use a different price.',
@@ -2871,10 +2878,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         });
         return;
       }
-
-      setLevels(prevLevels => [...prevLevels, { price: newLevelPrice, percentage: newLevelPercentage }]);
+      setLevels(prevLevels => [...prevLevels, { price, percentage }]);
       setNewLevelPrice(0);
-      setNewLevelPercentage(0);
+      setNewLevelPercentage('');
     }
   };
 
@@ -3130,6 +3136,68 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         type: 'error', 
         message: error instanceof Error ? error.message : 'Transaction failed' 
       });
+    }
+  };
+
+  // Load saved wallets from backend when wallet connects
+  useEffect(() => {
+    if (wallet.publicKey) {
+      (async () => {
+        try {
+          const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+          setJobs(savedWallets);
+        } catch (error) {
+          console.error('Failed to fetch saved wallets:', error);
+          setNotification({ message: 'Failed to load saved wallets', type: 'error' });
+        }
+      })();
+    } else {
+      setJobs([]);
+      setTradingWallets([]);
+      setSelectedTradingWallet(null);
+    }
+  }, [wallet.publicKey]);
+
+  // When saving a wallet
+  const handleSaveWallet = async (walletAddress: string, name?: string) => {
+    if (!wallet.publicKey) return;
+    try {
+      await savedWalletsApi.create({
+        owner_id: wallet.publicKey.toString(),
+        wallet_address: walletAddress,
+        name
+      });
+      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(savedWallets);
+      setNotification({ message: 'Wallet saved successfully', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to save wallet', type: 'error' });
+    }
+  };
+
+  // When deleting a saved wallet
+  const handleDeleteSavedWallet = async (id: string) => {
+    if (!wallet.publicKey) return;
+    try {
+      await savedWalletsApi.remove(id);
+      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(savedWallets);
+      setNotification({ message: 'Wallet removed successfully', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to remove wallet', type: 'error' });
+    }
+  };
+
+  // When updating a saved wallet name
+  const handleUpdateSavedWalletName = async (id: string, newName: string) => {
+    if (!wallet.publicKey) return;
+    try {
+      await savedWalletsApi.update(id, { name: newName });
+      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(savedWallets);
+      setNotification({ message: 'Wallet name updated successfully', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to update wallet name', type: 'error' });
     }
   };
 
@@ -3490,7 +3558,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 <h2 style={{ 
                   color: '#60a5fa',
                   margin: 0,
-                  fontSize: '1.125rem'
+                  fontSize: '1.25rem'
                 }}>Available Lackeys</h2>
                 <LackeyImportExport
                   jobs={jobs}
@@ -3615,36 +3683,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           return;
                         }
                         
-                        // Create a new job for saving the wallet (inactive)
-                        const newJob: WalletMonitoringJob = {
-                          id: `save-${Date.now()}`,
-                          type: JobType.WALLET_MONITOR,
-                          walletAddress: monitoredWallet,
-                          percentage: 0,
-                          isActive: false,
-                          tradingWalletPublicKey: '',
-                          tradingWalletSecretKey: new Uint8Array(), // Empty secret key since not active
-                          mirroredTokens: {},
-                          createdAt: new Date().toISOString(),
-                          profitTracking: {
-                            initialBalance: 0,
-                            currentBalance: 0,
-                            initialPrice: solPrice,
-                            currentPrice: solPrice,
-                            currentProfit: 0,
-                            lastUpdated: new Date().toISOString(),
-                            history: [],
-                            trades: []
-                          }
-                        };
-                        
-                        setJobs([...jobs, newJob]);
-                        localStorage.setItem(`jobs_${wallet.publicKey?.toString()}`, JSON.stringify([...jobs, newJob]));
-                        
-                        setNotification({
-                          message: 'Wallet saved successfully',
-                          type: 'success'
-                        });
+                        // Use backend API to save wallet
+                        handleSaveWallet(monitoredWallet);
                       }}
                       disabled={!isValidAddress}
                       style={{
@@ -4206,7 +4246,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         <input
                           type="number"
                           value={sellPercentage}
-                          onChange={(e) => setSellPercentage(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setSellPercentage('');
+                            } else {
+                              const num = parseFloat(value);
+                              if (!isNaN(num)) {
+                                setSellPercentage(Math.min(100, Math.max(0, num)));
+                              }
+                            }
+                          }}
                           style={{
                             width: '60px',
                             padding: '0.75rem',
@@ -4324,7 +4374,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         <input
                           type="number"
                           value={vaultPercentage}
-                          onChange={(e) => setVaultPercentage(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setVaultPercentage('');
+                            } else {
+                              const num = parseFloat(value);
+                              if (!isNaN(num)) {
+                                setVaultPercentage(Math.min(100, Math.max(0, num)));
+                              }
+                            }
+                          }}
                           style={{
                             width: '60px',
                             padding: '0.75rem',
@@ -4473,23 +4533,25 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}>
                         Price Level (USD)
                       </label>
-                      <input
-                        type="number"
-                        value={newLevelPrice || ''}
-                        onChange={(e) => setNewLevelPrice(parseFloat(e.target.value) || 0)}
-                        style={{
-                          width: '100%',
-                          padding: '0.75rem',
-                          backgroundColor: '#1e293b',
-                          border: '1px solid #4b5563',
-                          borderRadius: '0.375rem',
-                          color: '#e2e8f0',
-                          fontSize: '0.875rem',
-                          marginBottom: '0.5rem'
-                        }}
-                        placeholder="Enter price level"
-                        step="0.01"
-                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="number"
+                          value={newLevelPrice || ''}
+                          onChange={(e) => setNewLevelPrice(parseFloat(e.target.value) || 0)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem',
+                            marginBottom: '0.5rem'
+                          }}
+                          placeholder="Enter price level"
+                          step="0.01"
+                        />
+                      </div>
                     </div>
 
                     <div style={{ marginBottom: '1rem' }}>
@@ -4504,8 +4566,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <input
                           type="number"
-                          value={newLevelPercentage || ''}
-                          onChange={(e) => setNewLevelPercentage(Math.min(100, Math.max(1, parseInt(e.target.value) || 0)))}
+                          value={newLevelPercentage}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setNewLevelPercentage('');
+                            } else {
+                              const num = parseFloat(value);
+                              if (!isNaN(num)) {
+                                setNewLevelPercentage(Math.min(100, Math.max(0, num)));
+                              }
+                            }
+                          }}
                           style={{
                             width: '60px',
                             padding: '0.75rem',

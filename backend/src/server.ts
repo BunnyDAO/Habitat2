@@ -23,6 +23,7 @@ import WebSocket from 'ws';
 import { createServer, Server as HttpServer } from 'http';
 import { Server as WebSocketServer } from 'ws';
 import { Socket } from 'net';
+import savedWalletsRouter from './routes/saved-wallets.routes';
 
 // Load environment variables from the correct path
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -136,6 +137,9 @@ app.use('/api/v1/swap', swapRouter);
 
 // Add strategies routes
 app.use('/api/v1/strategies', strategiesRouter);
+
+// Add saved wallets routes
+app.use('/api/v1/saved-wallets', savedWalletsRouter);
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {
