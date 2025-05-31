@@ -623,6 +623,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Add function to handle wallet name save
   const handleWalletNameSave = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (job && job.wallet_address) {
+      // It's a saved wallet, update backend
+      handleUpdateSavedWalletName(jobId, editedWalletName.trim() || 'Unnamed Wallet');
+      setEditingWalletId(null);
+      return;
+    }
+    // Otherwise, update local state only
     const updatedJobs = jobs.map(j => {
       if (j.id === jobId) {
         return {
@@ -634,7 +642,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     });
     setJobs(updatedJobs);
     setEditingWalletId(null);
-    
     // Save to localStorage
     localStorage.setItem('jobs', JSON.stringify(updatedJobs));
   };
@@ -3182,14 +3189,19 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const handleSaveWallet = async (walletAddress: string, name?: string) => {
     if (!wallet.publicKey) return;
     try {
+      // Always pass a name, default to 'Unnamed Wallet' if not provided
       await savedWalletsApi.create({
         owner_id: wallet.publicKey.toString(),
         wallet_address: walletAddress,
-        name
+        name: name || 'Unnamed Wallet'
       });
-      // Re-fetch after save
+      // Re-fetch after save and map to jobs
       const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(updated);
+      const savedWalletJobs = mapSavedWalletsToJobs(updated);
+      setJobs(prevJobs => [
+        ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+        ...savedWalletJobs
+      ]);
       setNotification({ message: 'Wallet saved successfully', type: 'success' });
     } catch {
       setNotification({ message: 'Failed to save wallet', type: 'error' });
@@ -3215,9 +3227,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
     try {
       await savedWalletsApi.update(id, { name: newName });
-      // Re-fetch after update
+      // Re-fetch after update and map to jobs
       const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(updated);
+      const savedWalletJobs = mapSavedWalletsToJobs(updated);
+      setJobs(prevJobs => [
+        ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+        ...savedWalletJobs
+      ]);
       setNotification({ message: 'Wallet name updated successfully', type: 'success' });
     } catch {
       setNotification({ message: 'Failed to update wallet name', type: 'error' });
