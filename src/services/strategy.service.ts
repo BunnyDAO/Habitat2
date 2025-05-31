@@ -89,13 +89,13 @@ export class StrategyService {
   async createWalletMonitorStrategy(params: WalletMonitorParams): Promise<WalletMonitoringJob> {
     // Always create a new strategy in the backend and use its returned id
     const backendStrategy = await strategyApiService.createStrategy({
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      strategy_type: JobType.WALLET_MONITOR,
-      config: {
-        walletAddress: params.walletAddress,
-        percentage: params.percentage
-      }
-    });
+        tradingWalletPublicKey: params.tradingWallet.publicKey,
+        strategy_type: JobType.WALLET_MONITOR,
+        config: {
+          walletAddress: params.walletAddress,
+          percentage: params.percentage
+        }
+      });
 
     const newJob: WalletMonitoringJob = {
       id: backendStrategy.id.toString(),

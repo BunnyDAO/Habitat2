@@ -2698,24 +2698,44 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // Add deleteJob function before the return statement
   const deleteJob = async (jobId: string) => {
     try {
-      // Call backend to delete strategy
-      await strategyApiService.deleteStrategy(jobId);
+      // Find the job in state
+      const job = jobs.find(j => j.id === jobId);
+      console.log('Deleting job:', job); // <-- DEBUG LOG
 
-      // Stop the job in the job manager
-      await jobManagerRef.current?.removeJob(jobId);
-      
-      // Remove from state
-      setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
-      
-      // Show success notification
-      setNotification({
-        message: 'Strategy removed successfully',
-        type: 'success'
-      });
+      // If it's a saved wallet (has wallet_address property), use savedWalletsApi
+      if (job && job.wallet_address) {
+        await savedWalletsApi.remove(jobId);
+        // Re-fetch after delete to ensure UI is in sync
+        if (wallet.publicKey) {
+          const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
+          const savedWalletJobs = mapSavedWalletsToJobs(updated);
+          setJobs(prevJobs => [
+            ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+            ...savedWalletJobs
+          ]);
+        } else {
+          setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+        }
+        setNotification({
+          message: 'Saved wallet removed successfully',
+          type: 'success'
+        });
+      } else {
+        // Otherwise, it's a strategy
+        await strategyApiService.deleteStrategy(jobId);
+        // Stop the job in the job manager
+        await jobManagerRef.current?.removeJob(jobId);
+        // Remove from state
+        setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+        setNotification({
+          message: 'Strategy removed successfully',
+          type: 'success'
+        });
+      }
     } catch (error) {
       console.error('Error deleting job:', error);
       setNotification({
-        message: 'Failed to remove strategy',
+        message: 'Failed to remove strategy or saved wallet',
         type: 'error'
       });
     }
@@ -3167,23 +3187,25 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         wallet_address: walletAddress,
         name
       });
-      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(savedWallets);
+      // Re-fetch after save
+      const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(updated);
       setNotification({ message: 'Wallet saved successfully', type: 'success' });
-    } catch (error) {
+    } catch {
       setNotification({ message: 'Failed to save wallet', type: 'error' });
     }
   };
 
-  // When deleting a saved wallet
+  // When deleting a wallet
   const handleDeleteSavedWallet = async (id: string) => {
     if (!wallet.publicKey) return;
     try {
       await savedWalletsApi.remove(id);
-      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(savedWallets);
+      // Re-fetch after delete
+      const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(updated);
       setNotification({ message: 'Wallet removed successfully', type: 'success' });
-    } catch (error) {
+    } catch {
       setNotification({ message: 'Failed to remove wallet', type: 'error' });
     }
   };
@@ -3193,12 +3215,74 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
     try {
       await savedWalletsApi.update(id, { name: newName });
-      const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(savedWallets);
+      // Re-fetch after update
+      const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      setJobs(updated);
       setNotification({ message: 'Wallet name updated successfully', type: 'success' });
-    } catch (error) {
+    } catch {
       setNotification({ message: 'Failed to update wallet name', type: 'error' });
     }
+  };
+
+  const [savedWallets, setSavedWallets] = useState([]);
+
+  // Fetch saved wallets from backend on wallet connect
+  useEffect(() => {
+    if (wallet.publicKey) {
+      savedWalletsApi.getAll(wallet.publicKey.toString())
+        .then(setSavedWallets)
+        .catch(() => setSavedWallets([]));
+    } else {
+      setSavedWallets([]);
+    }
+  }, [wallet.publicKey]);
+
+  // Helper to map backend saved wallets to WalletMonitoringJob
+  function mapSavedWalletsToJobs(savedWallets) {
+    return savedWallets.map(w => ({
+      id: w.id,
+      type: JobType.WALLET_MONITOR,
+      walletAddress: w.wallet_address,
+      name: w.name,
+      percentage: 10, // Default or w.percentage if available
+      isActive: false, // <-- ENSURE THIS IS ALWAYS FALSE
+      tradingWalletPublicKey: '',
+    }));
+  }
+
+  // Fetch and merge saved wallets on wallet connect
+  useEffect(() => {
+    if (wallet.publicKey) {
+      (async () => {
+        try {
+          const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+          const savedWalletJobs = mapSavedWalletsToJobs(savedWallets);
+          setJobs(prevJobs => [
+            ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+            ...savedWalletJobs
+          ]);
+        } catch (error) {
+          console.error('Failed to fetch saved wallets:', error);
+          setNotification({ message: 'Failed to load saved wallets', type: 'error' });
+        }
+      })();
+    } else {
+      setJobs([]);
+      setTradingWallets([]);
+      setSelectedTradingWallet(null);
+    }
+  }, [wallet.publicKey]);
+
+  // Add state for delete saved wallet dialog
+  const [showDeleteSavedWalletDialog, setShowDeleteSavedWalletDialog] = useState(false);
+  const [savedWalletToDelete, setSavedWalletToDelete] = useState<{ id: string; name?: string } | null>(null);
+
+  // Add confirmDeleteSavedWallet function
+  const confirmDeleteSavedWallet = async () => {
+    if (!savedWalletToDelete) return;
+    await handleDeleteSavedWallet(savedWalletToDelete.id);
+    setSavedWalletToDelete(null);
+    setShowDeleteSavedWalletDialog(false);
   };
 
   return (
@@ -4050,8 +4134,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setLackeyToDelete({ id: job.id, name: job.name });
-                                  setShowDeleteLackeyDialog(true);
+                                  setSavedWalletToDelete({ id: job.id, name: job.name });
+                                  setShowDeleteSavedWalletDialog(true);
                                 }}
                                 style={{
                                   width: '100%',
@@ -4848,6 +4932,91 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         onConfirm={confirmDeleteLackey}
         lackeyName={lackeyToDelete?.name}
       />
+      {showDeleteSavedWalletDialog && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#1e293b',
+            padding: '2rem',
+            borderRadius: '0.75rem',
+            maxWidth: '520px',
+            width: '90%',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+            border: '1px solid #2d3748'
+          }}>
+            <h3 style={{
+              color: '#e2e8f0',
+              margin: '0 0 1rem 0',
+              fontSize: '1.25rem',
+              fontWeight: '600'
+            }}>
+              Delete Saved Wallet
+            </h3>
+            <div style={{
+              color: '#94a3b8',
+              margin: '0 0 1.5rem 0',
+              fontSize: '1rem',
+              lineHeight: '1.5'
+            }}>
+              <p style={{ margin: '0 0 0.75rem 0' }}>
+                Are you sure you want to delete <span style={{ color: '#e2e8f0', fontWeight: '500' }}>{savedWalletToDelete?.name || 'this wallet'}</span>?
+              </p>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: '#64748b' }}>
+                This action cannot be undone.
+              </p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button
+                onClick={() => {
+                  setShowDeleteSavedWalletDialog(false);
+                  setSavedWalletToDelete(null);
+                }}
+                style={{
+                  backgroundColor: '#334155',
+                  color: '#e2e8f0',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  padding: '0.5rem 1.25rem',
+                  fontSize: '1rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (savedWalletToDelete) {
+                    await deleteJob(savedWalletToDelete.id);
+                    setSavedWalletToDelete(null);
+                    setShowDeleteSavedWalletDialog(false);
+                  }
+                }}
+                style={{
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  padding: '0.5rem 1.25rem',
+                  fontSize: '1rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
