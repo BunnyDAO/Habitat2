@@ -8,12 +8,22 @@ interface TokenBalancesListProps {
   walletAddress: string;
   displayMode?: 'full' | 'total-only';
   onRpcError?: () => void;
+  refreshCount: number;
+  isBackgroundRefresh: boolean;
+  backendBalances?: TokenBalance[];
+  triggerBackendPolling?: boolean;
+  onBackendPollingComplete?: () => void;
 }
 
 export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({ 
   walletAddress, 
   displayMode = 'full',
-  onRpcError 
+  onRpcError,
+  refreshCount,
+  isBackgroundRefresh,
+  backendBalances,
+  triggerBackendPolling = false,
+  onBackendPollingComplete
 }) => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -26,12 +36,14 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const { updatePortfolioValue } = usePortfolio();
 
-  const fetchBalances = useCallback(async () => {
+  const fetchBalances = useCallback(async (background = false) => {
     if (!walletAddress) return;
     if (isFetching) return;
 
-    setIsFetching(true);
-    setFetchProgress(0);
+    if (!background) {
+      setIsFetching(true);
+      setFetchProgress(0);
+    }
 
     try {
       const walletBalancesService = WalletBalancesService.getInstance();
@@ -47,26 +59,76 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       setBalances(response.balances);
       setTotalUsdValue(total);
       updatePortfolioValue(walletAddress, total);
-      setFetchProgress(100);
+      if (!background) setFetchProgress(100);
     } catch (error) {
       console.error('Error fetching balances:', error);
       if (onRpcError) onRpcError();
     } finally {
-      setIsFetching(false);
+      if (!background) setIsFetching(false);
       setIsInitialLoad(false);
     }
   }, [walletAddress, onRpcError, updatePortfolioValue]);
 
   // Initial fetch
   useEffect(() => {
-    fetchBalances();
+    fetchBalances(false);
   }, [fetchBalances]);
+
+  // Listen for refreshCount changes to trigger a fetch
+  useEffect(() => {
+    if (refreshCount > 0) {
+      fetchBalances(isBackgroundRefresh);
+    }
+    // eslint-disable-next-line
+  }, [refreshCount]);
 
   // Set up auto-refresh
   useEffect(() => {
-    const intervalId = setInterval(fetchBalances, 30000); // 30 seconds
+    const intervalId = setInterval(() => fetchBalances(false), 30000); // 30 seconds
     return () => clearInterval(intervalId);
   }, [fetchBalances]);
+
+  // If backendBalances is provided, use it for display
+  useEffect(() => {
+    if (backendBalances && Array.isArray(backendBalances)) {
+      setBalances(backendBalances);
+      const total = backendBalances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+      setTotalUsdValue(total);
+      setIsInitialLoad(false);
+      setIsFetching(false);
+    }
+  }, [backendBalances]);
+
+  // Poll backend for balances every 500ms for 5 seconds after a transaction
+  useEffect(() => {
+    if (!triggerBackendPolling || !walletAddress) return;
+    let attempts = 0;
+    const maxAttempts = 10; // 10 * 500ms = 5 seconds
+    let stopped = false;
+    const poll = async () => {
+      if (stopped) return;
+      try {
+        const walletBalancesService = WalletBalancesService.getInstance();
+        const response = await walletBalancesService.getBalances(walletAddress);
+        // Calculate total USD value
+        const total = response.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+        setBalances(response.balances);
+        setTotalUsdValue(total);
+        updatePortfolioValue(walletAddress, total);
+      } catch {
+        // Ignore errors during polling
+      }
+      attempts++;
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 500);
+      } else {
+        stopped = true;
+        if (onBackendPollingComplete) onBackendPollingComplete();
+      }
+    };
+    poll();
+    return () => { stopped = true; };
+  }, [triggerBackendPolling, walletAddress, updatePortfolioValue, onBackendPollingComplete]);
 
   // Hide token
   const handleHide = async (mint: string) => {
@@ -103,12 +165,12 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [menuOpen]);
 
-  // Show loading state
+  // Show loading state (only for initial load or manual refresh)
   if (isInitialLoad) {
     return (
       <div style={{ color: '#94a3b8', padding: '1rem' }}>
         <div>Fetching token balances...</div>
-        {isFetching && (
+        {isFetching && !isBackgroundRefresh && (
           <div style={{ marginTop: '0.5rem' }}>
             <div style={{ 
               width: '100%', 
@@ -156,7 +218,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <button 
-            onClick={fetchBalances}
+            onClick={() => fetchBalances(false)}
             disabled={isFetching}
             style={{
               background: 'none',

@@ -100,7 +100,7 @@ const tokenService = new TokenService(pool);
 // Configure CORS
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000'],
-  methods: ['GET', 'POST', 'OPTIONS', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH','OPTIONS', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'solana-client'],
   credentials: true
 }));

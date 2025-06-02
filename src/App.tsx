@@ -851,12 +851,23 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const fetchBackendBalances = async (walletAddress: string) => {
     try {
       console.log('Fetching balances from backend for:', walletAddress);
-      const response = await fetch(API_CONFIG.WALLET.BALANCES);
+      const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${walletAddress}`);
       if (!response.ok) {
         throw new Error(`Backend error: ${response.statusText}`);
       }
       const data = await response.json();
       console.log('Backend balances:', JSON.stringify(data, null, 2));
+
+      // --- Update backendBalancesByWallet state ---
+      setBackendBalancesByWallet(prev => ({
+        ...prev,
+        [walletAddress]: data.balances
+      }));
+
+      // Trigger a background refresh in TokenBalancesList
+      setIsBackgroundRefresh(true);
+      setRefreshCount(c => c + 1);
+
       return data;
     } catch (error) {
       console.error('Error fetching from backend:', error);
@@ -1308,6 +1319,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       displayMode="total-only"
                       onRpcError={onRpcError}
                       wallet={wallet}
+                      backendBalances={backendBalancesByWallet[tw.publicKey]}
+                      refreshCount={refreshCount}
+                      isBackgroundRefresh={isBackgroundRefresh}
+                      triggerBackendPolling={backendPollingWallet === tw.publicKey}
+                      onBackendPollingComplete={() => handleBackendPollingComplete(tw.publicKey)}
+                      onTotalValueChange={(value) => handleTotalValueChange(tw.publicKey, value)}
                     />
                   </div>
                 </div>
@@ -1585,18 +1602,45 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           const signature = await connection.sendTransaction(transaction);
                           console.log('Withdrawal sent:', signature);
                           
-                          // Wait for confirmation
-                          await connection.confirmTransaction(signature);
-                          console.log('Withdrawal confirmed');
-                          
-                          // Refresh balance
-                          fetchTradingWalletBalances();
-                          window.dispatchEvent(new Event('update-balances'));
-                          
+                          // Show initial notification
                           setNotification({ 
-                            type: 'success', 
-                            message: 'Successfully returned SOL to main wallet' 
+                            type: 'info', 
+                            message: 'Transaction sent, waiting for confirmation...' 
                           });
+
+                          // Try to confirm transaction with timeout
+                          let confirmed = false;
+                          try {
+                            await connection.confirmTransaction(signature, 'confirmed');
+                            confirmed = true;
+                          } catch (err) {
+                            // If timeout, check status manually
+                            console.log('Initial confirmation timed out, checking status...');
+                            const status = await connection.getSignatureStatus(signature);
+                            if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+                              confirmed = true;
+                            }
+                          }
+
+                          if (confirmed) {
+                            console.log('Withdrawal confirmed');
+                            
+                            // Refresh balance
+                            fetchTradingWalletBalances();
+                            window.dispatchEvent(new Event('update-balances'));
+                            
+                            setNotification({ 
+                              type: 'success', 
+                              message: 'Successfully returned SOL to main wallet' 
+                            });
+                            setBackendPollingWallet(tw.publicKey);
+                          } else {
+                            // If still not confirmed, show a message asking user to check explorer
+                            setNotification({ 
+                              type: 'info', 
+                              message: 'Transaction sent but confirmation is taking longer than expected. Please check the Solana Explorer for status.' 
+                            });
+                          }
                         } catch (error) {
                           console.error('Error withdrawing:', error);
                           setNotification({ 
@@ -1675,6 +1719,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       tradingWallet={tw}  // Pass the trading wallet
                       onRpcError={onRpcError}  // Pass the onRpcError function
                       wallet={wallet}
+                      backendBalances={backendBalancesByWallet[tw.publicKey]}
+                      refreshCount={refreshCount}
+                      isBackgroundRefresh={isBackgroundRefresh}
+                      triggerBackendPolling={backendPollingWallet === tw.publicKey}
+                      onBackendPollingComplete={() => handleBackendPollingComplete(tw.publicKey)}
+                      onTotalValueChange={(value) => handleTotalValueChange(tw.publicKey, value)}
                     />
                   </div>
                 </div>
@@ -3097,6 +3147,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               message: 'Transaction confirmed! Updating balances...' 
             });
 
+            // Trigger backend polling for this wallet
+            setBackendPollingWallet(tradingWallet.publicKey);
+
             // Force immediate balance updates
             console.log('Updating balances...');
             
@@ -3300,6 +3353,69 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     setSavedWalletToDelete(null);
     setShowDeleteSavedWalletDialog(false);
   };
+
+  // Add at the top of AppContent
+  const [refreshCount, setRefreshCount] = useState(0);
+  const [isBackgroundRefresh, setIsBackgroundRefresh] = useState(false);
+
+  // Add at the top of AppContent
+  const [backendBalancesByWallet, setBackendBalancesByWallet] = useState({});
+
+  // Add at the top of AppContent
+  const [backendPollingWallet, setBackendPollingWallet] = useState<string | null>(null);
+
+  // Add this function in AppContent
+  const handleBackendPollingComplete = (walletAddress: string) => {
+    fetchBackendBalances(walletAddress);
+  };
+
+  // In AppContent, add a handler to update the summary value for each wallet
+  const handleTotalValueChange = (walletAddress: string, value: number) => {
+    setTradingWalletBalances(prev => ({
+      ...prev,
+      [walletAddress]: value
+    }));
+  };
+
+  // Add periodic polling to fetch backend balances for all trading wallets
+  useEffect(() => {
+    if (tradingWallets.length === 0) return;
+
+    const fetchAllBackendBalances = async () => {
+      for (const tw of tradingWallets) {
+        try {
+          const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${tw.publicKey}`);
+          if (response.ok) {
+            const data = await response.json();
+            // Calculate total USD value for this wallet
+            const total = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+            setTradingWalletBalances(prev => ({
+              ...prev,
+              [tw.publicKey]: total
+            }));
+          }
+        } catch (error) {
+          // Ignore errors, just skip this wallet
+        }
+      }
+    };
+
+    // Initial fetch
+    fetchAllBackendBalances();
+    // Set up interval
+    const interval = setInterval(fetchAllBackendBalances, 2000);
+    return () => clearInterval(interval);
+  }, [tradingWallets]);
+
+  // Add this useEffect near where notification state is managed
+  useEffect(() => {
+    if (notification && notification.type === 'success') {
+      const timeout = setTimeout(() => {
+        setNotification(null);
+      }, 3000); // 3 seconds
+      return () => clearTimeout(timeout);
+    }
+  }, [notification]);
 
   return (
     <div className={walletStyles.container}>
@@ -5045,6 +5161,12 @@ interface TokenBalancesListProps {
   displayMode?: 'full' | 'total-only';
   onRpcError?: () => void;
   wallet: any; // Add wallet prop
+  backendBalances?: any; // Add backendBalances prop
+  refreshCount: number;
+  isBackgroundRefresh: boolean;
+  triggerBackendPolling?: string | null;
+  onBackendPollingComplete?: () => void;
+  onTotalValueChange?: (value: number) => void;
 }
 
 // Add a cache for token balances
@@ -5116,7 +5238,13 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   tradingWallet, 
   displayMode = 'full',
   onRpcError,
-  wallet
+  wallet,
+  backendBalances,
+  refreshCount,
+  isBackgroundRefresh,
+  triggerBackendPolling,
+  onBackendPollingComplete,
+  onTotalValueChange,
 }): ReactElement => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -5687,7 +5815,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     // Only allow manual refresh if not already fetching and cooldown period has passed
     const now = Date.now();
     if (!isFetching && now - lastRefreshTime > REFRESH_COOLDOWN) {
-      setIsBackgroundUpdate(false); // Make it a foreground update to show progress
+      setIsBackgroundUpdate(false); // Manual refresh
       setFetchProgress(0);
       
       // Clear any existing timeout
@@ -5711,6 +5839,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       }, 500);
       
       fetchBalances();
+      setRefreshCount(c => c + 1);
     } else if (isFetching) {
       // Show a message that we're already refreshing
       alert('Already refreshing balances, please wait...');

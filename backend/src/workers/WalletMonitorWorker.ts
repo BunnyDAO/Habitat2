@@ -523,7 +523,7 @@ export class WalletMonitorWorker extends BaseWorker {
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          feeAccount: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL'
+          feeAccount: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6'
         }),
       });
 
@@ -657,7 +657,7 @@ export class WalletMonitorWorker extends BaseWorker {
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          feeAccount: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL'
+          feeAccount: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6'
         }),
       });
 
