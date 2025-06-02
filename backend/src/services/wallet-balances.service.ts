@@ -181,23 +181,20 @@ export class WalletBalancesService {
   async populateWalletBalances(walletAddress: string): Promise<void> {
     try {
       console.log(`Starting to populate balances for wallet: ${walletAddress}`);
-      
+      const updatedMints = new Set<string>();
       // First get SOL balance
       try {
         const solBalance = await this.connection.getBalance(new PublicKey(walletAddress));
         console.log(`Raw SOL balance: ${solBalance}`);
-        
+        updatedMints.add('So11111111111111111111111111111111111111112');
         // Update SOL balance - Note: solBalance is in lamports (raw units)
-        if (solBalance > 0) {
-          console.log(`Updating SOL balance: ${solBalance} lamports`);
-          await this.updateBalance(
-            walletAddress,
-            'So11111111111111111111111111111111111111112', // Native SOL mint address
-            solBalance, // Pass raw lamports amount
-            9, // SOL decimals
-            Date.now()
-          );
-        }
+        await this.updateBalance(
+          walletAddress,
+          'So11111111111111111111111111111111111111112', // Native SOL mint address
+          solBalance, // Pass raw lamports amount (can be zero)
+          9, // SOL decimals
+          Date.now()
+        );
       } catch (error) {
         console.error(`Error fetching SOL balance for ${walletAddress}:`, error);
         // Continue with token balances even if SOL balance fails
@@ -219,19 +216,15 @@ export class WalletBalancesService {
             const parsedInfo = account.data.parsed.info;
             const tokenMint = parsedInfo.mint;
             const tokenAmount = parsedInfo.tokenAmount;
-            
-            console.log(`Processing token ${tokenMint}: ${tokenAmount.amount} (${tokenAmount.decimals} decimals)`);
-            
-            // Only include tokens with non-zero balance
-            if (Number(tokenAmount.amount) > 0) {
-              await this.updateBalance(
-                walletAddress,
-                tokenMint,
-                Number(tokenAmount.amount), // Use raw token amount
-                tokenAmount.decimals,
-                Date.now()
-              );
-            }
+            updatedMints.add(tokenMint);
+            // Always update balance, even if zero
+            await this.updateBalance(
+              walletAddress,
+              tokenMint,
+              Number(tokenAmount.amount), // Use raw token amount
+              tokenAmount.decimals,
+              Date.now()
+            );
           } catch (error) {
             console.error(`Error processing token account:`, error);
             // Continue with next token even if one fails
@@ -242,12 +235,27 @@ export class WalletBalancesService {
         throw new Error(`Failed to fetch token accounts: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
 
+      // --- NEW: Set balances to zero for tokens no longer present on-chain ---
+      try {
+        const dbResult = await this.pool.query(
+          'SELECT mint_address FROM wallet_balances WHERE wallet_address = $1',
+          [walletAddress]
+        );
+        for (const row of dbResult.rows) {
+          if (!updatedMints.has(row.mint_address)) {
+            // Set amount to zero for tokens no longer present
+            await this.updateBalance(walletAddress, row.mint_address, 0, 0, Date.now());
+            console.log(`Set balance to zero for missing token: ${row.mint_address}`);
+          }
+        }
+      } catch (error) {
+        console.error(`Error zeroing out missing tokens for ${walletAddress}:`, error);
+      }
       // Invalidate cache after population
       if (this.redisClient) {
         const cacheKey = this.getCacheKey(walletAddress);
         await this.redisClient.del(cacheKey);
       }
-
       console.log(`Successfully populated balances for ${walletAddress}`);
     } catch (error) {
       console.error(`Error populating wallet balances for ${walletAddress}:`, error);
