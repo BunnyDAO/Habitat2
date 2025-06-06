@@ -1313,7 +1313,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   {/* Token balances */}
                   <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '0.25rem' }}>
                     <TokenBalancesList 
-                      walletAddress={tw.publicKey} 
+                      key={tw.publicKey + ':' + (backendBalancesByWallet[tw.publicKey]?.[0]?.balance ?? 0)}
+                      walletAddress={tw.publicKey}
                       connection={connection}
                       tradingWallet={tw}
                       displayMode="total-only"
@@ -1714,10 +1715,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   <div style={{ marginTop: '1rem' }}>
                     <div style={{ color: '#94a3b8', marginBottom: '0.5rem' }}>Token Balances:</div>
                     <TokenBalancesList 
-                      walletAddress={tw.publicKey} 
-                      connection={connection} 
-                      tradingWallet={tw}  // Pass the trading wallet
-                      onRpcError={onRpcError}  // Pass the onRpcError function
+                      key={tw.publicKey + ':' + (backendBalancesByWallet[tw.publicKey]?.[0]?.balance ?? 0)}
+                      walletAddress={tw.publicKey}
+                      connection={connection}
+                      tradingWallet={tw}
+                      onRpcError={onRpcError}
                       wallet={wallet}
                       backendBalances={backendBalancesByWallet[tw.publicKey]}
                       refreshCount={refreshCount}
@@ -3381,30 +3383,42 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   useEffect(() => {
     if (tradingWallets.length === 0) return;
 
+    let isCancelled = false;
+
     const fetchAllBackendBalances = async () => {
       for (const tw of tradingWallets) {
         try {
           const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${tw.publicKey}`);
           if (response.ok) {
             const data = await response.json();
-            // Calculate total USD value for this wallet
             const total = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
             setTradingWalletBalances(prev => ({
               ...prev,
-              [tw.publicKey]: total
+              [tw.publicKey]: total,
+            }));
+            // Also update backendBalancesByWallet for TokenBalancesList
+            setBackendBalancesByWallet(prev => ({
+              ...prev,
+              [tw.publicKey]: data.balances
             }));
           }
-        } catch (error) {
-          // Ignore errors, just skip this wallet
+        } catch (e) {
+          // Optionally handle error
         }
+        // Stagger requests by 300ms to avoid rate limits
+        await new Promise(res => setTimeout(res, 300));
+        if (isCancelled) break;
       }
     };
 
-    // Initial fetch
     fetchAllBackendBalances();
-    // Set up interval
-    const interval = setInterval(fetchAllBackendBalances, 2000);
-    return () => clearInterval(interval);
+    // Set interval to 2 seconds for real-time UI updates
+    const interval = setInterval(fetchAllBackendBalances, 2000); // <-- 2 seconds
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
   }, [tradingWallets]);
 
   // Add this useEffect near where notification state is managed
