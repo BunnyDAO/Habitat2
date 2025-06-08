@@ -1,6 +1,7 @@
 import { Connection, PublicKey, Keypair, VersionedTransaction, ParsedAccountData } from '@solana/web3.js';
 import { Pool } from 'pg';
 import { createClient } from 'redis';
+import { JupiterService } from './jupiter.service';
 
 // Common token decimals
 const TOKEN_DECIMALS: { [key: string]: number } = {
@@ -69,11 +70,13 @@ export class SwapService {
   private pool: Pool;
   private connection: Connection;
   private redisClient: ReturnType<typeof createClient> | null;
+  private jupiterService: JupiterService;
 
   constructor(pool: Pool, connection: Connection, redisClient: ReturnType<typeof createClient> | null = null) {
     this.pool = pool;
     this.connection = connection;
     this.redisClient = redisClient;
+    this.jupiterService = new JupiterService(pool, redisClient);
   }
 
   async getQuote(
@@ -82,8 +85,27 @@ export class SwapService {
     amount: number,
     slippageBps: number = 50
   ): Promise<JupiterQuoteResponse> {
-    // TODO: Implement Jupiter quote API call
-    throw new Error('Not implemented');
+    const quote = await this.jupiterService.getQuote(
+      inputMint.toString(),
+      outputMint.toString(),
+      amount,
+      slippageBps
+    );
+    
+    // Convert to the expected format
+    return {
+      inputMint: inputMint.toString(),
+      outputMint: outputMint.toString(),
+      inAmount: quote.inAmount,
+      outAmount: quote.outAmount,
+      otherAmountThreshold: quote.otherAmountThreshold,
+      swapMode: quote.swapMode,
+      slippageBps: quote.slippageBps,
+      priceImpactPct: quote.priceImpactPct,
+      routePlan: quote.routePlan || [],
+      contextSlot: 0,
+      timeTaken: 0
+    };
   }
 
   async executeSwap(request: SwapRequest): Promise<SwapResponse> {
@@ -145,16 +167,75 @@ export class SwapService {
         isInteger: Number.isInteger(amount)
       });
 
-      // Get quote from Jupiter API
-      const quoteData = await this.getQuote(
-        new PublicKey(inputMint),
-        new PublicKey(outputMint),
+      // Get quote from Jupiter API directly
+      const jupiterQuote = await this.jupiterService.getQuote(
+        inputMint,
+        outputMint,
         baseAmount,
         slippageBps
       );
 
-      // TODO: Implement swap execution
-      throw new Error('Not implemented');
+      console.log('Got quote from Jupiter:', {
+        inAmount: jupiterQuote.inAmount,
+        outAmount: jupiterQuote.outAmount,
+        priceImpactPct: jupiterQuote.priceImpactPct
+      });
+
+      // Get swap transaction from Jupiter
+      const swapTransaction = await this.jupiterService.executeSwap(
+        jupiterQuote,
+        tradingKeypair.publicKey.toString(),
+        feeWalletPubkey
+      );
+
+      console.log('Got swap transaction from Jupiter');
+
+      // Deserialize and sign the transaction
+      const transactionBuf = Buffer.from(swapTransaction.swapTransaction, 'base64');
+      const transaction = VersionedTransaction.deserialize(transactionBuf);
+      
+      // Sign the transaction
+      transaction.sign([tradingKeypair]);
+
+      // Send and confirm the transaction
+      const signature = await this.connection.sendTransaction(transaction, {
+        maxRetries: 3,
+        skipPreflight: false,
+      });
+
+      console.log('Transaction sent:', signature);
+
+      // Wait for confirmation
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      if (confirmation.value.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+
+      console.log('Transaction confirmed:', signature);
+
+      // TODO: Log the swap to database (requires swaps table)
+      // await this.logSwap({
+      //   walletPubkey: tradingKeypair.publicKey.toString(),
+      //   inputMint,
+      //   outputMint,
+      //   inputAmount: baseAmount,
+      //   outputAmount: parseInt(quoteData.outAmount),
+      //   txid: signature,
+      //   feeBps
+      // });
+
+      // Calculate UI amounts for response
+      const inputUiAmount = (baseAmount / Math.pow(10, inputDecimals)).toFixed(inputDecimals);
+      const outputUiAmount = (parseInt(jupiterQuote.outAmount) / Math.pow(10, outputDecimals)).toFixed(outputDecimals);
+
+      return {
+        signature,
+        inputAmount: inputUiAmount,
+        outputAmount: outputUiAmount,
+        routePlan: jupiterQuote.routePlan,
+        message: `Successfully swapped ${inputUiAmount} tokens for ${outputUiAmount} tokens`
+      };
 
     } catch (error) {
       console.error('Error executing swap:', error);
