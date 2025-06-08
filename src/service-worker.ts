@@ -731,9 +731,32 @@ async function updateJobProfitTracking(job: AnyJob, currentBalance: number, curr
   });
 }
 
+// Helper function to check if balances have significantly changed
+function hasSignificantChange(oldBalances: TokenBalance[] | undefined, newBalances: TokenBalance[]): boolean {
+  if (!oldBalances || !newBalances) return true;
+  if (oldBalances.length !== newBalances.length) return true;
+
+  for (const newBalance of newBalances) {
+    const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
+    if (!oldBalance) return true;
+    
+    // For SOL, consider changes greater than 0.0001 SOL significant
+    if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
+      if (Math.abs(newBalance.uiBalance - oldBalance.uiBalance) > 0.0001) return true;
+    } else {
+      // For other tokens, consider changes greater than 0.1% significant
+      if (oldBalance.uiBalance === 0 && newBalance.uiBalance === 0) continue;
+      const change = Math.abs(newBalance.uiBalance - oldBalance.uiBalance) / (oldBalance.uiBalance || 1);
+      if (change > 0.001) return true;
+    }
+  }
+  return false;
+}
+
 // Helper function to update all token balances for a wallet
 async function updateWalletBalances(wallet: PublicKey): Promise<void> {
   try {
+    const currentBalances = tokenBalances.get(wallet.toString());
     const balances: TokenBalance[] = [];
     
     // Get SOL balance first
@@ -752,14 +775,6 @@ async function updateWalletBalances(wallet: PublicKey): Promise<void> {
     const data = await response.json();
     const currentPrice = data.solana.usd;
     
-    // Update profit tracking for all jobs associated with this wallet
-    const walletStr = wallet.toString();
-    for (const job of activeJobs.values()) {
-      if (job.tradingWalletPublicKey === walletStr) {
-        await updateJobProfitTracking(job, solUiBalance, currentPrice);
-      }
-    }
-
     // Get all token accounts
     const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet, {
       programId: TOKEN_PROGRAM_ID
@@ -783,9 +798,23 @@ async function updateWalletBalances(wallet: PublicKey): Promise<void> {
         }
       }
     }
+
+    // Check if balances have significantly changed
+    if (!hasSignificantChange(currentBalances, balances)) {
+      console.log('No significant balance changes detected, skipping update');
+      return;
+    }
     
     // Store balances in memory
     tokenBalances.set(wallet.toString(), balances);
+    
+    // Update profit tracking for all jobs associated with this wallet
+    const walletStr = wallet.toString();
+    for (const job of activeJobs.values()) {
+      if (job.tradingWalletPublicKey === walletStr) {
+        await updateJobProfitTracking(job, solUiBalance, currentPrice);
+      }
+    }
     
     // Log balances for debugging
     console.log('Updated balances for wallet:', wallet.toString(), balances);

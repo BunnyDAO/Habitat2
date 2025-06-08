@@ -859,44 +859,59 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     });
   };
 
-  // fetch Backend Balances - Add this helper function
-  const fetchBackendBalances = async (walletAddress: string) => {
+  // Add this function near the top of the file, after imports
+  function hasSignificantBalanceChange(oldBalances: any[], newBalances: any[]): boolean {
+    if (!oldBalances || !newBalances) return true;
+    if (oldBalances.length !== newBalances.length) return true;
+
+    for (const newBalance of newBalances) {
+      const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
+      if (!oldBalance) return true;
+      
+      // For SOL, consider changes greater than 0.0001 SOL significant
+      if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
+        const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
+        const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
+        if (Math.abs(newAmount - oldAmount) > 0.0001) return true;
+      } else {
+        // For other tokens, consider changes greater than 0.1% significant
+        const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
+        const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
+        if (oldAmount === 0 && newAmount === 0) continue;
+        const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
+        if (change > 0.001) return true;
+      }
+    }
+    return false;
+  }
+
+  // Find the fetchBalancesFromBackend function and modify it
+  const fetchBalancesFromBackend = async (walletAddress: string) => {
     try {
       console.log('Fetching balances from backend for:', walletAddress);
-      const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${walletAddress}`);
+      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}`);
       if (!response.ok) {
-        throw new Error(`Backend error: ${response.statusText}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
-      console.log('Backend balances:', JSON.stringify(data, null, 2));
+      console.log('Backend balances:', data);
 
-      // --- Update backendBalancesByWallet state only if balances changed ---
-      setBackendBalancesByWallet(prev => {
-        const currentBalances = prev[walletAddress];
-        const newBalances = data.balances;
-        
-        // Only update if balances have actually changed
-        if (!balancesAreEqual(currentBalances, newBalances)) {
-          console.log('Balance data changed for wallet:', walletAddress);
-          
-          // Trigger a background refresh in TokenBalancesList only when data changes
-          setIsBackgroundRefresh(true);
-          setRefreshCount(c => c + 1);
-          
-          return {
-            ...prev,
-            [walletAddress]: newBalances
-          };
-        } else {
-          console.log('Balance data unchanged for wallet:', walletAddress);
-          return prev; // No change
-        }
-      });
+      // Get current balances from state
+      const currentBalances = walletBalances.get(walletAddress);
 
-      return data;
+      // Check if balances have significantly changed
+      if (!hasSignificantBalanceChange(currentBalances, data.balances)) {
+        console.log('Balance data unchanged for wallet:', walletAddress);
+        return;
+      }
+
+      // Update balances in state
+      walletBalances.set(walletAddress, data.balances);
+      
+      // Update UI
+      setWalletBalances(new Map(walletBalances));
     } catch (error) {
-      console.error('Error fetching from backend:', error);
-      return null;
+      console.error('Error fetching balances:', error);
     }
   };
 
