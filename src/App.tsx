@@ -847,6 +847,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
+  // Helper function to compare balance arrays
+  const balancesAreEqual = (balances1: any[], balances2: any[]) => {
+    if (!balances1 || !balances2 || balances1.length !== balances2.length) return false;
+    
+    return balances1.every((balance1, index) => {
+      const balance2 = balances2[index];
+      return balance1.mint === balance2.mint && 
+             balance1.balance === balance2.balance &&
+             balance1.decimals === balance2.decimals;
+    });
+  };
+
   // fetch Backend Balances - Add this helper function
   const fetchBackendBalances = async (walletAddress: string) => {
     try {
@@ -858,15 +870,28 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const data = await response.json();
       console.log('Backend balances:', JSON.stringify(data, null, 2));
 
-      // --- Update backendBalancesByWallet state ---
-      setBackendBalancesByWallet(prev => ({
-        ...prev,
-        [walletAddress]: data.balances
-      }));
-
-      // Trigger a background refresh in TokenBalancesList
-      setIsBackgroundRefresh(true);
-      setRefreshCount(c => c + 1);
+      // --- Update backendBalancesByWallet state only if balances changed ---
+      setBackendBalancesByWallet(prev => {
+        const currentBalances = prev[walletAddress];
+        const newBalances = data.balances;
+        
+        // Only update if balances have actually changed
+        if (!balancesAreEqual(currentBalances, newBalances)) {
+          console.log('Balance data changed for wallet:', walletAddress);
+          
+          // Trigger a background refresh in TokenBalancesList only when data changes
+          setIsBackgroundRefresh(true);
+          setRefreshCount(c => c + 1);
+          
+          return {
+            ...prev,
+            [walletAddress]: newBalances
+          };
+        } else {
+          console.log('Balance data unchanged for wallet:', walletAddress);
+          return prev; // No change
+        }
+      });
 
       return data;
     } catch (error) {
@@ -1595,7 +1620,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           }
 
                           // Decode the base64 string to Uint8Array
-                          const secretKey = Uint8Array.from(atob(privateKey), c => c.charCodeAt(0));
+                          const secretKey = new Uint8Array(Buffer.from(privateKey, 'base64'));
                           const tradingKeypair = Keypair.fromSecretKey(secretKey);
                           
                           transaction.sign([tradingKeypair]);
@@ -1635,6 +1660,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               message: 'Successfully returned SOL to main wallet' 
                             });
                             setBackendPollingWallet(tw.publicKey);
+                            // Immediately fetch backend balances for this wallet
+                            fetchBackendBalances(tw.publicKey);
                           } else {
                             // If still not confirmed, show a message asking user to check explorer
                             setNotification({ 
@@ -5800,10 +5827,10 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
           throw new Error('Trading wallet private key not found');
       }
 
-      const keypair = Keypair.fromSecretKey(new Uint8Array(JSON.parse(privateKey)));
+      const keypair = Keypair.fromSecretKey(new Uint8Array(Buffer.from(privateKey, 'base64')));
 
-      // Execute swap through backend API
-      const result = await executeSwap({
+      // Prepare swap parameters
+      const swapParams = {
           inputMint: tokenBalance.mint,
           outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
           amount: tokenBalance.balance,
@@ -5814,7 +5841,15 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
           },
           feeWalletPubkey: wallet.publicKey?.toString(),
           feeBps: 0// 0% fee for swap to Sol.
+      };
+      
+      console.log('Executing swap with parameters:', {
+        ...swapParams,
+        walletKeypair: { ...swapParams.walletKeypair, secretKey: '[REDACTED]' }
       });
+
+      // Execute swap through backend API
+      const result = await executeSwap(swapParams);
 
       console.log('Swap executed successfully:', result);
       // Update balances after successful swap
