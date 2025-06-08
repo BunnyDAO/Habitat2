@@ -2124,34 +2124,31 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         while (retryCount < 3) {
           try {
             const confirmation = await connection.confirmTransaction(signature);
-          if (confirmation.value.err) {
+            if (confirmation.value.err) {
               throw new Error('Transaction failed: ' + confirmation.value.err.toString());
             }
+            
+            // Update job's last activity immediately after confirmation
+            job.lastActivity = new Date().toISOString();
+            setJobs(prevJobs => prevJobs.map(j => j.id === job.id ? job : j));
+
+            // Call onSuccess callback if provided
+            if (typeof onSuccess === 'function') {
+              onSuccess();
+            }
+            
+            // Trigger balance update immediately
+            window.dispatchEvent(new CustomEvent('update-balances'));
+            
             break;
           } catch (error) {
             retryCount++;
             if (retryCount === 3) throw error;
-            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+            await new Promise(resolve => setTimeout(resolve, 500 * retryCount));
           }
         }
 
         console.log('Transaction confirmed:', signature);
-        
-        
-        // Update job's last activity
-        job.lastActivity = new Date().toISOString();
-        setJobs(prevJobs => prevJobs.map(j => j.id === job.id ? job : j));
-
-        // Call onSuccess callback if provided
-        if (typeof onSuccess === 'function') {
-          onSuccess();
-        }
-
-        // Wait a short moment for blockchain state to update
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Refresh balances after successful transaction
-        window.dispatchEvent(new CustomEvent('update-balances'));
 
       } catch (error: any) {
         console.error('Error executing transaction:', {
@@ -2237,9 +2234,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       if (!updateResponse.ok) {
         throw new Error('Failed to update backend balances');
       }
-
-      // Wait a moment for the update to complete
-      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Now fetch the updated balances
       const balances = await fetchBackendBalances(walletPublicKey);
