@@ -885,33 +885,36 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     return false;
   }
 
-  // Find the fetchBalancesFromBackend function and modify it
-  const fetchBalancesFromBackend = async (walletAddress: string) => {
+  // Add these near the top of the file with other state declarations
+  const [walletBalances, setWalletBalances] = useState<Map<string, any[]>>(new Map());
+
+  // fetch Backend Balances - Add this helper function
+  const fetchBackendBalances = async (walletAddress: string) => {
     try {
       console.log('Fetching balances from backend for:', walletAddress);
-      const response = await fetch(`${BACKEND_ENDPOINT}/wallet-balances/${walletAddress}`);
+      const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${walletAddress}`);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(`Backend error: ${response.statusText}`);
       }
       const data = await response.json();
-      console.log('Backend balances:', data);
+      console.log('Backend balances:', JSON.stringify(data, null, 2));
 
-      // Get current balances from state
-      const currentBalances = walletBalances.get(walletAddress);
+      // Get current balances from the wallet balance service
+      const currentBalances = await walletBalanceService.fetchBalances(walletAddress);
 
       // Check if balances have significantly changed
-      if (!hasSignificantBalanceChange(currentBalances, data.balances)) {
+      if (!hasSignificantBalanceChange(Object.values(currentBalances), data.balances)) {
         console.log('Balance data unchanged for wallet:', walletAddress);
-        return;
+        return data;
       }
 
-      // Update balances in state
-      walletBalances.set(walletAddress, data.balances);
-      
-      // Update UI
-      setWalletBalances(new Map(walletBalances));
+      // Update balances using the wallet balance service
+      await walletBalanceService.updateBalances(walletAddress);
+
+      return data;
     } catch (error) {
-      console.error('Error fetching balances:', error);
+      console.error('Error fetching from backend:', error);
+      return null;
     }
   };
 
