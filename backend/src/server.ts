@@ -7,7 +7,7 @@ import path from 'path';
 import { Pool } from 'pg';
 import { Connection } from '@solana/web3.js';
 import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
-import { createWalletBalancesRouter } from './routes/wallet-balances.routes';
+import { createWalletBalancesRouter } from './api/v1/routes/wallet-balances.routes';
 import { createTokenRouter } from './routes/token.routes';
 import { TokenService } from './services/token.service';
 import healthRoutes from './api/v1/routes/health.routes';

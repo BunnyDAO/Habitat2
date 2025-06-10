@@ -861,27 +861,60 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Add this function near the top of the file, after imports
   function hasSignificantBalanceChange(oldBalances: any[], newBalances: any[]): boolean {
-    if (!oldBalances || !newBalances) return true;
-    if (oldBalances.length !== newBalances.length) return true;
+    console.log('Checking balance changes:', { oldBalances, newBalances });
+    
+    if (!oldBalances || !newBalances) {
+      console.log('Missing balances, treating as significant change');
+      return true;
+    }
+    if (oldBalances.length !== newBalances.length) {
+      console.log('Balance array lengths differ, treating as significant change');
+      return true;
+    }
 
     for (const newBalance of newBalances) {
       const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
-      if (!oldBalance) return true;
+      if (!oldBalance) {
+        console.log(`New balance for mint ${newBalance.mint} not found in old balances, treating as significant change`);
+        return true;
+      }
       
       // For SOL, consider changes greater than 0.0001 SOL significant
       if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
         const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
         const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
-        if (Math.abs(newAmount - oldAmount) > 0.0001) return true;
+        const difference = Math.abs(newAmount - oldAmount);
+        console.log(`SOL balance comparison:`, { 
+          oldAmount, 
+          newAmount, 
+          difference, 
+          threshold: 0.0001,
+          isSignificant: difference > 0.0001 
+        });
+        if (difference > 0.0001) {
+          console.log('SOL balance change is significant');
+          return true;
+        }
       } else {
         // For other tokens, consider changes greater than 0.1% significant
         const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
         const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
         if (oldAmount === 0 && newAmount === 0) continue;
         const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
-        if (change > 0.001) return true;
+        console.log(`Token ${newBalance.symbol || newBalance.mint} balance comparison:`, { 
+          oldAmount, 
+          newAmount, 
+          change, 
+          threshold: 0.001,
+          isSignificant: change > 0.001 
+        });
+        if (change > 0.001) {
+          console.log(`Token balance change is significant for ${newBalance.symbol || newBalance.mint}`);
+          return true;
+        }
       }
     }
+    console.log('No significant balance changes detected');
     return false;
   }
 
@@ -1707,39 +1740,26 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             
                             setNotification({ 
                               type: 'success', 
-                              message: 'Transaction confirmed! Updating balances...' 
+                              message: 'Successfully returned SOL to main wallet!' 
                             });
 
-                            // Force immediate UI updates with proper sequencing
-                            try {
-                              // Update trading wallet balances first
-                              await fetchTradingWalletBalances();
-                              
-                              // Dispatch balance update event
-                              window.dispatchEvent(new Event('update-balances'));
-                              
-                              // Start backend polling for this wallet
-                              setBackendPollingWallet(tw.publicKey);
-                              
-                              // Small delay before fetching backend balances
-                              await new Promise(resolve => setTimeout(resolve, 500));
-                              
-                              // Fetch backend balances
-                              await fetchBackendBalances(tw.publicKey);
-                              
-                              setNotification({ 
-                                type: 'success', 
-                                message: 'Successfully returned SOL to main wallet' 
-                              });
-                              
-                              console.log('Balance updates completed');
-                            } catch (updateError) {
-                              console.error('Error updating balances:', updateError);
-                              setNotification({ 
-                                type: 'warning', 
-                                message: 'Transaction successful, but balance display may need manual refresh' 
-                              });
-                            }
+                            // Force refresh by incrementing refresh count
+                            setRefreshCount(prev => prev + 1);
+                            
+                            // Dispatch balance update event
+                            window.dispatchEvent(new Event('update-balances'));
+                            
+                            // Update backend balances
+                            setTimeout(async () => {
+                              try {
+                                await walletBalanceService.updateBalances(tw.publicKey);
+                                await fetchTradingWalletBalances();
+                              } catch (updateError) {
+                                console.error('Background balance update error:', updateError);
+                              }
+                            }, 1000);
+                            
+                            console.log('Balance updates completed');
                           } else {
                             // If still not confirmed after all retries
                             setNotification({ 

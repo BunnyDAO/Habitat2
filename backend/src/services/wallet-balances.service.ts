@@ -5,6 +5,24 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { createClient } from 'redis';
 import { TokenService } from './token.service';
 
+interface TokenAccountInfo {
+  mint: string;
+  tokenAmount: {
+    amount: string;
+    decimals: number;
+  };
+}
+
+interface ParsedTokenAccount {
+  account: {
+    data: {
+      parsed: {
+        info: TokenAccountInfo;
+      };
+    };
+  };
+}
+
 export class WalletBalancesService {
   private connection: Connection;
   private redisClient: ReturnType<typeof createClient> | null;
@@ -14,7 +32,7 @@ export class WalletBalancesService {
   constructor(
     private pool: Pool,
     redisClient?: ReturnType<typeof createClient> | null,
-    rpcUrl: string = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
+    rpcUrl: string = process.env.HELIUS_RPC_URL || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` || process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
   ) {
     this.connection = new Connection(rpcUrl, 'confirmed');
     this.redisClient = redisClient || null;
@@ -182,9 +200,13 @@ export class WalletBalancesService {
     try {
       console.log(`Starting to populate balances for wallet: ${walletAddress}`);
       const updatedMints = new Set<string>();
-      // First get SOL balance
+      
+      // Add rate limiting delay to prevent overwhelming the RPC
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // First get SOL balance with retry logic
       try {
-        const solBalance = await this.connection.getBalance(new PublicKey(walletAddress));
+        const solBalance = await this.getBalanceWithRetry(walletAddress);
         console.log(`Raw SOL balance: ${solBalance}`);
         updatedMints.add('So11111111111111111111111111111111111111112');
         // Update SOL balance - Note: solBalance is in lamports (raw units)
@@ -200,20 +222,17 @@ export class WalletBalancesService {
         // Continue with token balances even if SOL balance fails
       }
 
-      // Get token accounts
+      // Get token accounts with retry logic
       try {
         console.log(`Fetching token accounts for ${walletAddress}`);
-        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
-          new PublicKey(walletAddress),
-          { programId: TOKEN_PROGRAM_ID }
-        );
+        const tokenAccounts = await this.getTokenAccountsWithRetry(walletAddress);
 
-        console.log(`Found ${tokenAccounts.value.length} token accounts`);
+        console.log(`Found ${tokenAccounts.length} token accounts`);
 
         // Process each token account
-        for (const { account } of tokenAccounts.value) {
+        for (const account of tokenAccounts) {
           try {
-            const parsedInfo = account.data.parsed.info;
+            const parsedInfo = account.account.data.parsed.info;
             const tokenMint = parsedInfo.mint;
             const tokenAmount = parsedInfo.tokenAmount;
             updatedMints.add(tokenMint);
@@ -289,5 +308,44 @@ export class WalletBalancesService {
     `;
     const result = await this.pool.query(query, [walletAddress]);
     return result.rows.map(row => row.mint_address);
+  }
+
+  // Helper method to get SOL balance with retry logic
+  private async getBalanceWithRetry(walletAddress: string, maxRetries = 3): Promise<number> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const balance = await this.connection.getBalance(new PublicKey(walletAddress));
+        return balance;
+      } catch (error) {
+        console.error(`Attempt ${attempt + 1} failed to get balance for ${walletAddress}:`, error);
+        if (attempt === maxRetries - 1) throw error;
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw new Error('All retry attempts failed');
+  }
+
+  // Helper method to get token accounts with retry logic
+  private async getTokenAccountsWithRetry(walletAddress: string, maxRetries = 3): Promise<ParsedTokenAccount[]> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          new PublicKey(walletAddress),
+          { programId: TOKEN_PROGRAM_ID }
+        );
+        return tokenAccounts.value;
+      } catch (error) {
+        console.error(`Attempt ${attempt + 1} failed to get token accounts for ${walletAddress}:`, error);
+        if (attempt === maxRetries - 1) throw error;
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw new Error('All retry attempts failed');
   }
 } 
