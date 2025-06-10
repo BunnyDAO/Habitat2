@@ -905,7 +905,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       // Check if balances have significantly changed
       if (!hasSignificantBalanceChange(Object.values(currentBalances), data.balances)) {
         console.log('Balance data unchanged for wallet:', walletAddress);
-        return data;
+        return null; // Return null to signal no processing needed
       }
 
       // Update balances using the wallet balance service
@@ -960,8 +960,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
             // Fetch updated balances from backend
             const backendBalances = await fetchBackendBalances(tw.publicKey);
-            if (backendBalances && backendBalances.length > 0) {
-              const solBalance = backendBalances.find((b: { symbol: string }) => b.symbol === 'SOL');
+            if (backendBalances && backendBalances.balances && backendBalances.balances.length > 0) {
+              const solBalance = backendBalances.balances.find((b: { symbol: string }) => b.symbol === 'SOL');
               if (solBalance) {
                 totalValue = solBalance.balance;
                 
@@ -1652,39 +1652,99 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             message: 'Transaction sent, waiting for confirmation...' 
                           });
 
-                          // Try to confirm transaction with timeout
+                          // Use improved confirmation method with shorter timeouts
                           let confirmed = false;
+                          const maxRetries = 30; // 30 attempts at 1 second intervals = max 30 seconds
+                          let retryCount = 0;
+
+                          // First, try a quick confirmation attempt (5 seconds max)
                           try {
-                            await connection.confirmTransaction(signature, 'confirmed');
+                            // Set a short timeout for the initial confirmation attempt
+                            const confirmationPromise = connection.confirmTransaction(signature, 'confirmed');
+                            const timeoutPromise = new Promise((_, reject) => 
+                              setTimeout(() => reject(new Error('Quick confirmation timeout')), 5000)
+                            );
+                            
+                            await Promise.race([confirmationPromise, timeoutPromise]);
                             confirmed = true;
+                            console.log('Transaction confirmed quickly');
                           } catch (err) {
-                            // If timeout, check status manually
-                            console.log('Initial confirmation timed out, checking status...');
-                            const status = await connection.getSignatureStatus(signature);
-                            if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-                              confirmed = true;
+                            console.log('Quick confirmation failed, polling transaction status...');
+                            
+                            // If quick confirmation fails, poll for status
+                            while (retryCount < maxRetries && !confirmed) {
+                              try {
+                                const status = await connection.getSignatureStatus(signature);
+                                console.log(`Status check ${retryCount + 1}/${maxRetries}:`, status.value);
+                                
+                                if (status.value?.confirmationStatus === 'confirmed' || 
+                                    status.value?.confirmationStatus === 'finalized') {
+                                  confirmed = true;
+                                  console.log('Transaction confirmed via status polling');
+                                  break;
+                                }
+                                
+                                if (status.value?.err) {
+                                  throw new Error(`Transaction failed: ${status.value.err}`);
+                                }
+                                
+                                retryCount++;
+                                if (retryCount < maxRetries) {
+                                  await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between checks
+                                }
+                              } catch (statusError) {
+                                console.error('Error checking transaction status:', statusError);
+                                retryCount++;
+                                if (retryCount < maxRetries) {
+                                  await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                              }
                             }
                           }
 
                           if (confirmed) {
                             console.log('Withdrawal confirmed');
                             
-                            // Refresh balance
-                            fetchTradingWalletBalances();
-                            window.dispatchEvent(new Event('update-balances'));
-                            
                             setNotification({ 
                               type: 'success', 
-                              message: 'Successfully returned SOL to main wallet' 
+                              message: 'Transaction confirmed! Updating balances...' 
                             });
-                            setBackendPollingWallet(tw.publicKey);
-                            // Immediately fetch backend balances for this wallet
-                            fetchBackendBalances(tw.publicKey);
+
+                            // Force immediate UI updates with proper sequencing
+                            try {
+                              // Update trading wallet balances first
+                              await fetchTradingWalletBalances();
+                              
+                              // Dispatch balance update event
+                              window.dispatchEvent(new Event('update-balances'));
+                              
+                              // Start backend polling for this wallet
+                              setBackendPollingWallet(tw.publicKey);
+                              
+                              // Small delay before fetching backend balances
+                              await new Promise(resolve => setTimeout(resolve, 500));
+                              
+                              // Fetch backend balances
+                              await fetchBackendBalances(tw.publicKey);
+                              
+                              setNotification({ 
+                                type: 'success', 
+                                message: 'Successfully returned SOL to main wallet' 
+                              });
+                              
+                              console.log('Balance updates completed');
+                            } catch (updateError) {
+                              console.error('Error updating balances:', updateError);
+                              setNotification({ 
+                                type: 'warning', 
+                                message: 'Transaction successful, but balance display may need manual refresh' 
+                              });
+                            }
                           } else {
-                            // If still not confirmed, show a message asking user to check explorer
+                            // If still not confirmed after all retries
                             setNotification({ 
-                              type: 'info', 
-                              message: 'Transaction sent but confirmation is taking longer than expected. Please check the Solana Explorer for status.' 
+                              type: 'warning', 
+                              message: `Transaction sent but not confirmed after ${maxRetries} seconds. Check Solana Explorer: ${signature}` 
                             });
                           }
                         } catch (error) {
@@ -5309,10 +5369,21 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   const [isBackgroundUpdate, setIsBackgroundUpdate] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [showDustTokens, setShowDustTokens] = useState(false);
   const successMessageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Minimum time between refreshes in milliseconds (15 seconds)
   const REFRESH_COOLDOWN = 15000;
+  
+  // Helper function to determine if a token balance is considered "dust"
+  const isDustToken = (balance: TokenBalance): boolean => {
+    // If USD value is available, use $0.01 threshold
+    if (balance.usdValue !== undefined) {
+      return balance.usdValue < 0.01;
+    }
+    // Otherwise, use token amount thresholds
+    return balance.uiBalance < 0.0001;
+  };
   
   // Load cached balances on initial render
   useEffect(() => {
@@ -5483,6 +5554,14 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       
       // Convert Map back to array
       newBalances = Array.from(tokenBalanceMap.values());
+      
+      // Early exit if balances haven't changed significantly
+      const cachedBalances = getWalletBalanceCache(walletAddress);
+      if (!isInitialLoad && cachedBalances.length > 0 && !hasSignificantBalanceChange(cachedBalances, newBalances)) {
+        console.log('Balance data unchanged for wallet:', walletAddress);
+        setIsFetching(false);
+        return;
+      }
       
       // Update balances with SOL first so UI shows something quickly
       if (!isBackgroundUpdate) {
@@ -5826,6 +5905,20 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     };
   }, [walletAddress, debouncedFetchBalances]);
 
+  // Handle backend polling trigger - THIS WAS MISSING!
+  useEffect(() => {
+    if (triggerBackendPolling === walletAddress) {
+      log(`Backend polling triggered for wallet ${walletAddress}`);
+      setIsBackgroundUpdate(true);
+      fetchBalances().then(() => {
+        // Notify parent that polling is complete
+        if (onBackendPollingComplete) {
+          onBackendPollingComplete();
+        }
+      });
+    }
+  }, [triggerBackendPolling, walletAddress, fetchBalances, onBackendPollingComplete]);
+
   // Add handleSwap, used just for swapToSol button.
   const handleSwapToSol = async (tokenBalance: TokenBalance) => {
     try {
@@ -6025,6 +6118,34 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
             </button>
           )}
         </div>
+        
+        {/* Dust tokens toggle - positioned directly under Refresh */}
+        {displayMode === 'full' && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontSize: '0.75rem',
+            color: '#94a3b8',
+            marginBottom: '0.5rem'
+          }}>
+            <input
+              type="checkbox"
+              id={`dust-toggle-${walletAddress}`}
+              checked={showDustTokens}
+              onChange={(e) => setShowDustTokens(e.target.checked)}
+              style={{
+                width: '12px',
+                height: '12px',
+                accentColor: '#3b82f6'
+              }}
+            />
+            <label htmlFor={`dust-toggle-${walletAddress}`} style={{ cursor: 'pointer' }}>
+              Show dust tokens (&lt;$0.01)
+            </label>
+          </div>
+        )}
+        
         <div style={{ color: '#e2e8f0', fontSize: '1rem', fontWeight: '500' }}>
           ${totalUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </div>
@@ -6056,9 +6177,20 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         )}
       </div>
 
-      {/* Only show tokens with non-zero balance */}
+      {/* Filter tokens based on balance and dust settings */}
       {balances
-        .filter(balance => balance.uiBalance > 0)
+        .filter(balance => {
+          // Always show SOL
+          if (balance.mint === 'So11111111111111111111111111111111111111112') {
+            return balance.uiBalance > 0;
+          }
+          // For other tokens, filter based on dust settings
+          if (showDustTokens) {
+            return balance.uiBalance > 0;
+          } else {
+            return balance.uiBalance > 0 && !isDustToken(balance);
+          }
+        })
         .map((balance) => (
         <div 
           key={balance.mint}

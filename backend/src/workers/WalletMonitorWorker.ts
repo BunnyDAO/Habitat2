@@ -211,11 +211,18 @@ export class WalletMonitorWorker extends BaseWorker {
       const preTokenBalances = meta.preTokenBalances || [];
       const postTokenBalances = meta.postTokenBalances || [];
       
+      console.log('[Mirror] Wallet being monitored:', this.walletPubkey.toString());
+      console.log('[Mirror] Trading wallet:', this.tradingWallet.toString());
+      console.log('[Mirror] Pre-token balances:', preTokenBalances);
+      console.log('[Mirror] Post-token balances:', postTokenBalances);
+      
       // Find the token changes
       const tokenChanges = new Map<string, { pre: number; post: number }>();
       
       preTokenBalances.forEach(balance => {
-        if (balance.owner === this.tradingWallet.toString()) {
+        console.log('[Mirror] Checking pre-balance owner:', balance.owner, 'vs monitored wallet:', this.walletPubkey.toString());
+        if (balance.owner === this.walletPubkey.toString()) {
+          console.log('[Mirror] Found pre-balance for monitored wallet:', balance);
           tokenChanges.set(balance.mint, {
             pre: Number(balance.uiTokenAmount.uiAmount),
             post: 0
@@ -224,7 +231,9 @@ export class WalletMonitorWorker extends BaseWorker {
       });
 
       postTokenBalances.forEach(balance => {
-        if (balance.owner === this.tradingWallet.toString()) {
+        console.log('[Mirror] Checking post-balance owner:', balance.owner, 'vs monitored wallet:', this.walletPubkey.toString());
+        if (balance.owner === this.walletPubkey.toString()) {
+          console.log('[Mirror] Found post-balance for monitored wallet:', balance);
           const existing = tokenChanges.get(balance.mint);
           if (existing) {
             existing.post = Number(balance.uiTokenAmount.uiAmount);
@@ -236,6 +245,8 @@ export class WalletMonitorWorker extends BaseWorker {
           }
         }
       });
+      
+      console.log('[Mirror] Token changes map:', Array.from(tokenChanges.entries()));
 
       // Find input and output tokens
       let inputToken = '';

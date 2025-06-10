@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: habitat-daemon
+    environment:
+      - SERVICE_MODE=daemon
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - HELIUS_API_KEY=${HELIUS_API_KEY}
+    volumes:
+      - .:/app
+      - /app/node_modules
+    restart: unless-stopped 
