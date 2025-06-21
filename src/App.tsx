@@ -434,7 +434,7 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
             className={navigationStyles.logo}
           />
           </div>
-        <h1 className={navigationStyles.brandName}>Resonance</h1>
+        <h1 className={navigationStyles.brandName}>Habitat</h1>
         </div>
       
       <nav className={navigationStyles.navButtons}>
@@ -3169,10 +3169,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         return;
       }
 
-      // Process wallets to ensure consistent secret key format
-      const processedWallets = storedWallets.map(w => ({
+      // Process wallets to ensure consistent secret key format and fetch strategies
+      const processedWallets = await Promise.all(storedWallets.map(async w => {
+        const strategies = await strategyApiService.getStrategies(w.publicKey);
+        return {
         ...w,
-        secretKey: w.secretKey instanceof Uint8Array ? w.secretKey : new Uint8Array(Buffer.from(w.secretKey, 'base64'))
+          secretKey: w.secretKey instanceof Uint8Array ? w.secretKey : new Uint8Array(Buffer.from(w.secretKey, 'base64')),
+          strategies
+        };
       }));
 
       // Ensure no duplicates by using publicKey as unique identifier

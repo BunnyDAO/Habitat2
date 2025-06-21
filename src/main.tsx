@@ -6,6 +6,7 @@ import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
+import { API_CONFIG } from './config/api';
 
 // You must import the styles for the modal
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -16,7 +17,7 @@ const wallets = [
 ];
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <ConnectionProvider endpoint="https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a">
+  <ConnectionProvider endpoint={API_CONFIG.RPC_BASE}>
     <WalletProvider wallets={wallets} autoConnect={false}>
       <WalletModalProvider>
         <UnifiedWalletProvider
@@ -25,8 +26,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             autoConnect: false,
             env: 'mainnet-beta',
             metadata: {
-              name: 'Resonance',
-              description: 'Trading Assistant',
+              name: 'Habitat',
+              description: 'Habitat is a comprehensive Solana trading platform that enables automated cryptocurrency trading through intelligent wallet management and strategy execution. The application allows users to create and manage multiple trading wallets, monitor real-time token balances, and deploy automated trading strategies like level-based buying/selling and vault management. With integrated Jupiter swap functionality, whale tracking capabilities, and a user-friendly dashboard, Habitat streamlines portfolio management while providing advanced tools for both manual and automated SOL and SPL token trading.',
               url: window.location.origin,
               iconUrls: [],
             },

@@ -28,7 +28,7 @@ router.post('/',
       // Verify trading wallet ownership
       const { data: wallet, error: walletError } = await supabase
         .from('trading_wallets')
-        .select('*')
+        .select('id, wallet_pubkey')
         .eq('id', trading_wallet_id)
         .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
         .single();
@@ -68,6 +68,7 @@ router.post('/',
             config,
             name,
             version: existingStrategy.version + 1,
+            current_wallet_pubkey: wallet.wallet_pubkey,
             updated_at: new Date().toISOString()
           })
           .eq('id', existingStrategy.id)
@@ -102,6 +103,7 @@ router.post('/',
           version: 1,
           is_active: true,
           position,
+          current_wallet_pubkey: wallet.wallet_pubkey,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }])
@@ -132,9 +134,17 @@ router.get('/',
 
       const { trading_wallet_id } = req.query;
       
+      // Join with trading_wallets to get the wallet_pubkey for each strategy
       const query = supabase
         .from('strategies')
-        .select('*')
+        .select(`
+          *,
+          trading_wallets!inner(
+            id,
+            wallet_pubkey,
+            name
+          )
+        `)
         .eq('main_wallet_pubkey', req.user.main_wallet_pubkey);
 
       if (trading_wallet_id) {
@@ -144,7 +154,15 @@ router.get('/',
       const { data, error } = await query;
 
       if (error) throw error;
-      res.json(data);
+      
+      // Transform the data to include wallet_pubkey at the top level
+      const transformedData = data.map(strategy => ({
+        ...strategy,
+        wallet_pubkey: strategy.trading_wallets.wallet_pubkey,
+        trading_wallet_name: strategy.trading_wallets.name
+      }));
+      
+      res.json(transformedData);
     } catch (error) {
       console.error('Error fetching strategies:', error);
       res.status(500).json({ error: 'Failed to fetch strategies' });
@@ -168,7 +186,13 @@ router.put('/:id',
       // Verify strategy ownership
       const { data: strategy, error: strategyError } = await supabase
         .from('strategies')
-        .select('*')
+        .select(`
+          *,
+          trading_wallets!inner(
+            id,
+            wallet_pubkey
+          )
+        `)
         .eq('id', id)
         .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
         .single();
@@ -187,6 +211,7 @@ router.put('/:id',
           config,
           version: newVersion,
           change_reason,
+          current_wallet_pubkey: strategy.trading_wallets.wallet_pubkey,
           updated_at: new Date().toISOString()
         })
         .eq('id', id)

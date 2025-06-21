@@ -3,6 +3,7 @@ import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, Levels
 import { PublicKey, Connection, Keypair, Transaction, SystemProgram } from '@solana/web3.js';
 import { swapTokens } from './utils/swap';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { API_CONFIG } from './config/api';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -78,8 +79,8 @@ async function getJobs(): Promise<AnyJob[]> {
 let activeJobs: Map<string, AnyJob> = new Map();
 const CHECK_INTERVAL = 250; // Check every 0.25 seconds
 
-// RPC endpoint for Solana connection
-const SOLANA_RPC = 'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a';
+// RPC endpoint for Solana connection - Use backend proxy for security
+const SOLANA_RPC = API_CONFIG.RPC_BASE;
 const connection = new Connection(SOLANA_RPC, 'confirmed');
 
 // Update TokenBalance interface

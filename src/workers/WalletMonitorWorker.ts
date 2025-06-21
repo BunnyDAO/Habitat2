@@ -99,8 +99,8 @@ export class WalletMonitorWorker extends BaseWorker {
     if (this.isRunning) return;
 
     try {
-      // Create a new connection using the Helius endpoint
-      this.connection = createRateLimitedConnection('https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a');
+      // Create a new connection using the backend RPC proxy
+      this.connection = createRateLimitedConnection(API_CONFIG.RPC_BASE);
       
       // Subscribe to account changes
       this.subscription = this.connection.onLogs(
@@ -448,7 +448,7 @@ export class WalletMonitorWorker extends BaseWorker {
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          feeAccount: '89GiEjdEaeEaEgSVwnPmV1EP9qHjbQyXZy9RNuThZmnL'
+          feeAccount: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6'
         }),
       });
 

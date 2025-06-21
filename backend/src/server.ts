@@ -19,6 +19,7 @@ import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes
 import { createSwapRouter } from './api/v1/routes/swap.routes';
 import strategiesRouter from './routes/strategies.routes';
 import authRouter from './routes/auth.routes';
+import walletTransactionRouter from './routes/wallet-transaction.routes';
 import WebSocket from 'ws';
 import { createServer, Server as HttpServer } from 'http';
 import { Server as WebSocketServer } from 'ws';
@@ -140,6 +141,9 @@ app.use('/api/v1/strategies', strategiesRouter);
 
 // Add saved wallets routes
 app.use('/api/v1/saved-wallets', savedWalletsRouter);
+
+// Add wallet transaction routes
+app.use('/api/v1/wallet-transactions', walletTransactionRouter);
 
 // Wallet balances endpoint
 app.get('/api/wallet/:address/balances', async (req, res) => {

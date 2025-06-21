@@ -58,8 +58,11 @@ class StrategyApiService {
 
       // Get trading wallet ID
       let trading_wallet_id: number;
+      let wallet_pubkey: string;
       try {
-        trading_wallet_id = await tradingWalletService.getWalletId(request.tradingWalletPublicKey);
+        const walletInfo = await tradingWalletService.getWalletId(request.tradingWalletPublicKey);
+        trading_wallet_id = walletInfo.id;
+        wallet_pubkey = walletInfo.wallet_pubkey;
         console.log('Retrieved trading wallet ID:', trading_wallet_id);
       } catch (error) {
         console.error('Error getting trading wallet ID:', error);
@@ -74,7 +77,8 @@ class StrategyApiService {
       const { tradingWalletPublicKey, ...rest } = request;
       const requestPayload = {
         ...rest,
-        trading_wallet_id
+        trading_wallet_id,
+        current_wallet_pubkey: wallet_pubkey
       };
       console.log('Sending strategy creation request with payload:', JSON.stringify(requestPayload, null, 2));
 

@@ -116,7 +116,7 @@ export function createTradingWalletsRouter() {
     try {
       const { data: result, error } = await supabase
         .from('trading_wallets')
-        .select('id, main_wallet_pubkey')
+        .select('id, main_wallet_pubkey, wallet_pubkey')
         .eq('wallet_pubkey', walletPubkey)
         .single();
 
@@ -130,7 +130,7 @@ export function createTradingWalletsRouter() {
       }
 
       console.log('Found trading wallet ID:', result.id);
-      res.json({ id: result.id });
+      res.json({ id: result.id, wallet_pubkey: result.wallet_pubkey });
     } catch (error) {
       console.error('Error fetching trading wallet ID:', error);
       res.status(500).json({ error: 'Failed to fetch trading wallet ID' });

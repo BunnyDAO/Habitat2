@@ -1,6 +1,7 @@
 /**
  * Type definitions for wallet-related functionality
  */
+import { Strategy } from '../services/api/strategy.service';
 
 /**
  * Represents a trading wallet
@@ -12,6 +13,7 @@ export interface TradingWallet {
   mnemonic?: string;
   name?: string;  // Optional name for the trading wallet
   createdAt: string;  // Timestamp when wallet was created (ISO string)
+  strategies?: Strategy[];  // Array of strategies associated with this wallet
 }
 
 /**

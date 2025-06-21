@@ -101,13 +101,13 @@ export const tradingWalletService = {
     }
   },
 
-  async getWalletId(publicKey: string): Promise<number> {
+  async getWalletId(publicKey: string): Promise<{ id: number; wallet_pubkey: string }> {
     try {
       const response = await apiClient.get(`${TRADING_WALLETS_ENDPOINT}/by-pubkey/${publicKey}`);
       if (!response.data || !response.data.id) {
         throw new Error('Trading wallet not found');
       }
-      return response.data.id;
+      return { id: response.data.id, wallet_pubkey: response.data.wallet_pubkey };
     } catch (error) {
       console.error('Error getting trading wallet ID:', error);
       throw error;
