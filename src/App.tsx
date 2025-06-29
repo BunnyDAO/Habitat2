@@ -725,6 +725,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       createdAt: strategy.created_at,
       name: strategy.name,
       tradingWalletSecretKey: new Uint8Array(), // Will be loaded separately if needed
+      profitTracking: {
+        initialBalance: 0,
+        currentProfit: 0,
+        totalProfitSOL: 0,
+        totalProfitUSD: 0,
+        percentageChange: 0.00,
+        transactions: []
+      }
     };
 
     // Add strategy-specific fields based on type
@@ -821,12 +829,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         }
         
         if (numericJobs.length > 0) {
-          console.log('✅ Loading', numericJobs.length, 'valid jobs from localStorage');
-          setJobs(numericJobs);
-          return; // Exit early with clean jobs
+          console.log('✅ Found', numericJobs.length, 'valid jobs from localStorage');
+          console.log('🔄 Still checking backend for latest data...');
+          // Don't exit early - always check backend for latest data
         } else {
-          console.log('📭 No valid backend jobs in localStorage, trying backend...');
-          // Fall through to backend call
+          console.log('📭 No valid backend jobs in localStorage, loading from backend...');
         }
       } catch (error) {
         console.error('❌ Error parsing localStorage jobs:', error);
