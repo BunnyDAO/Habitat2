@@ -623,9 +623,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   // Add function to handle wallet name save
   const handleWalletNameSave = (jobId: string) => {
+    console.log('💾 All jobs:', jobs);
+    console.log('💾 Looking for job with ID:', jobId);
+    
     const job = jobs.find(j => j.id === jobId);
-    if (job && job.wallet_address) {
+    console.log('💾 Found job:', job);
+    console.log('💾 Job keys:', job ? Object.keys(job) : 'no job found');
+    console.log('💾 Job type:', job?.type);
+    console.log('💾 Is saved wallet?', job?.type === JobType.SAVED_WALLET);
+    
+    if (job && job.type === JobType.SAVED_WALLET) {
       // It's a saved wallet, update backend
+      console.log('💾 Calling handleUpdateSavedWalletName with:', jobId, editedWalletName.trim());
       handleUpdateSavedWalletName(jobId, editedWalletName.trim() || 'Unnamed Wallet');
       setEditingWalletId(null);
       return;
@@ -707,29 +716,191 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
+  // Minimal converter for backend strategies
+  const convertBackendStrategyToJob = (strategy: any): AnyJob => {
+    const baseJob = {
+      id: strategy.id.toString(),
+      tradingWalletPublicKey: strategy.wallet_pubkey || strategy.current_wallet_pubkey,
+      isActive: strategy.is_active ?? true,
+      createdAt: strategy.created_at,
+      name: strategy.name,
+      tradingWalletSecretKey: new Uint8Array(), // Will be loaded separately if needed
+    };
+
+    // Add strategy-specific fields based on type
+    switch (strategy.strategy_type) {
+      case JobType.WALLET_MONITOR:
+        return {
+          ...baseJob,
+          type: JobType.WALLET_MONITOR,
+          walletAddress: strategy.config.walletAddress,
+          percentage: strategy.config.percentage,
+          recentTransactions: [],
+          mirroredTokens: {}
+        } as WalletMonitoringJob;
+        
+      case JobType.PRICE_MONITOR:
+        return {
+          ...baseJob,
+          type: JobType.PRICE_MONITOR,
+          targetPrice: strategy.config.targetPrice,
+          direction: strategy.config.direction,
+          percentageToSell: strategy.config.percentageToSell
+        } as PriceMonitoringJob;
+        
+      case JobType.VAULT:
+        return {
+          ...baseJob,
+          type: JobType.VAULT,
+          vaultPercentage: strategy.config.vaultPercentage
+        } as VaultStrategy;
+        
+      case JobType.LEVELS:
+        return {
+          ...baseJob,
+          type: JobType.LEVELS,
+          levels: strategy.config.levels || []
+        } as LevelsStrategy;
+        
+      default:
+        throw new Error(`Unknown strategy type: ${strategy.strategy_type}`);
+    }
+  };
+
+  // Load jobs with backend fallback and proper authentication
+  const loadJobsWithBackendFallback = async () => {
+    if (!wallet.publicKey) return;
+
+    const walletAddress = wallet.publicKey.toString();
+    console.log('🔍 Loading jobs for wallet:', walletAddress);
+
+    // Step 0: Ensure we're authenticated with the current wallet (FORCE FRESH AUTH)
+    try {
+      console.log('🔐 Forcing fresh authentication for current wallet...');
+      
+      // Always sign out first to clear any old tokens
+      await authService.signOut();
+      console.log('🚪 Signed out of previous session');
+      
+      // Sign in with current wallet
+      console.log('🔑 Signing in with current wallet:', walletAddress);
+      const newToken = await authService.signIn(walletAddress);
+      if (!newToken) {
+        console.error('❌ Failed to authenticate with current wallet');
+        setJobs([]);
+        return;
+      }
+      console.log('✅ Successfully authenticated with current wallet');
+    } catch (authError) {
+      console.error('❌ Authentication failed:', authError);
+      setJobs([]);
+      return;
+    }
+
+    // Step 1: Try localStorage first and clean up old jobs
+    const cacheKey = `jobs_${walletAddress}`;
+    const storedJobs = localStorage.getItem(cacheKey);
+    
+    if (storedJobs) {
+      console.log('📱 Found localStorage data:', storedJobs.length, 'characters');
+      try {
+        const parsedJobs = JSON.parse(storedJobs);
+        console.log('📋 Total jobs in localStorage:', parsedJobs.length);
+        
+        // Separate old jobs (non-numeric IDs) from new jobs (numeric IDs)
+        const numericJobs = parsedJobs.filter((job: any) => /^\d+$/.test(job.id));
+        const nonNumericJobs = parsedJobs.filter((job: any) => !/^\d+$/.test(job.id));
+        
+        console.log('✅ Valid backend jobs (numeric IDs):', numericJobs.length);
+        console.log('🗑️ Old jobs to clean up (non-numeric IDs):', nonNumericJobs.length);
+        
+        if (nonNumericJobs.length > 0) {
+          console.log('🧹 Cleaning up old jobs and saving clean localStorage');
+          // Save only the valid jobs back to localStorage
+          localStorage.setItem(cacheKey, JSON.stringify(numericJobs));
+        }
+        
+        if (numericJobs.length > 0) {
+          console.log('✅ Loading', numericJobs.length, 'valid jobs from localStorage');
+          setJobs(numericJobs);
+          return; // Exit early with clean jobs
+        } else {
+          console.log('📭 No valid backend jobs in localStorage, trying backend...');
+          // Fall through to backend call
+        }
+      } catch (error) {
+        console.error('❌ Error parsing localStorage jobs:', error);
+        // Continue to backend fallback if localStorage is corrupted
+      }
+    } else {
+      console.log('📭 No localStorage data found');
+    }
+
+    // Step 2: Load from backend (either no localStorage or no valid jobs)
+    console.log('🌐 Loading from backend for wallet:', walletAddress);
+    try {
+      // Load both strategies and saved wallets from backend
+      const [backendStrategies, savedWallets] = await Promise.all([
+        strategyApiService.getStrategies(),
+        savedWalletsApi.getAll(walletAddress)
+      ]);
+      
+      console.log('🌐 Backend returned', backendStrategies.length, 'strategies');
+      console.log('🌐 Backend returned', savedWallets.length, 'saved wallets');
+      
+      // Convert strategies to jobs
+      const validStrategies = backendStrategies.filter(strategy => {
+        // The strategy should be associated with trading wallets owned by current main wallet
+        // This is handled by the backend auth, but let's add extra verification
+        return true; // Backend already filters by main_wallet_pubkey
+      });
+      
+      const convertedStrategies = validStrategies.map(convertBackendStrategyToJob);
+      console.log('✅ Converted', convertedStrategies.length, 'strategies to jobs');
+      
+      // Convert saved wallets to jobs
+      const savedWalletJobs = mapSavedWalletsToJobs(savedWallets);
+      console.log('✅ Converted', savedWalletJobs.length, 'saved wallets to jobs');
+      
+      // Merge both types of jobs
+      const allJobs = [...convertedStrategies, ...savedWalletJobs];
+      console.log('✅ Total jobs loaded:', allJobs.length, '(', convertedStrategies.length, 'strategies +', savedWalletJobs.length, 'saved wallets)');
+      
+      setJobs(allJobs);
+      
+      // Cache for next time (only if we actually got backend data)
+      if (allJobs.length > 0) {
+        localStorage.setItem(cacheKey, JSON.stringify(allJobs));
+        console.log('💾 Cached all jobs to localStorage');
+      }
+    } catch (error) {
+      console.error('❌ Backend fallback failed:', error);
+      setJobs([]); // Fallback to empty
+    }
+  };
+
   // Load jobs from localStorage when wallet connects
   useEffect(() => {
     if (wallet.publicKey) {
-      const storedJobs = localStorage.getItem(`jobs_${wallet.publicKey.toString()}`);
-      if (storedJobs) {
-        const parsedJobs = JSON.parse(storedJobs);
-        // Only keep jobs with numeric IDs (backend jobs)
-        const filteredJobs = parsedJobs.filter((job: any) => /^\d+$/.test(job.id));
-        setJobs(filteredJobs);
-      }
+      loadJobsWithBackendFallback();
     } else {
       // Clear jobs and trading wallets when wallet disconnects
       setJobs([]);
       setTradingWallets([]);
       setSelectedTradingWallet(null);
+      // Also sign out when wallet disconnects
+      authService.signOut().catch(error => console.error('Error signing out:', error));
     }
   }, [wallet.publicKey]);
 
-  // Save jobs to localStorage whenever they change
+  // Save jobs to localStorage whenever they change (with safety check)
   useEffect(() => {
     if (wallet.publicKey && jobs.length > 0) {
-      localStorage.setItem(`jobs_${wallet.publicKey.toString()}`, JSON.stringify(jobs));
+      const cacheKey = `jobs_${wallet.publicKey.toString()}`;
+      console.log('💾 Auto-saving', jobs.length, 'jobs to localStorage');
+      localStorage.setItem(cacheKey, JSON.stringify(jobs));
     }
+    // Note: We don't clear localStorage when jobs.length === 0 to prevent data loss
   }, [jobs, wallet.publicKey]);
 
   // Add effect to set default withdraw address
@@ -2880,15 +3051,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const job = jobs.find(j => j.id === jobId);
       console.log('Deleting job:', job); // <-- DEBUG LOG
 
-      // If it's a saved wallet (has wallet_address property), use savedWalletsApi
-      if (job && job.wallet_address) {
+      // If it's a saved wallet (saved wallet type), use savedWalletsApi
+      if (job && job.type === JobType.SAVED_WALLET) {
+        console.log('Removing saved wallet via savedWalletsApi');
         await savedWalletsApi.remove(jobId);
         // Re-fetch after delete to ensure UI is in sync
         if (wallet.publicKey) {
           const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
           const savedWalletJobs = mapSavedWalletsToJobs(updated);
           setJobs(prevJobs => [
-            ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+            ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
             ...savedWalletJobs
           ]);
         } else {
@@ -3377,7 +3549,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
       const savedWalletJobs = mapSavedWalletsToJobs(updated);
       setJobs(prevJobs => [
-        ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+        ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
         ...savedWalletJobs
       ]);
       setNotification({ message: 'Wallet saved successfully', type: 'success' });
@@ -3391,9 +3563,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     if (!wallet.publicKey) return;
     try {
       await savedWalletsApi.remove(id);
-      // Re-fetch after delete
+      // Re-fetch after delete and map to jobs
       const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
-      setJobs(updated);
+      const savedWalletJobs = mapSavedWalletsToJobs(updated);
+      setJobs(prevJobs => [
+        ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
+        ...savedWalletJobs
+      ]);
       setNotification({ message: 'Wallet removed successfully', type: 'success' });
     } catch {
       setNotification({ message: 'Failed to remove wallet', type: 'error' });
@@ -3404,16 +3580,19 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const handleUpdateSavedWalletName = async (id: string, newName: string) => {
     if (!wallet.publicKey) return;
     try {
+      console.log('🔄 Updating saved wallet name:', { id, newName });
       await savedWalletsApi.update(id, { name: newName });
+      console.log('✅ Backend update successful');
       // Re-fetch after update and map to jobs
       const updated = await savedWalletsApi.getAll(wallet.publicKey.toString());
       const savedWalletJobs = mapSavedWalletsToJobs(updated);
       setJobs(prevJobs => [
-        ...prevJobs.filter(j => j.type !== JobType.WALLET_MONITOR || j.isActive),
+        ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
         ...savedWalletJobs
       ]);
       setNotification({ message: 'Wallet name updated successfully', type: 'success' });
-    } catch {
+    } catch (error) {
+      console.error('❌ Failed to update wallet name:', error);
       setNotification({ message: 'Failed to update wallet name', type: 'error' });
     }
   };
@@ -3431,11 +3610,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
-  // Helper to map backend saved wallets to WalletMonitoringJob
+  // Helper to map backend saved wallets to SavedWallet jobs
   function mapSavedWalletsToJobs(savedWallets) {
     return savedWallets.map(w => ({
       id: w.id,
-      type: JobType.WALLET_MONITOR,
+      type: JobType.SAVED_WALLET,  // Changed from WALLET_MONITOR to SAVED_WALLET
       walletAddress: w.wallet_address,
       name: w.name,
       percentage: 10, // Default or w.percentage if available
@@ -3730,27 +3909,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                     gap: '0.5rem'
                                   }}>
                                       <span style={{ fontSize: '1rem' }}>
-                                        {job.type === JobType.WALLET_MONITOR ? (
-                                          <WalletMonitorIcon
-                                            isActive={job.isActive && !pausedJobs.has(job.id)}
-                                            onClick={() => toggleJobPause(job.id)}
-                                          />
-                                        ) : job.type === JobType.PRICE_MONITOR ? (
-                                          <PriceMonitorIcon
-                                            isActive={job.isActive && !pausedJobs.has(job.id)}
-                                            onClick={() => toggleJobPause(job.id)}
-                                          />
-                                        ) : job.type === JobType.VAULT ? (
-                                          <VaultIcon
-                                            isActive={job.isActive && !pausedJobs.has(job.id)}
-                                            onClick={() => toggleJobPause(job.id)}
-                                          />
-                                        ) : job.type === JobType.LEVELS ? (
-                                          <LevelsIcon
-                                            isActive={job.isActive && !pausedJobs.has(job.id)}
-                                            onClick={() => toggleJobPause(job.id)}
-                                          />
-                                        ) : '❓'}
+                                        <WalletMonitorIcon
+                                          isActive={job.isActive && !pausedJobs.has(job.id)}
+                                          onClick={() => toggleJobPause(job.id)}
+                                        />
                                       </span>
                                       <span style={{ color: '#94a3b8' }}>|</span>
                                       <span>
@@ -4142,7 +4304,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   }}>
                     <span>Saved Wallets:</span>
                     <span style={{ color: '#64748b', fontSize: '0.625rem' }}>
-                      {jobs.filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive).length} Saved
+                      {jobs.filter(job => job.type === JobType.SAVED_WALLET).length} Saved
                     </span>
                   </div>
 
@@ -4201,7 +4363,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   </div>
                   <div className={walletStyles.savedWalletsContainer}>
                     {jobs
-                      .filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive)
+                      .filter(job => job.type === JobType.SAVED_WALLET)
                       .filter(job => {
                         const monitorJob = job as WalletMonitoringJob;
                         return searchQuery === '' || 
@@ -4431,7 +4593,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           </div>
                         );
                       })}
-                    {jobs.filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive).length === 0 && (
+                    {jobs.filter(job => job.type === JobType.SAVED_WALLET).length === 0 && (
                       <div style={{ 
                         color: '#94a3b8',
                         textAlign: 'center',

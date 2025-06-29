@@ -2,6 +2,7 @@ import { ProfitTracking } from './profit';
 
 export enum JobType {
   WALLET_MONITOR = 'wallet-monitor',
+  SAVED_WALLET = 'saved-wallet',
   PRICE_MONITOR = 'price-monitor',
   VAULT = 'vault',
   LEVELS = 'levels'
@@ -40,6 +41,13 @@ export function ensureUint8Array(secretKey: number[] | Uint8Array): Uint8Array {
     return secretKey;
   }
   return new Uint8Array(secretKey);
+}
+
+export interface SavedWalletJob extends BaseJob {
+  type: JobType.SAVED_WALLET;
+  walletAddress: string;
+  name?: string;  // Optional name for the saved wallet
+  percentage?: number;  // Optional percentage (for when activated)
 }
 
 export interface WalletMonitoringJob extends BaseJob {
@@ -90,4 +98,4 @@ export interface LevelsStrategy extends BaseJob {
   lastTriggerPrice?: number;
 }
 
-export type AnyJob = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy; 
+export type AnyJob = WalletMonitoringJob | SavedWalletJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy; 
