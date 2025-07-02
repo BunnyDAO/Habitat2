@@ -37,14 +37,6 @@ router.post('/',
         return res.status(403).json({ error: 'Access denied to trading wallet' });
       }
 
-      // Check for existing strategy of the same type
-      const { data: existingStrategy, error: existingError } = await supabase
-        .from('strategies')
-        .select('*')
-        .eq('trading_wallet_id', trading_wallet_id)
-        .eq('strategy_type', strategy_type)
-        .single();
-
       // Get the position of this trading wallet
       const { data: walletPosition, error: positionError } = await supabase
         .from('trading_wallets')
@@ -60,65 +52,113 @@ router.post('/',
       // Calculate position (1-based index)
       const position = walletPosition.findIndex(w => w.id === trading_wallet_id) + 1;
 
-      if (existingStrategy) {
-        // Update existing strategy
-        const { data: updatedStrategy, error: updateError } = await supabase
+      // Check for existing strategies of the same type to handle duplicates intelligently
+      const { data: existingStrategies, error: existingError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('trading_wallet_id', trading_wallet_id)
+        .eq('strategy_type', strategy_type);
+
+      if (existingError) {
+        console.error('Error checking existing strategies:', existingError);
+        // Continue anyway, as this is not critical for strategy creation
+      }
+
+      // Check if there's an identical strategy (same type + same config)
+      const identicalStrategy = existingStrategies?.find(strategy => 
+        JSON.stringify(strategy.config) === JSON.stringify(config)
+      );
+
+      if (identicalStrategy) {
+        // Update the existing identical strategy instead of creating a new one
+        console.log('Found identical strategy, updating instead of creating new one:', identicalStrategy.id);
+        
+        const { data, error } = await supabase
           .from('strategies')
           .update({
-            config,
             name,
-            version: existingStrategy.version + 1,
+            is_active: true,
             current_wallet_pubkey: wallet.wallet_pubkey,
             updated_at: new Date().toISOString()
           })
-          .eq('id', existingStrategy.id)
+          .eq('id', identicalStrategy.id)
           .select()
           .single();
 
-        if (updateError) throw updateError;
-
-        // Create version history entry
-        await supabase
-          .from('strategy_versions')
-          .insert({
-            strategy_id: existingStrategy.id,
-            version: existingStrategy.version,
-            config: existingStrategy.config,
-            created_by: req.user.main_wallet_pubkey,
-            change_reason: 'Strategy updated with new configuration'
+        if (error) {
+          console.error('Supabase error updating identical strategy:', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code
           });
+          throw error;
+        }
 
-        return res.json(updatedStrategy);
+        console.log('Successfully updated identical strategy with ID:', data.id);
+        res.json(data);
+        return;
       }
 
-      // Create new strategy if no existing one found
+      // Create new strategy - either different type or different config
+      console.log('Creating new strategy (no identical found):', { trading_wallet_id, strategy_type, config });
+      
+      const insertData = {
+        trading_wallet_id,
+        main_wallet_pubkey: req.user.main_wallet_pubkey,
+        strategy_type,
+        config,
+        name,
+        version: 1,
+        is_active: true,
+        position,
+        current_wallet_pubkey: wallet.wallet_pubkey,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('Insert data:', insertData);
+      
       const { data, error } = await supabase
         .from('strategies')
-        .insert([{
-          trading_wallet_id,
-          main_wallet_pubkey: req.user.main_wallet_pubkey,
-          strategy_type,
-          config,
-          name,
-          version: 1,
-          is_active: true,
-          position,
-          current_wallet_pubkey: wallet.wallet_pubkey,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }])
+        .insert([insertData])
         .select()
         .single();
 
       if (error) {
-        console.error('Error creating strategy:', error);
-        throw error;
+        console.error('Supabase error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        
+        // Provide more user-friendly error messages
+        let userMessage = 'Failed to create strategy';
+        if (error.code === '23505') {
+          userMessage = 'A strategy with these exact settings already exists. Please modify the configuration or delete the existing strategy first.';
+        } else if (error.code === '23503') {
+          userMessage = 'Invalid trading wallet or configuration. Please check your settings and try again.';
+        } else if (error.message?.includes('permission')) {
+          userMessage = 'You do not have permission to create strategies for this wallet.';
+        }
+        
+        const customError = new Error(userMessage);
+        (customError as any).originalError = error;
+        throw customError;
       }
 
+      console.log('Successfully created strategy with ID:', data.id);
       res.json(data);
     } catch (error) {
       console.error('Error in strategy creation:', error);
-      res.status(500).json({ error: 'Failed to create/update strategy' });
+      
+      // Send user-friendly error message
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create strategy';
+      res.status(500).json({ 
+        error: errorMessage,
+        details: 'Please try again or contact support if the problem persists'
+      });
     }
   }
 );

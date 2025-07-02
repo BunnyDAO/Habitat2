@@ -64,6 +64,7 @@ CREATE TABLE trading_wallets (
 );
 
 -- Create strategies table with versioning
+-- Multiple strategies of same type allowed per trading wallet
 CREATE TABLE strategies (
     id SERIAL PRIMARY KEY,
     trading_wallet_id INTEGER REFERENCES trading_wallets(id) ON DELETE CASCADE,
@@ -74,8 +75,7 @@ CREATE TABLE strategies (
     name VARCHAR(255),
     version INTEGER DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (trading_wallet_id, strategy_type)
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create strategy_versions table for version history

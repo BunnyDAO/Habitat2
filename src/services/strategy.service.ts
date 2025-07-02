@@ -80,6 +80,25 @@ export class StrategyService {
     );
   }
 
+  private findExistingPriceMonitorStrategy(
+    tradingWalletPublicKey: string, 
+    targetPrice: number, 
+    direction: 'above' | 'below', 
+    percentageToSell: number
+  ): Job | undefined {
+    return Array.from(this.jobs.values()).find(
+      job => {
+        if (job.type !== JobType.PRICE_MONITOR) return false;
+        const priceJob = job as PriceMonitoringJob;
+        
+        return priceJob.tradingWalletPublicKey === tradingWalletPublicKey &&
+               priceJob.targetPrice === targetPrice &&
+               priceJob.direction === direction &&
+               priceJob.percentageToSell === percentageToSell;
+      }
+    );
+  }
+
   private updateExistingJob<T extends Job>(existingJob: T, newConfig: Partial<T>): T {
     const updatedJob = { ...existingJob, ...newConfig, updatedAt: new Date().toISOString() };
     this.jobs.set(existingJob.id, updatedJob);
@@ -116,31 +135,47 @@ export class StrategyService {
   }
 
   async createPriceMonitorStrategy(params: PriceMonitorParams): Promise<PriceMonitoringJob> {
-    // Save to backend and get backend ID
-    const backendStrategy = await strategyApiService.createStrategy({
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      strategy_type: JobType.PRICE_MONITOR,
-      config: {
-        targetPrice: params.targetPrice,
-        direction: params.direction,
-        percentageToSell: params.percentageToSell
-      }
-    });
-
-    const newJob: PriceMonitoringJob = {
-      id: backendStrategy.id.toString(),
-      type: JobType.PRICE_MONITOR,
-      tradingWalletPublicKey: params.tradingWallet.publicKey,
-      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+    // Allow multiple price monitor strategies - no duplicate checking
+    console.log('Creating new price monitor strategy with config:', {
+      tradingWallet: params.tradingWallet.publicKey,
       targetPrice: params.targetPrice,
       direction: params.direction,
-      percentageToSell: params.percentageToSell,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
-    };
+      percentageToSell: params.percentageToSell
+    });
 
-    return newJob;
+    try {
+      // Save to backend and get backend ID
+      const backendStrategy = await strategyApiService.createStrategy({
+        tradingWalletPublicKey: params.tradingWallet.publicKey,
+        strategy_type: JobType.PRICE_MONITOR,
+        config: {
+          targetPrice: params.targetPrice,
+          direction: params.direction,
+          percentageToSell: params.percentageToSell
+        }
+      });
+
+      console.log('✅ Backend created strategy with ID:', backendStrategy.id);
+      console.log('✅ Backend strategy details:', backendStrategy);
+
+      const newJob: PriceMonitoringJob = {
+        id: backendStrategy.id.toString(),
+        type: JobType.PRICE_MONITOR,
+        tradingWalletPublicKey: params.tradingWallet.publicKey,
+        tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+        targetPrice: params.targetPrice,
+        direction: params.direction,
+        percentageToSell: params.percentageToSell,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+      };
+
+      return newJob;
+    } catch (error) {
+      console.error('❌ Error creating price monitor strategy:', error);
+      throw error;
+    }
   }
 
   async createVaultStrategy(params: VaultParams): Promise<VaultStrategy> {

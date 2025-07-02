@@ -562,7 +562,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [jobs, setJobs] = useState<AnyJob[]>([]);
   const [targetPrice, setTargetPrice] = useState(0);
   const [priceDirection, setPriceDirection] = useState<'above' | 'below'>('above');
-  const [sellPercentage, setSellPercentage] = useState<string | number>('');
+  const [sellPercentage, setSellPercentage] = useState<string | number>('5');
   const [jupiterInitialized, setJupiterInitialized] = useState(false);
   const [jupiterError, setJupiterError] = useState<string | null>(null);
   const [vaultPercentage, setVaultPercentage] = useState<string | number>('');
@@ -1639,9 +1639,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
                     const strategyInfo = getStrategyDetails();
 
+                    const uniqueStrategyKey = job.type === JobType.PRICE_MONITOR 
+                      ? `${job.id}_${job.tradingWalletPublicKey}_${(job as PriceMonitoringJob).targetPrice}_${(job as PriceMonitoringJob).direction}_${(job as PriceMonitoringJob).percentageToSell}`
+                      : `${job.id}_${job.tradingWalletPublicKey}_${job.type}`;
+
                     return (
                       <div 
-                        key={`${job.id}_${job.tradingWalletPublicKey}`}
+                        key={uniqueStrategyKey}
                         className={`${walletStyles.strategyBadge} ${isPaused ? walletStyles.strategyBadgePaused : ''}`}
                       >
                         <span role="img" aria-label="Active Strategy" style={{ fontSize: '0.75rem', opacity: isPaused ? 0.7 : 1 }}>
@@ -3888,10 +3892,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           </div>
 
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            {walletJobs.map(job => {
+                            {walletJobs.map((job, index) => {
+                              // Create unique key that includes configuration details
+                              const uniqueKey = job.type === JobType.PRICE_MONITOR 
+                                ? `${job.id}_${job.tradingWalletPublicKey}_${job.type}_${(job as PriceMonitoringJob).targetPrice}_${(job as PriceMonitoringJob).direction}_${(job as PriceMonitoringJob).percentageToSell}`
+                                : `${job.id}_${job.tradingWalletPublicKey}_${job.type}_${index}`;
+                              
                               return (
                                 <div 
-                                  key={job.id}
+                                  key={uniqueKey}
                                   style={{
                                     display: 'flex',
                                     alignItems: 'center',
@@ -4399,7 +4408,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
                         return (
                           <div 
-                            key={job.id} 
+                            key={`${job.id}_${job.type}_saved`} 
                             style={{ 
                               display: 'flex',
                               flexDirection: 'column',
