@@ -18,12 +18,26 @@ router.post('/',
   authMiddleware,
   validateStrategyRequest,
   async (req: AuthenticatedRequest, res) => {
+    console.log('🚀 STRATEGY ROUTE HANDLER - ENTERED');
+    console.log('🚀 STRATEGY ROUTE HANDLER - Method:', req.method);
+    console.log('🚀 STRATEGY ROUTE HANDLER - Body:', req.body);
+    
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'User not authenticated' });
       }
 
       const { trading_wallet_id, strategy_type, config, name } = req.body;
+      
+      // DEBUG: Log the incoming request
+      console.log('🔍 WALLET MONITOR DEBUG - Incoming request:', {
+        trading_wallet_id,
+        strategy_type,
+        config: JSON.stringify(config),
+        name,
+        configKeys: Object.keys(config || {}),
+        walletAddressExists: !!(config && config.walletAddress)
+      });
       
       // Verify trading wallet ownership
       const { data: wallet, error: walletError } = await supabase
@@ -53,6 +67,7 @@ router.post('/',
       const position = walletPosition.findIndex(w => w.id === trading_wallet_id) + 1;
 
       // Check for existing strategies of the same type to handle duplicates intelligently
+      console.log('🔍 Checking for existing strategies...', { trading_wallet_id, strategy_type });
       const { data: existingStrategies, error: existingError } = await supabase
         .from('strategies')
         .select('*')
@@ -64,44 +79,104 @@ router.post('/',
         // Continue anyway, as this is not critical for strategy creation
       }
 
-      // Check if there's an identical strategy (same type + same config)
+      console.log('📊 Found existing strategies:', existingStrategies?.length || 0);
+      existingStrategies?.forEach((strategy, index) => {
+        console.log(`  Strategy ${index + 1}: ID=${strategy.id}, Config=${JSON.stringify(strategy.config)}`);
+      });
+
+      // Special handling for wallet-monitor strategies
+      if (strategy_type === 'wallet-monitor' && config.walletAddress) {
+        console.log('🔍 WALLET MONITOR DEBUG - Detected wallet monitor strategy');
+        console.log('🔍 WALLET MONITOR DEBUG - Looking for existing wallet address:', config.walletAddress);
+        console.log('🔍 WALLET MONITOR DEBUG - Existing strategies count:', existingStrategies?.length || 0);
+        
+        existingStrategies?.forEach((strategy, index) => {
+          console.log(`🔍 WALLET MONITOR DEBUG - Strategy ${index + 1}:`, {
+            id: strategy.id,
+            configWalletAddress: strategy.config?.walletAddress,
+            configPercentage: strategy.config?.percentage,
+            matchesWallet: strategy.config?.walletAddress === config.walletAddress
+          });
+        });
+        
+        // Check if there's already a wallet monitor for the same wallet address
+        const existingWalletMonitor = existingStrategies?.find(strategy => 
+          strategy.config && strategy.config.walletAddress === config.walletAddress
+        );
+
+        console.log('🔍 WALLET MONITOR DEBUG - Existing wallet monitor found:', !!existingWalletMonitor);
+        
+        if (existingWalletMonitor) {
+          console.log('🔄 WALLET MONITOR DEBUG - Found existing wallet monitor for same wallet, updating instead of creating new:', {
+            existingId: existingWalletMonitor.id,
+            oldPercentage: existingWalletMonitor.config.percentage,
+            newPercentage: config.percentage,
+            oldName: existingWalletMonitor.name,
+            newName: name
+          });
+
+          // Update existing strategy instead of creating new one
+          const { data: updatedStrategy, error: updateError } = await supabase
+            .from('strategies')
+            .update({
+              config,
+              name,
+              version: existingWalletMonitor.version + 1,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingWalletMonitor.id)
+            .select()
+            .single();
+
+          if (updateError) {
+            console.error('❌ Error updating existing wallet monitor strategy:', updateError);
+            throw updateError;
+          }
+
+          console.log('✅ Successfully updated existing wallet monitor strategy');
+          return res.json(updatedStrategy);
+        }
+      }
+
+      // Check if there's an identical strategy (same type + same config) for other strategy types
+      console.log('🔍 Looking for identical config:', JSON.stringify(config));
       const identicalStrategy = existingStrategies?.find(strategy => 
         JSON.stringify(strategy.config) === JSON.stringify(config)
       );
 
+      console.log('🎯 Identical strategy found:', identicalStrategy ? `ID=${identicalStrategy.id}` : 'None');
+
       if (identicalStrategy) {
-        // Update the existing identical strategy instead of creating a new one
-        console.log('Found identical strategy, updating instead of creating new one:', identicalStrategy.id);
+        // For non-wallet-monitor strategies with identical config, delete the old one and create new
+        console.log('🗑️ Found identical strategy, deleting old one and creating new:', identicalStrategy.id);
         
-        const { data, error } = await supabase
+        // Delete the old identical strategy first
+        const { error: deleteError } = await supabase
           .from('strategies')
-          .update({
-            name,
-            is_active: true,
-            current_wallet_pubkey: wallet.wallet_pubkey,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', identicalStrategy.id)
-          .select()
-          .single();
+          .delete()
+          .eq('id', identicalStrategy.id);
 
-        if (error) {
-          console.error('Supabase error updating identical strategy:', {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code
-          });
-          throw error;
+        if (deleteError) {
+          console.error('❌ Error deleting old identical strategy:', deleteError);
+          // Continue anyway - we'll create the new one
+        } else {
+          console.log('✅ Successfully deleted old identical strategy');
         }
-
-        console.log('Successfully updated identical strategy with ID:', data.id);
-        res.json(data);
-        return;
+        
+        // Continue to create the new strategy below
+        // (Don't return here, let it fall through to the creation logic)
       }
 
       // Create new strategy - either different type or different config
-      console.log('Creating new strategy (no identical found):', { trading_wallet_id, strategy_type, config });
+      console.log('➕ WALLET MONITOR DEBUG - About to create new strategy (no duplicate prevention triggered)');
+      console.log('➕ WALLET MONITOR DEBUG - Strategy details:', { 
+        trading_wallet_id, 
+        strategy_type, 
+        config: JSON.stringify(config),
+        name,
+        isWalletMonitor: strategy_type === 'wallet-monitor',
+        hasWalletAddress: !!(config && config.walletAddress)
+      });
       
       const insertData = {
         trading_wallet_id,
@@ -117,7 +192,7 @@ router.post('/',
         updated_at: new Date().toISOString()
       };
       
-      console.log('Insert data:', insertData);
+      console.log('📝 Insert data:', JSON.stringify(insertData, null, 2));
       
       const { data, error } = await supabase
         .from('strategies')
