@@ -79,10 +79,16 @@ class StrategyDaemon {
 
   private async loadActiveStrategies(): Promise<void> {
     try {
-      // Get all active strategies from the database
+      // Get all active strategies from the database with trading wallet info
       const { data: strategies, error } = await supabase
         .from('strategies')
-        .select('*')
+        .select(`
+          *,
+          trading_wallets!inner(
+            wallet_pubkey,
+            name
+          )
+        `)
         .eq('is_active', true);
 
       if (error) throw error;
@@ -104,7 +110,13 @@ class StrategyDaemon {
       // Get all strategies that have been updated since last check
       const { data: strategies, error } = await supabase
         .from('strategies')
-        .select('*');
+        .select(`
+          *,
+          trading_wallets!inner(
+            wallet_pubkey,
+            name
+          )
+        `);
 
       if (error) throw error;
 
@@ -147,7 +159,8 @@ class StrategyDaemon {
       console.log(`Starting worker for strategy ${strategy.id}:`, {
         type: strategy.strategy_type,
         trading_wallet_id: strategy.trading_wallet_id,
-        trading_wallet_public_key: strategy.main_wallet_pubkey
+        trading_wallet_public_key: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
+        main_wallet_pubkey: strategy.main_wallet_pubkey
       });
 
       if (!strategy.strategy_type) {
@@ -183,7 +196,7 @@ class StrategyDaemon {
           const job = {
             id: strategy.id,
             type: 'wallet-monitor',
-            tradingWalletPublicKey: strategy.main_wallet_pubkey,
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
             isActive: true,
             createdAt: strategy.created_at,
@@ -207,7 +220,7 @@ class StrategyDaemon {
           const job = {
             id: strategy.id,
             type: 'price-monitor',
-            tradingWalletPublicKey: strategy.main_wallet_pubkey,
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
             isActive: true,
             createdAt: strategy.created_at,
@@ -232,7 +245,7 @@ class StrategyDaemon {
           const job = {
             id: strategy.id,
             type: 'vault',
-            tradingWalletPublicKey: strategy.main_wallet_pubkey,
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
             isActive: true,
             createdAt: strategy.created_at,
@@ -253,7 +266,7 @@ class StrategyDaemon {
           const job = {
             id: strategy.id,
             type: 'levels',
-            tradingWalletPublicKey: strategy.main_wallet_pubkey,
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
             isActive: true,
             createdAt: strategy.created_at,
