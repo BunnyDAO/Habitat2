@@ -37,7 +37,8 @@
     "ioredis": "^5.6.1",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.14.1",
-    "redis": "^4.6.11"
+    "redis": "^4.6.11",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
