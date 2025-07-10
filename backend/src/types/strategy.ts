@@ -22,26 +22,50 @@ export interface StrategyConfig {
   parameters: any;
 }
 
-export interface DCAConfig extends StrategyConfig {
-  type: 'DCA';
+export interface WalletMonitorConfig extends StrategyConfig {
+  type: 'wallet-monitor';
+  parameters: {
+    targetWallet: string;
+    percentage: number;
+    maxAmount?: number;
+    includeTokens?: string[];
+    excludeTokens?: string[];
+  };
+}
+
+export interface PriceMonitorConfig extends StrategyConfig {
+  type: 'price-monitor';
   parameters: {
     tokenMint: string;
+    buyPrice?: number;
+    sellPrice?: number;
     amount: number;
-    interval: number; // in minutes
-    maxPrice?: number;
-    minPrice?: number;
+    stopLoss?: number;
+    takeProfit?: number;
   };
 }
 
-export interface GridConfig extends StrategyConfig {
-  type: 'GRID';
+export interface VaultConfig extends StrategyConfig {
+  type: 'vault';
+  parameters: {
+    percentage: number;
+    minBalance: number;
+    rebalanceFrequency: number; // in hours
+    securityLevel: 'low' | 'medium' | 'high';
+  };
+}
+
+export interface LevelsConfig extends StrategyConfig {
+  type: 'levels';
   parameters: {
     tokenMint: string;
-    upperPrice: number;
-    lowerPrice: number;
-    gridSize: number;
-    amountPerGrid: number;
+    levels: {
+      price: number;
+      amount: number;
+      action: 'buy' | 'sell';
+    }[];
+    resetOnComplete: boolean;
   };
 }
 
-export type AnyStrategyConfig = DCAConfig | GridConfig; 
+export type AnyStrategyConfig = WalletMonitorConfig | PriceMonitorConfig | VaultConfig | LevelsConfig; 

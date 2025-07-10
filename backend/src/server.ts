@@ -24,6 +24,9 @@ import authRouter from './routes/auth.routes';
 import walletTransactionRouter from './routes/wallet-transaction.routes';
 import savedWalletsRouter from './routes/saved-wallets.routes';
 import rpcRouter from './routes/rpc.routes';
+import strategyPublishingRouter from './routes/strategy-publishing.routes';
+import strategyMarketplaceRouter from './routes/strategy-marketplace.routes';
+import strategyReviewsRouter from './routes/strategy-reviews.routes';
 
 // Load environment variables from the correct path
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -79,6 +82,11 @@ export function createApp() {
   app.use('/api/v1/strategies', strategiesRouter);
   app.use('/api/v1/saved-wallets', savedWalletsRouter);
   app.use('/api/v1/wallet-transactions', walletTransactionRouter);
+  
+  // Strategy Publishing and Marketplace routes
+  app.use('/api/strategies', strategyPublishingRouter);
+  app.use('/api/shop', strategyMarketplaceRouter);
+  app.use('/api/shop', strategyReviewsRouter);
 
   // Health check endpoint
   app.get('/health', (req, res) => {

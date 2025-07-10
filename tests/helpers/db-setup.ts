@@ -106,14 +106,33 @@ export class TestDatabaseManager {
     }
 
     try {
-      // Clean up only test data (use test_ prefix for safety)
-      await this.pool.query(`
-        DELETE FROM strategies WHERE id::text LIKE 'test_%' OR name LIKE 'test_%';
-        DELETE FROM trading_wallets WHERE name LIKE 'test_%';
-        DELETE FROM saved_wallets WHERE name LIKE 'test_%';
-      `);
+      // Clean up test data in correct order (foreign key constraints)
+      await this.pool.query(`BEGIN`);
+      
+      // Strategy publishing tables
+      await this.pool.query(`DELETE FROM strategy_reviews WHERE published_strategy_id IN (SELECT id FROM published_strategies WHERE title LIKE 'test_%')`);
+      await this.pool.query(`DELETE FROM strategy_adoptions WHERE published_strategy_id IN (SELECT id FROM published_strategies WHERE title LIKE 'test_%')`);
+      await this.pool.query(`DELETE FROM published_strategies WHERE title LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM strategy_performance_history WHERE strategy_id IN (SELECT id FROM strategies WHERE name LIKE 'test_%')`);
+      await this.pool.query(`DELETE FROM strategy_wallet_requirements WHERE published_strategy_id IN (SELECT id FROM published_strategies WHERE title LIKE 'test_%')`);
+      
+      // Security tables
+      await this.pool.query(`DELETE FROM auth_sessions WHERE wallet_address LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM auth_attempts WHERE wallet_address LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM audit_logs WHERE wallet_address LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM api_rate_limits WHERE identifier LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM security_incidents WHERE wallet_address LIKE 'test_%'`);
+      
+      // Core tables
+      await this.pool.query(`DELETE FROM strategies WHERE name LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM trading_wallets WHERE name LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM saved_wallets WHERE name LIKE 'test_%'`);
+      await this.pool.query(`DELETE FROM users WHERE main_wallet_pubkey LIKE 'test_%'`);
+      
+      await this.pool.query(`COMMIT`);
       console.log('✅ Test data cleaned up successfully');
     } catch (error) {
+      await this.pool.query(`ROLLBACK`);
       console.error('❌ Error cleaning up test data:', error);
       throw error;
     }

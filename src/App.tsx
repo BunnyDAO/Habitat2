@@ -24,6 +24,7 @@ import LackeyImportExport from './components/LackeyImportExport';
 import { Graphs } from './pages/Graphs';
 import { WalletMonitorIcon } from './components/WalletMonitorIcon';
 import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon } from './components/StrategyIcons';
+import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import { WalletButton } from './components/WalletButton';
 import bs58 from 'bs58';
@@ -367,7 +368,7 @@ interface ParsedTokenInfo {
 }
 
 // Navigation type
-type Page = 'dashboard' | 'whale-tracker' | 'graphs';
+type Page = 'dashboard' | 'whale-tracker' | 'graphs' | 'marketplace';
 
 // Whale Tracker Component
 const WhaleTrackerPage: React.FC<{ onRpcError: () => void; currentEndpoint: string }> = ({ onRpcError, currentEndpoint }) => {
@@ -456,6 +457,12 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
           >
             Graphs
           </button>
+          <button
+            onClick={() => onPageChange('marketplace')}
+          className={`${navigationStyles.navButton} ${currentPage === 'marketplace' ? navigationStyles.navButtonActive : ''}`}
+          >
+            Marketplace
+          </button>
         </nav>
 
       <div className={navigationStyles.rightSection}>
@@ -513,6 +520,15 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
             className={`${navigationStyles.mobileNavButton} ${currentPage === 'graphs' ? navigationStyles.navButtonActive : ''}`}
           >
             Graphs
+          </button>
+          <button
+            onClick={() => {
+              onPageChange('marketplace');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`${navigationStyles.mobileNavButton} ${currentPage === 'marketplace' ? navigationStyles.navButtonActive : ''}`}
+          >
+            Marketplace
           </button>
         </div>
       )}
@@ -5205,6 +5221,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               />
             </div>
           </div>
+        </div>
+      ) : currentPage === 'marketplace' ? (
+        <div style={{
+          backgroundColor: '#0f172a',
+          minHeight: '100vh',
+          margin: 0,
+          boxSizing: 'border-box',
+          isolation: 'isolate',
+          position: 'relative',
+          zIndex: 1
+        }}>
+          <StrategyMarketplace userWallet={wallet.publicKey?.toString()} />
         </div>
       ) : null}
 

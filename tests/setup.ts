@@ -1,10 +1,16 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import dotenv from 'dotenv';
 import path from 'path';
+import { Pool } from 'pg';
+import { TestDatabaseManager } from './helpers/db-setup';
 
 // Load test environment variables
 dotenv.config({ path: path.resolve(__dirname, '../backend/.env.test') });
+
+// Global test database manager
+let testDbManager: TestDatabaseManager;
+let testDb: Pool;
 
 // Mock environment variables
 vi.stubEnv('NODE_ENV', 'test');
@@ -49,7 +55,46 @@ global.console = {
   error: vi.fn(),
 };
 
+beforeAll(async () => {
+  console.log('🧪 Setting up test environment...');
+  
+  // Initialize test database
+  testDbManager = new TestDatabaseManager();
+  testDb = await testDbManager.setupTestDatabase();
+  
+  // Make test database available globally
+  (global as any).testDb = testDb;
+  
+  console.log('✅ Test environment ready');
+});
+
+afterAll(async () => {
+  console.log('🧹 Cleaning up test environment...');
+  
+  if (testDbManager) {
+    await testDbManager.cleanupTestData();
+  }
+  
+  if (testDb) {
+    await testDb.end();
+  }
+  
+  console.log('✅ Test cleanup complete');
+});
+
+beforeEach(async () => {
+  // Clean test data before each test
+  if (testDbManager) {
+    await testDbManager.cleanupTestData();
+  }
+});
+
 // Cleanup after each test
-afterEach(() => {
+afterEach(async () => {
+  // Clean test data after each test
+  if (testDbManager) {
+    await testDbManager.cleanupTestData();
+  }
+  
   vi.clearAllMocks();
 });
