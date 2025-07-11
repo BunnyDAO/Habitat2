@@ -40,11 +40,14 @@ class StrategyDaemon {
     try {
       // Initial load of all active strategies
       await this.loadActiveStrategies();
+      console.log('Initial strategy loading completed, starting polling loop...');
 
       // Start polling for changes
       while (this.isRunning) {
         try {
+          console.log('Checking for strategy updates...');
           await this.checkForStrategyUpdates();
+          console.log(`Next check in ${POLL_INTERVAL/1000} seconds`);
           await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
         } catch (error) {
           console.error('Error in daemon loop:', error);
@@ -97,12 +100,21 @@ class StrategyDaemon {
 
       // Start workers for each strategy
       for (const strategy of strategies as Record<string, any>[]) {
-        await this.startWorkerForStrategy(strategy);
+        try {
+          await this.startWorkerForStrategy(strategy);
+        } catch (error) {
+          console.error(`Failed to start worker for strategy ${strategy.id}:`, error);
+          // Continue with other strategies
+        }
       }
+      
+      console.log(`Successfully loaded ${strategies.length} strategies, ${this.workers.size} workers started`);
     } catch (error) {
       console.error('Error loading active strategies:', error);
       throw error;
     }
+    
+    console.log('loadActiveStrategies completed, returning to main start() method...');
   }
 
   private async checkForStrategyUpdates(): Promise<void> {
@@ -119,6 +131,8 @@ class StrategyDaemon {
         `);
 
       if (error) throw error;
+      
+      console.log(`Found ${strategies.length} total strategies in database`);
 
       for (const strategy of strategies) {
         const existingWorker = this.workers.get(strategy.id);
@@ -126,12 +140,19 @@ class StrategyDaemon {
         if (strategy.is_active) {
           if (!existingWorker) {
             // New active strategy, start worker
-            await this.startWorkerForStrategy(strategy as Record<string, any>);
+            console.log(`Found new active strategy ${strategy.id}, starting worker...`);
+            try {
+              await this.startWorkerForStrategy(strategy as Record<string, any>);
+            } catch (error) {
+              console.error(`Failed to start worker for new strategy ${strategy.id}:`, error);
+              // Continue with other strategies
+            }
           }
           // Note: We don't update existing workers as they should be stateless
           // If a strategy needs to be updated, it should be stopped and restarted
         } else if (existingWorker) {
           // Strategy is no longer active, stop worker
+          console.log(`Strategy ${strategy.id} is no longer active, stopping worker...`);
           await existingWorker.stop();
           this.workers.delete(strategy.id);
           console.log(`Stopped worker for strategy ${strategy.id}`);
@@ -176,18 +197,30 @@ class StrategyDaemon {
         .single();
 
       if (walletError || !walletData) {
-        console.error(`Skipping strategy ${strategy.id}: Could not find encrypted key (session_key_encrypted, wallet_keys_encrypted) for trading wallet ${strategy.trading_wallet_id}`);
+        console.error(`Skipping strategy ${strategy.id}: Could not find encrypted key (session_key_encrypted, wallet_keys_encrypted) for trading wallet ${strategy.trading_wallet_id}. Error:`, walletError);
         return; // Skip this strategy
       }
+      
+      console.log(`Found encrypted keys for strategy ${strategy.id}, attempting decryption...`);
 
       // Use the encryption service to decrypt the keys
-      const secretKeyString = await this.encryptionService.getWalletPrivateKey(strategy.trading_wallet_id);
+      let secretKeyString;
+      try {
+        secretKeyString = await this.encryptionService.getWalletPrivateKey(strategy.trading_wallet_id);
+        console.log(`Successfully decrypted keys for strategy ${strategy.id}`);
+      } catch (decryptError) {
+        console.error(`Failed to decrypt keys for strategy ${strategy.id}:`, decryptError);
+        return;
+      }
+      
       const secretKey = Uint8Array.from(Buffer.from(secretKeyString, 'base64'));
 
       if (!secretKey || secretKey.length !== 64) {
         console.error(`Error: Invalid secret key for strategy ${strategy.id}. Expected 64 bytes, got ${secretKey ? secretKey.length : 0}`);
         return;
       }
+      
+      console.log(`Secret key validation passed for strategy ${strategy.id}`)
 
       let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker;
 
@@ -217,6 +250,13 @@ class StrategyDaemon {
           break;
         }
         case 'price-monitor': {
+          console.log(`Price Monitor strategy ${strategy.id} config:`, JSON.stringify(strategy.config, null, 2));
+          
+          if (!strategy.config?.targetPrice || !strategy.config?.direction || !strategy.config?.percentageToSell) {
+            console.error(`Skipping strategy ${strategy.id}: Missing required config - targetPrice: ${strategy.config?.targetPrice}, direction: ${strategy.config?.direction}, percentageToSell: ${strategy.config?.percentageToSell}`);
+            return;
+          }
+          
           const job = {
             id: strategy.id,
             type: 'price-monitor',
@@ -314,6 +354,17 @@ process.on('SIGTERM', async () => {
   console.log('Received SIGTERM signal');
   await daemon.stop();
   process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // Start the daemon

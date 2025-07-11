@@ -9,9 +9,12 @@ import {
   Connection
 } from '@solana/web3.js';
 
-const JUPITER_API_BASE = 'https://api.jup.ag/swap/v1';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+// Jupiter Lite API Configuration
+const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
+const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
 
 // Helper function to convert instruction fields to TransactionInstruction
 const convertInstruction = (instr: {
@@ -124,9 +127,17 @@ export class PriceMonitorWorker extends BaseWorker {
     if (this.isRunning) return;
 
     try {
-      // Start price monitoring
+      console.log(`PriceMonitorWorker starting for strategy ${this.job.id}`);
+      console.log(`Target: ${this.direction} $${this.targetPrice}, Percentage: ${this.percentageToSell}%`);
+      
+      // Start price monitoring (don't await - let it run in background)
       this.isRunning = true;
-      await this.monitorPrice();
+      this.monitorPrice().catch(error => {
+        console.error(`Fatal error in price monitoring for strategy ${this.job.id}:`, error);
+        this.isRunning = false;
+      });
+      
+      console.log(`PriceMonitorWorker started successfully for strategy ${this.job.id}`);
     } catch (error) {
       console.error('Error starting price monitor:', error);
       throw error;
@@ -141,10 +152,19 @@ export class PriceMonitorWorker extends BaseWorker {
   private async monitorPrice(): Promise<void> {
     while (this.isRunning) {
       try {
-        // Get current SOL price from Jupiter API
-        const response = await fetch(`${JUPITER_API_BASE}/price?ids=SOL`);
+        // Get current SOL price from CoinGecko API  
+        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd`);
+        if (!response.ok) {
+          throw new Error(`Price API returned ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
-        const currentPrice = data.SOL;
+        const currentPrice = data.solana?.usd;
+        
+        if (!currentPrice || typeof currentPrice !== 'number') {
+          throw new Error(`Invalid price data received: ${JSON.stringify(data)}`);
+        }
+        
+        console.log(`Current SOL price: $${currentPrice}, Target: ${this.direction} $${this.targetPrice}`);
 
         const shouldTrigger = this.direction === 'above' 
           ? currentPrice >= this.targetPrice
@@ -202,15 +222,16 @@ export class PriceMonitorWorker extends BaseWorker {
 
       console.log(`Executing trade for ${amountToSwap} SOL at $${currentPrice}`);
 
-      // Try direct route first
+      // Get quote from Jupiter Lite API with platform fee
+      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
       let quoteResponse = await fetch(
-        `${JUPITER_API_BASE}/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50&onlyDirectRoutes=true`
+        `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50&platformFeeBps=${platformFeeBps}&onlyDirectRoutes=true`
       );
 
       // If direct route fails, try without restrictions
       if (!quoteResponse.ok) {
         quoteResponse = await fetch(
-          `${JUPITER_API_BASE}/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50`
+          `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50&platformFeeBps=${platformFeeBps}`
         );
       }
 
@@ -220,14 +241,16 @@ export class PriceMonitorWorker extends BaseWorker {
 
       const quote = await quoteResponse.json();
 
-      // Get transaction data
-      const swapResponse = await fetch(`${JUPITER_API_BASE}/swap`, {
+      // Get transaction data from Jupiter Lite API with fee account
+      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
+      const swapResponse = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          route: quote,
+          quoteResponse: quote,
           userPublicKey: this.tradingWalletPublicKey,
-          wrapUnwrapSOL: true
+          wrapAndUnwrapSol: true,
+          feeAccount: feeAccount
         })
       });
 

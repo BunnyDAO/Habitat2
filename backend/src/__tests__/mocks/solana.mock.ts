@@ -13,12 +13,12 @@ export class MockConnection {
   }
 
   // Mock methods
-  getBalance = jest.fn().mockResolvedValue(1000000000); // 1 SOL in lamports
-  getTokenAccountBalance = jest.fn().mockResolvedValue({
+  getBalance = jest.fn<any, any>().mockResolvedValue(1000000000); // 1 SOL in lamports
+  getTokenAccountBalance = jest.fn<any, any>().mockResolvedValue({
     value: { amount: '1000000', decimals: 6, uiAmount: 1.0 }
   });
   
-  getAccountInfo = jest.fn().mockResolvedValue({
+  getAccountInfo = jest.fn<any, any>().mockResolvedValue({
     data: Buffer.from('mock-account-data'),
     lamports: 1000000000,
     owner: new PublicKey('11111111111111111111111111111111'),
@@ -26,7 +26,7 @@ export class MockConnection {
     rentEpoch: 0
   });
 
-  onLogs = jest.fn().mockImplementation((address: PublicKey, callback: Function) => {
+  onLogs = jest.fn<any, any>().mockImplementation((address: PublicKey, callback: Function) => {
     // Mock subscription - returns mock subscription ID
     const subscriptionId = Math.floor(Math.random() * 1000000);
     
@@ -42,18 +42,18 @@ export class MockConnection {
     return subscriptionId;
   });
 
-  removeOnLogsListener = jest.fn().mockResolvedValue(true);
+  removeOnLogsListener = jest.fn<any, any>().mockResolvedValue(true);
   
-  sendTransaction = jest.fn().mockResolvedValue('mock-transaction-signature');
-  confirmTransaction = jest.fn().mockResolvedValue({ value: { err: null } });
+  sendTransaction = jest.fn<any, any>().mockResolvedValue('mock-transaction-signature');
+  confirmTransaction = jest.fn<any, any>().mockResolvedValue({ value: { err: null } });
   
-  getLatestBlockhash = jest.fn().mockResolvedValue({
+  getLatestBlockhash = jest.fn<any, any>().mockResolvedValue({
     blockhash: 'mock-blockhash-' + Date.now(),
     lastValidBlockHeight: 1000000
   });
 
-  getTransaction = jest.fn().mockResolvedValue(null);
-  getParsedTokenAccountsByOwner = jest.fn().mockResolvedValue({ value: [] });
+  getTransaction = jest.fn<any, any>().mockResolvedValue(null);
+  getParsedTokenAccountsByOwner = jest.fn<any, any>().mockResolvedValue({ value: [] });
 
   // Reset all mocks
   reset() {

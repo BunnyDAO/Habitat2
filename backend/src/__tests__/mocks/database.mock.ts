@@ -48,7 +48,7 @@ export class MockPool {
   }
 
   // Mock query method
-  query = jest.fn<any, [string, any[]?]>().mockImplementation((text: string, params?: any[]) => {
+  query = jest.fn().mockImplementation((text: string, params?: any[]) => {
     // Simulate different queries based on SQL text
     if (text.includes('SELECT * FROM strategies')) {
       return Promise.resolve({
@@ -93,14 +93,14 @@ export class MockPool {
   });
 
   // Mock connect method
-  connect = jest.fn<any, []>().mockResolvedValue({
+  connect = jest.fn().mockResolvedValue({
     query: this.query,
     release: jest.fn(),
     client: 'mock-client'
   });
 
   // Mock end method
-  end = jest.fn<any, []>().mockResolvedValue(undefined);
+  end = jest.fn().mockResolvedValue(undefined);
 
   // Reset all mocks
   reset = () => {
@@ -151,13 +151,13 @@ export class MockSupabaseClient {
     return MockSupabaseClient.instance;
   }
 
-  from = jest.fn<any, any>().mockReturnThis();
-  select = jest.fn<any, any>().mockReturnThis();
-  insert = jest.fn<any, any>().mockReturnThis();
-  update = jest.fn<any, any>().mockReturnThis();
-  delete = jest.fn<any, any>().mockReturnThis();
-  eq = jest.fn<any, any>().mockReturnThis();
-  single = jest.fn<any, any>().mockResolvedValue({ data: mockStrategy, error: null });
+  from = jest.fn().mockReturnThis();
+  select = jest.fn().mockReturnThis();
+  insert = jest.fn().mockReturnThis();
+  update = jest.fn().mockReturnThis();
+  delete = jest.fn().mockReturnThis();
+  eq = jest.fn().mockReturnThis();
+  single = jest.fn().mockResolvedValue({ data: mockStrategy, error: null });
   
   reset = () => {
     this.from.mockReset().mockReturnThis();

@@ -64,13 +64,13 @@ export class MockJupiterAPI {
   }
 
   // Mock quote endpoint
-  getQuote = jest.fn<any, any>().mockResolvedValue(mockJupiterQuoteResponse);
+  getQuote = jest.fn().mockResolvedValue(mockJupiterQuoteResponse);
   
   // Mock swap endpoint
-  getSwapTransaction = jest.fn<any, any>().mockResolvedValue(mockJupiterSwapResponse);
+  getSwapTransaction = jest.fn().mockResolvedValue(mockJupiterSwapResponse);
   
   // Mock price endpoint
-  getPrice = jest.fn<any, any>().mockResolvedValue(mockJupiterPriceResponse);
+  getPrice = jest.fn().mockResolvedValue(mockJupiterPriceResponse);
   
   // Mock error scenarios
   simulateQuoteError = () => {
@@ -106,7 +106,7 @@ export class MockJupiterAPI {
 export const mockJupiterAxios = () => {
   const mockAxios = axios as any;
   
-  mockAxios.get = jest.fn<any, any>().mockImplementation((url: string) => {
+  mockAxios.get = jest.fn().mockImplementation((url: string) => {
     if (url.includes('/quote')) {
       return Promise.resolve(mockJupiterQuoteResponse);
     }
@@ -116,7 +116,7 @@ export const mockJupiterAxios = () => {
     return Promise.reject(new Error('Unknown Jupiter endpoint'));
   });
   
-  mockAxios.post = jest.fn<any, any>().mockImplementation((url: string) => {
+  mockAxios.post = jest.fn().mockImplementation((url: string) => {
     if (url.includes('/swap')) {
       return Promise.resolve(mockJupiterSwapResponse);
     }

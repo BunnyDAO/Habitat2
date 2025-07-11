@@ -1,10 +1,15 @@
-import { PublicKey, Keypair } from '@solana/web3.js';
+import { PublicKey, Keypair, Transaction, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import { BaseWorker } from './BaseWorker';
 import { WalletMonitoringJob } from '../types/jobs';
 import { createRateLimitedConnection } from '../utils/connection';
 import { API_CONFIG } from '../config/api';
 
 const MAX_RECENT_TRANSACTIONS = 50;
+
+// Jupiter Lite API Configuration
+const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
+const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
 
 export class WalletMonitorWorker extends BaseWorker {
   private subscription: number | undefined;
@@ -210,15 +215,51 @@ export class WalletMonitorWorker extends BaseWorker {
       // Extract trade details from transaction
       const preTokenBalances = meta.preTokenBalances || [];
       const postTokenBalances = meta.postTokenBalances || [];
+      const preBalances = meta.preBalances || [];
+      const postBalances = meta.postBalances || [];
       
       console.log('[Mirror] Wallet being monitored:', this.walletPubkey.toString());
       console.log('[Mirror] Trading wallet:', this.tradingWallet.toString());
       console.log('[Mirror] Pre-token balances:', preTokenBalances);
       console.log('[Mirror] Post-token balances:', postTokenBalances);
+      console.log('[Mirror] Pre-balances (SOL):', preBalances);
+      console.log('[Mirror] Post-balances (SOL):', postBalances);
       
-      // Find the token changes
+      // Find the token changes (including SOL)
       const tokenChanges = new Map<string, { pre: number; post: number }>();
       
+      // Handle account keys based on message type
+      let accountKeys: string[] = [];
+      if ('accountKeys' in message) {
+        // Legacy Message
+        accountKeys = message.accountKeys.map(key => key.toString());
+      } else if ('version' in message && message.staticAccountKeys) {
+        // Versioned Message
+        accountKeys = message.staticAccountKeys.map(key => key.toString());
+      }
+      
+      // Check for SOL balance changes
+      const walletIndex = accountKeys.indexOf(this.walletPubkey.toString());
+      if (walletIndex !== -1 && walletIndex < preBalances.length && walletIndex < postBalances.length) {
+        const preSOLBalance = preBalances[walletIndex] / 1e9; // Convert lamports to SOL
+        const postSOLBalance = postBalances[walletIndex] / 1e9;
+        
+        console.log('[Mirror] SOL balance change detected:', {
+          walletIndex,
+          preSOL: preSOLBalance,
+          postSOL: postSOLBalance,
+          difference: postSOLBalance - preSOLBalance
+        });
+        
+        if (Math.abs(postSOLBalance - preSOLBalance) > 0.001) { // Ignore dust changes
+          tokenChanges.set('So11111111111111111111111111111111111111112', { // SOL mint address
+            pre: preSOLBalance,
+            post: postSOLBalance
+          });
+        }
+      }
+      
+      // Check for SPL token balance changes
       preTokenBalances.forEach(balance => {
         console.log('[Mirror] Checking pre-balance owner:', balance.owner, 'vs monitored wallet:', this.walletPubkey.toString());
         if (balance.owner === this.walletPubkey.toString()) {
@@ -246,7 +287,7 @@ export class WalletMonitorWorker extends BaseWorker {
         }
       });
       
-      console.log('[Mirror] Token changes map:', Array.from(tokenChanges.entries()));
+      console.log('[Mirror] Token changes map (including SOL):', Array.from(tokenChanges.entries()));
 
       // Find input and output tokens
       let inputToken = '';
@@ -265,9 +306,36 @@ export class WalletMonitorWorker extends BaseWorker {
         }
       });
 
+      // Convert amounts to proper scale for Jupiter API
+      let scaledInputAmount = inputAmount;
+      let scaledOutputAmount = outputAmount;
+      
+      // Get proper decimal scaling for each token
+      const inputDecimals = await this.getTokenDecimals(inputToken);
+      const outputDecimals = await this.getTokenDecimals(outputToken);
+      
+      // Scale amounts based on actual token decimals
+      // For SOL: we converted from lamports to SOL, so multiply by 10^9 to get back to lamports
+      // For SPL tokens: balance changes are in UI amount, so multiply by 10^decimals to get raw amount
+      if (inputToken === 'So11111111111111111111111111111111111111112') {
+        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // SOL to lamports
+      } else {
+        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // UI to raw amount
+      }
+      
+      if (outputToken === 'So11111111111111111111111111111111111111112') {
+        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // SOL to lamports
+      } else {
+        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // UI to raw amount
+      }
+      
       // Before calling mirrorSwap, add a log
-      console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}, amount: ${outputAmount}`);
-      await this.mirrorSwap(inputToken, outputToken, outputAmount);
+      console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}`);
+      console.log(`[Mirror] Original amounts - input: ${inputAmount}, output: ${outputAmount}`);
+      console.log(`[Mirror] Token decimals - input: ${inputDecimals}, output: ${outputDecimals}`);
+      console.log(`[Mirror] Scaled amounts - input: ${scaledInputAmount}, output: ${scaledOutputAmount}`);
+      
+      await this.mirrorSwap(inputToken, outputToken, scaledOutputAmount);
       this.updateJobActivity();
 
       return {
@@ -514,9 +582,16 @@ export class WalletMonitorWorker extends BaseWorker {
     };
 
     try {
-      // Get quote
-      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=10`;
-      const quoteResponse = await fetch(API_CONFIG.JUPITER.QUOTE + queryString);
+      // Ensure token accounts exist for both input and output tokens
+      if (this.tradingWalletKeypair) {
+        await this.ensureTokenAccount(inputMint, this.tradingWalletKeypair.publicKey);
+        await this.ensureTokenAccount(outputMint, this.tradingWalletKeypair.publicKey);
+      }
+      
+      // Get quote from Jupiter Lite API with platform fee
+      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
+      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=${platformFeeBps}`;
+      const quoteResponse = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${queryString}`);
 
       if (!quoteResponse.ok) {
         throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
@@ -525,8 +600,9 @@ export class WalletMonitorWorker extends BaseWorker {
       progress.quoteReceived = true;
       const quote = await quoteResponse.json();
 
-      // Execute swap
-      const swapResponse = await fetch(API_CONFIG.JUPITER.SWAP, {
+      // Execute swap via Jupiter Lite API with fee account
+      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
+      const swapResponse = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -534,7 +610,8 @@ export class WalletMonitorWorker extends BaseWorker {
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          feeAccount: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6'
+          wrapAndUnwrapSol: true,
+          feeAccount: feeAccount
         }),
       });
 
@@ -641,12 +718,101 @@ export class WalletMonitorWorker extends BaseWorker {
     return this.monitorMirroringProcess(inputMint, outputMint, amount);
   }
 
+  private async getTokenDecimals(mintAddress: string): Promise<number> {
+    try {
+      // SOL has 9 decimals
+      if (mintAddress === 'So11111111111111111111111111111111111111112') {
+        return 9;
+      }
+
+      // Get token mint info to determine decimals
+      const mint = new PublicKey(mintAddress);
+      const mintInfo = await this.connection.getParsedAccountInfo(mint);
+      
+      if (mintInfo.value && mintInfo.value.data && 'parsed' in mintInfo.value.data) {
+        const parsed = mintInfo.value.data.parsed;
+        if (parsed.info && typeof parsed.info.decimals === 'number') {
+          return parsed.info.decimals;
+        }
+      }
+
+      // Default to 6 decimals if we can't determine
+      console.warn(`[Mirror] Could not determine decimals for token ${mintAddress}, defaulting to 6`);
+      return 6;
+    } catch (error) {
+      console.error(`[Mirror] Error getting token decimals for ${mintAddress}:`, error);
+      return 6; // Default fallback
+    }
+  }
+
+  private async ensureTokenAccount(mintAddress: string, wallet: PublicKey): Promise<PublicKey> {
+    try {
+      // Skip for SOL (native token)
+      if (mintAddress === 'So11111111111111111111111111111111111111112') {
+        return wallet; // SOL uses the wallet's main account
+      }
+
+      const mint = new PublicKey(mintAddress);
+      const associatedTokenAddress = await getAssociatedTokenAddress(
+        mint,
+        wallet,
+        false,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
+
+      // Check if the account already exists
+      const accountInfo = await this.connection.getAccountInfo(associatedTokenAddress);
+      
+      if (!accountInfo) {
+        console.log(`[Mirror] Creating token account for ${mintAddress} on wallet ${wallet.toString()}`);
+        
+        // Create the associated token account
+        const createAccountInstruction = createAssociatedTokenAccountInstruction(
+          wallet, // payer
+          associatedTokenAddress, // associated token account
+          wallet, // owner
+          mint, // mint
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+
+        const transaction = new Transaction().add(createAccountInstruction);
+        const { blockhash } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = wallet;
+
+        if (this.tradingWalletKeypair) {
+          transaction.sign(this.tradingWalletKeypair);
+          const signature = await this.connection.sendTransaction(transaction, [this.tradingWalletKeypair]);
+          await this.connection.confirmTransaction(signature);
+          console.log(`[Mirror] Token account created: ${signature}`);
+        } else {
+          console.error('[Mirror] Cannot create token account: trading wallet keypair not available');
+        }
+      }
+
+      return associatedTokenAddress;
+    } catch (error) {
+      console.error(`[Mirror] Error ensuring token account for ${mintAddress}:`, error);
+      throw error;
+    }
+  }
+
   private async mirrorSwap(inputMint: string, outputMint: string, amount: number): Promise<void> {
     try {
       console.log(`[Mirror] Mirroring swap: ${inputMint} -> ${outputMint}, amount: ${amount}`);
-      // First get a quote from Jupiter
-      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=10`;
-      const quoteResponse = await fetch(API_CONFIG.JUPITER.QUOTE + queryString, {
+      
+      // Ensure token accounts exist for both input and output tokens
+      if (this.tradingWalletKeypair) {
+        await this.ensureTokenAccount(inputMint, this.tradingWalletKeypair.publicKey);
+        await this.ensureTokenAccount(outputMint, this.tradingWalletKeypair.publicKey);
+      }
+      
+      // First get a quote from Jupiter Lite API with platform fee
+      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
+      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=${platformFeeBps}`;
+      const quoteResponse = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${queryString}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -659,8 +825,9 @@ export class WalletMonitorWorker extends BaseWorker {
 
       const quote = await quoteResponse.json();
 
-      // Execute the swap using the quote
-      const response = await fetch(API_CONFIG.JUPITER.SWAP, {
+      // Execute the swap using the quote via Jupiter Lite API with fee account
+      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
+      const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -668,7 +835,8 @@ export class WalletMonitorWorker extends BaseWorker {
         body: JSON.stringify({
           quoteResponse: quote,
           userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          feeAccount: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6'
+          wrapAndUnwrapSol: true,
+          feeAccount: feeAccount
         }),
       });
 

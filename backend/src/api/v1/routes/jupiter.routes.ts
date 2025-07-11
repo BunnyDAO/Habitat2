@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { JupiterController } from '../controllers/jupiter.controller';
-import { JupiterService } from 'services/jupiter.service';
+import { JupiterService } from '../../../services/jupiter.service';
 import { createClient } from 'redis';
 import { Pool } from 'pg';
 import { Connection } from '@solana/web3.js';

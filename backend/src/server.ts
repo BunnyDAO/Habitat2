@@ -19,6 +19,7 @@ import { createWhaleTrackingRouter } from './api/v1/routes/whale-tracking.routes
 import { createProxyRouter } from './api/v1/routes/proxy.routes';
 import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
 import { createSwapRouter } from './api/v1/routes/swap.routes';
+import { createJupiterRouter } from './api/v1/routes/jupiter.routes';
 import strategiesRouter from './routes/strategies.routes';
 import authRouter from './routes/auth.routes';
 import walletTransactionRouter from './routes/wallet-transaction.routes';
@@ -77,6 +78,7 @@ export function createApp() {
   app.use('/api/v1/trading-wallets', createTradingWalletsRouter());
   app.use('/api/v1/wallet-balances', createWalletBalancesRouter(pool));
   app.use('/api/v1/tokens', createTokenRouter(tokenService));
+  app.use('/api/v1/jupiter', createJupiterRouter(pool, redisClient));
   app.use('/api/v1', healthRoutes);
   app.use('/api/v1', createPriceFeedRouter(redisClient, heliusService));
   app.use('/api/v1/strategies', strategiesRouter);
