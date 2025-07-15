@@ -1736,6 +1736,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               isActive={job.isActive && !pausedJobs.has(job.id)}
                               onClick={() => toggleJobPause(job.id)}
                             />
+                          ) : job.type === JobType.PAIR_TRADE ? (
+                            <PairTradeIcon
+                              isActive={job.isActive && !pausedJobs.has(job.id)}
+                              onClick={() => toggleJobPause(job.id)}
+                            />
                           ) : '❓'}
                         </span>
                         {job.profitTracking && (
@@ -4212,6 +4217,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                             ? `${(job as VaultStrategy).vaultPercentage}%`
                                           : job.type === JobType.LEVELS
                                             ? (job as LevelsStrategy).levels.map(level => `$${level.price}: ${level.percentage}%`).join(' | ')
+                                          : job.type === JobType.PAIR_TRADE
+                                            ? `${(job as PairTradeJob).tokenASymbol} ↔ ${(job as PairTradeJob).tokenBSymbol} (${(job as PairTradeJob).allocationPercentage}%)`
                                             : 'Unknown'}
                                       </span>
                                       {job.profitTracking?.currentProfit !== undefined && (
