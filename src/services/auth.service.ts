@@ -81,6 +81,10 @@ export class AuthService {
   isAuthenticated(): boolean {
     return !!localStorage.getItem('auth.token');
   }
+
+  getToken(): string | null {
+    return localStorage.getItem('auth.token');
+  }
 }
 
 export const authService = AuthService.getInstance(); 

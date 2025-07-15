@@ -16,7 +16,7 @@
     "update-tokens": "ts-node src/scripts/update-token-data.ts",
     "update-prices": "ts-node src/scripts/update-token-prices.ts",
     "run-schema": "ts-node src/scripts/run-schema.ts",
-    "populate-common-tokens": "ts-node src/scripts/populate-common-tokens.ts",
+    "initialize-tokens": "ts-node src/scripts/initialize-tokens.ts",
     "start:strategy-executor": "ts-node src/scripts/run-strategy-executor.ts",
     "start:strategy-migration": "ts-node src/scripts/run-strategy-migration.ts",
     "check-strategies": "ts-node src/scripts/check-strategies.ts",

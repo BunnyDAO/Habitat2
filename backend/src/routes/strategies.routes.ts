@@ -1,13 +1,16 @@
 import { Router } from 'express';
+import { Pool } from 'pg';
+import { createClient } from 'redis';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { rateLimitMiddleware } from '../middleware/rate-limit.middleware';
 import { validateStrategyRequest } from '../middleware/validation.middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
-const router = Router();
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
+export function createStrategiesRouter(pool: Pool, redisClient: ReturnType<typeof createClient> | null) {
+  const router = Router();
+  const supabase = createSupabaseClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!
 );
 
 // Apply rate limiting to all strategy routes
@@ -695,4 +698,196 @@ router.post('/import/:id',
   }
 );
 
-export default router; 
+// Get supported tokens for pair trading
+router.get('/tokens/supported',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      console.log('🪙 GET /tokens/supported - Starting request');
+      if (!req.user) {
+        console.log('❌ User not authenticated');
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      console.log('✅ User authenticated:', req.user.main_wallet_pubkey);
+
+      // Import TokenService here to avoid circular dependency
+      const { TokenService } = await import('../services/TokenService');
+      const tokenService = new TokenService(pool, redisClient);
+
+      console.log('🪙 TokenService created, calling getSupportedTokens()');
+      const tokens = await tokenService.getSupportedTokens();
+      console.log('🪙 Got tokens from service:', tokens.length, 'tokens');
+      console.log('🪙 Token details:', tokens.map(t => ({ 
+        symbol: t.symbol, 
+        isActive: t.isActive, 
+        mintAddress: t.mintAddress.slice(0, 10) + '...' 
+      })));
+      
+      const activeTokens = tokens.filter(t => t.isActive);
+      console.log('🪙 Active tokens only:', activeTokens.length, 'tokens');
+      
+      res.json(tokens);
+    } catch (error) {
+      console.error('❌ Error fetching supported tokens:', error);
+      res.status(500).json({ error: 'Failed to fetch supported tokens' });
+    }
+  }
+);
+
+// Get tokens grouped by category
+router.get('/tokens/categories',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      // Import TokenService here to avoid circular dependency
+      const { TokenService } = await import('../services/TokenService');
+      const tokenService = new TokenService(pool, redisClient);
+
+      const grouped = await tokenService.getTokensGroupedByCategory();
+      res.json(grouped);
+    } catch (error) {
+      console.error('Error fetching token categories:', error);
+      res.status(500).json({ error: 'Failed to fetch token categories' });
+    }
+  }
+);
+
+// Execute pair trade swap
+router.post('/:id/pair-trade/swap',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+      const { trigger = 'manual' } = req.body;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'pair-trade')
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Pair trade strategy not found or access denied' });
+      }
+
+      // Get the strategy daemon to execute the swap
+      // For now, return a placeholder response
+      // TODO: Implement actual swap execution through strategy daemon
+      res.json({ 
+        success: true,
+        message: 'Swap triggered successfully',
+        trigger,
+        strategy_id: id
+      });
+    } catch (error) {
+      console.error('Error executing pair trade swap:', error);
+      res.status(500).json({ error: 'Failed to execute pair trade swap' });
+    }
+  }
+);
+
+// Get pair trade status
+router.get('/:id/pair-trade/status',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select(`
+          *,
+          trading_wallets!inner(
+            id,
+            wallet_pubkey,
+            name
+          )
+        `)
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'pair-trade')
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Pair trade strategy not found or access denied' });
+      }
+
+      // Get current status from the strategy daemon
+      // For now, return a placeholder response based on strategy config
+      // TODO: Implement actual status retrieval from strategy daemon
+      const config = strategy.config;
+      
+      res.json({
+        strategy_id: id,
+        token_a_symbol: config.tokenASymbol,
+        token_b_symbol: config.tokenBSymbol,
+        current_token: config.currentToken,
+        current_token_symbol: config.currentToken === 'A' ? config.tokenASymbol : config.tokenBSymbol,
+        allocation_percentage: config.allocationPercentage,
+        max_slippage: config.maxSlippage,
+        auto_rebalance: config.autoRebalance,
+        is_active: strategy.is_active,
+        last_swap_timestamp: null, // TODO: Get from swap history
+        swap_count: 0, // TODO: Get from swap history
+        current_balance: 0, // TODO: Get from worker
+        balance_usd: 0, // TODO: Calculate USD value
+        is_processing_swap: false // TODO: Get from worker
+      });
+    } catch (error) {
+      console.error('Error fetching pair trade status:', error);
+      res.status(500).json({ error: 'Failed to fetch pair trade status' });
+    }
+  }
+);
+
+// Validate token pair
+router.post('/tokens/validate-pair',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { tokenAMint, tokenBMint } = req.body;
+
+      if (!tokenAMint || !tokenBMint) {
+        return res.status(400).json({ error: 'Both tokenAMint and tokenBMint are required' });
+      }
+
+      // Import TokenService here to avoid circular dependency
+      const { TokenService } = await import('../services/TokenService');
+      const tokenService = new TokenService(pool, redisClient);
+
+      const validation = tokenService.validateTokenPair(tokenAMint, tokenBMint);
+      res.json(validation);
+    } catch (error) {
+      console.error('Error validating token pair:', error);
+      res.status(500).json({ error: 'Failed to validate token pair' });
+    }
+  }
+);
+
+  return router;
+}
+
+// For backward compatibility, export a default router
+// This should be removed once all imports are updated
+export default createStrategiesRouter; 

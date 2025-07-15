@@ -92,7 +92,7 @@ export class WalletBalancesService {
     try {
       const result = await this.pool.query(query, [walletAddress]);
       
-      console.log('Raw database results:', result.rows);
+      //console.log('Raw database results:', result.rows);
       
       const balances: TokenBalance[] = result.rows.map(row => {
         const balance = {
@@ -104,7 +104,7 @@ export class WalletBalancesService {
           name: row.name,
           symbol: row.symbol
         };
-        console.log(`Processed balance for ${row.symbol}:`, balance);
+        //console.log(`Processed balance for ${row.symbol}:`, balance);
         return balance;
       });
 

@@ -225,7 +225,7 @@ export class WalletMonitorWorker extends BaseWorker {
       console.log('[Mirror] Pre-balances (SOL):', preBalances);
       console.log('[Mirror] Post-balances (SOL):', postBalances);
       
-      // Find the token changes (including SOL)
+      // Find the token changes (including wrapped SOL)
       const tokenChanges = new Map<string, { pre: number; post: number }>();
       
       // Handle account keys based on message type
@@ -233,41 +233,83 @@ export class WalletMonitorWorker extends BaseWorker {
       if ('accountKeys' in message) {
         // Legacy Message
         accountKeys = message.accountKeys.map(key => key.toString());
+        console.log('[Mirror] Legacy transaction - accountKeys count:', accountKeys.length);
       } else if ('version' in message && message.staticAccountKeys) {
         // Versioned Message
-        accountKeys = message.staticAccountKeys.map(key => key.toString());
+        accountKeys = [...message.staticAccountKeys.map(key => key.toString())];
+        console.log('[Mirror] Versioned transaction - staticAccountKeys count:', message.staticAccountKeys.length);
+        
+        // Also include loaded addresses for versioned transactions
+        if (meta.loadedAddresses) {
+          if (meta.loadedAddresses.readonly) {
+            accountKeys.push(...meta.loadedAddresses.readonly.map(key => key.toString()));
+            console.log('[Mirror] Added readonly loaded addresses:', meta.loadedAddresses.readonly.length);
+          }
+          if (meta.loadedAddresses.writable) {
+            accountKeys.push(...meta.loadedAddresses.writable.map(key => key.toString()));
+            console.log('[Mirror] Added writable loaded addresses:', meta.loadedAddresses.writable.length);
+          }
+        }
+        console.log('[Mirror] Total accountKeys after including loaded addresses:', accountKeys.length);
       }
       
-      // Check for SOL balance changes
+      console.log('[Mirror] Looking for monitored wallet:', this.walletPubkey.toString());
+      console.log('[Mirror] Account keys:', accountKeys.slice(0, 10), accountKeys.length > 10 ? '...' : '');
+      console.log('[Mirror] preBalances length:', preBalances.length);
+      console.log('[Mirror] postBalances length:', postBalances.length);
+      
+      // Check for native SOL balance changes
       const walletIndex = accountKeys.indexOf(this.walletPubkey.toString());
+      console.log('[Mirror] Wallet index in accountKeys:', walletIndex);
+      
       if (walletIndex !== -1 && walletIndex < preBalances.length && walletIndex < postBalances.length) {
         const preSOLBalance = preBalances[walletIndex] / 1e9; // Convert lamports to SOL
         const postSOLBalance = postBalances[walletIndex] / 1e9;
         
-        console.log('[Mirror] SOL balance change detected:', {
+        console.log('[Mirror] Native SOL balance change detected:', {
           walletIndex,
           preSOL: preSOLBalance,
           postSOL: postSOLBalance,
-          difference: postSOLBalance - preSOLBalance
+          difference: postSOLBalance - preSOLBalance,
+          absoluteDifference: Math.abs(postSOLBalance - preSOLBalance)
         });
         
-        if (Math.abs(postSOLBalance - preSOLBalance) > 0.001) { // Ignore dust changes
+        // Only count significant SOL balance changes (not just transaction fees)
+        if (Math.abs(postSOLBalance - preSOLBalance) > 0.0001) { // 0.0001 SOL threshold to capture very small trades
+          console.log('[Mirror] SOL balance change above threshold, adding to tokenChanges');
           tokenChanges.set('So11111111111111111111111111111111111111112', { // SOL mint address
             pre: preSOLBalance,
             post: postSOLBalance
           });
+        } else {
+          console.log('[Mirror] SOL balance change below threshold (0.002), ignoring');
         }
+      } else {
+        console.log('[Mirror] Monitored wallet not found in account keys or balance arrays');
+        console.log('[Mirror] walletIndex:', walletIndex);
+        console.log('[Mirror] preBalances.length:', preBalances.length);
+        console.log('[Mirror] postBalances.length:', postBalances.length);
       }
       
-      // Check for SPL token balance changes
+      // Check for SPL token balance changes (including wrapped SOL)
       preTokenBalances.forEach(balance => {
         console.log('[Mirror] Checking pre-balance owner:', balance.owner, 'vs monitored wallet:', this.walletPubkey.toString());
         if (balance.owner === this.walletPubkey.toString()) {
           console.log('[Mirror] Found pre-balance for monitored wallet:', balance);
-          tokenChanges.set(balance.mint, {
-            pre: Number(balance.uiTokenAmount.uiAmount),
-            post: 0
-          });
+          
+          // For wrapped SOL, check if there's already a native SOL entry and replace it
+          if (balance.mint === 'So11111111111111111111111111111111111111112') {
+            console.log('[Mirror] Found wrapped SOL pre-balance:', balance.uiTokenAmount.uiAmount);
+            tokenChanges.set(balance.mint, {
+              pre: Number(balance.uiTokenAmount.uiAmount),
+              post: 0
+            });
+          } else {
+            tokenChanges.set(balance.mint, {
+              pre: Number(balance.uiTokenAmount.uiAmount),
+              post: 0
+            });
+          }
         }
       });
 
@@ -275,6 +317,7 @@ export class WalletMonitorWorker extends BaseWorker {
         console.log('[Mirror] Checking post-balance owner:', balance.owner, 'vs monitored wallet:', this.walletPubkey.toString());
         if (balance.owner === this.walletPubkey.toString()) {
           console.log('[Mirror] Found post-balance for monitored wallet:', balance);
+          
           const existing = tokenChanges.get(balance.mint);
           if (existing) {
             existing.post = Number(balance.uiTokenAmount.uiAmount);
@@ -283,6 +326,11 @@ export class WalletMonitorWorker extends BaseWorker {
               pre: 0,
               post: Number(balance.uiTokenAmount.uiAmount)
             });
+          }
+          
+          // For wrapped SOL, add special logging
+          if (balance.mint === 'So11111111111111111111111111111111111111112') {
+            console.log('[Mirror] Found wrapped SOL post-balance:', balance.uiTokenAmount.uiAmount);
           }
         }
       });
@@ -297,14 +345,20 @@ export class WalletMonitorWorker extends BaseWorker {
 
       tokenChanges.forEach((change, mint) => {
         const difference = change.post - change.pre;
+        console.log(`[Mirror] Token ${mint} change: ${change.pre} -> ${change.post} (diff: ${difference})`);
+        
         if (difference < 0) {
           inputToken = mint;
           inputAmount = Math.abs(difference);
+          console.log(`[Mirror] Found input token: ${mint}, amount: ${inputAmount}`);
         } else if (difference > 0) {
           outputToken = mint;
           outputAmount = difference;
+          console.log(`[Mirror] Found output token: ${mint}, amount: ${outputAmount}`);
         }
       });
+
+      console.log(`[Mirror] Final detection - Input: ${inputToken}, Output: ${outputToken}`);
 
       // Convert amounts to proper scale for Jupiter API
       let scaledInputAmount = inputAmount;
@@ -315,16 +369,18 @@ export class WalletMonitorWorker extends BaseWorker {
       const outputDecimals = await this.getTokenDecimals(outputToken);
       
       // Scale amounts based on actual token decimals
-      // For SOL: we converted from lamports to SOL, so multiply by 10^9 to get back to lamports
+      // For wrapped SOL: token balances are already in UI amount (SOL units), multiply by 10^9 to get lamports
       // For SPL tokens: balance changes are in UI amount, so multiply by 10^decimals to get raw amount
       if (inputToken === 'So11111111111111111111111111111111111111112') {
-        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // SOL to lamports
+        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // Wrapped SOL to lamports
+        console.log('[Mirror] Scaled wrapped SOL input amount:', scaledInputAmount);
       } else {
         scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // UI to raw amount
       }
       
       if (outputToken === 'So11111111111111111111111111111111111111112') {
-        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // SOL to lamports
+        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // Wrapped SOL to lamports
+        console.log('[Mirror] Scaled wrapped SOL output amount:', scaledOutputAmount);
       } else {
         scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // UI to raw amount
       }

@@ -1,13 +1,14 @@
 import { PublicKey } from '@solana/web3.js';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, AnyJob } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, AnyJob } from '../types/jobs';
 import { WalletMonitorWorker } from '../workers/WalletMonitorWorker';
 import { PriceMonitorWorker } from '../workers/PriceMonitorWorker';
 import { VaultWorker } from '../workers/VaultWorker';
 import { LevelsWorker } from '../workers/LevelsWorker';
+import { PairTradeWorker } from '../workers/PairTradeWorker';
 import { PriceFeedService } from '../services/PriceFeedService';
 
 export class JobManager {
-  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker> = new Map();
+  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker> = new Map();
   private endpoint: string;
   private userWallet: PublicKey;
   private priceFeedService: PriceFeedService;
@@ -43,6 +44,9 @@ export class JobManager {
         break;
       case JobType.LEVELS:
         worker = new LevelsWorker(job as LevelsStrategy, this.endpoint);
+        break;
+      case JobType.PAIR_TRADE:
+        worker = new PairTradeWorker(job as PairTradeJob, this.endpoint);
         break;
       default:
         throw new Error(`Unknown job type: ${job.type}`);

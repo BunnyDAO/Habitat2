@@ -8,7 +8,7 @@ import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adap
 import '@solana/wallet-adapter-react-ui/styles.css';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, Transaction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js';
 import { JobManager } from './managers/JobManager';
-import { JobType, WalletMonitoringJob, AnyJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, Level, ensureUint8Array } from './types/jobs';
+import { JobType, WalletMonitoringJob, AnyJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, Level, ensureUint8Array } from './types/jobs';
 import { Buffer } from 'buffer';
 import { PriceFeedService } from './services/PriceFeedService';
 import PasswordModal from './components/PasswordModal';
@@ -23,7 +23,7 @@ import DeleteLackeyDialog from './components/DeleteLackeyDialog';
 import LackeyImportExport from './components/LackeyImportExport';
 import { Graphs } from './pages/Graphs';
 import { WalletMonitorIcon } from './components/WalletMonitorIcon';
-import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon } from './components/StrategyIcons';
+import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon, PairTradeIcon } from './components/StrategyIcons';
 import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import { WalletButton } from './components/WalletButton';
@@ -39,6 +39,7 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { API_CONFIG } from './config/api';
 import { strategyApiService } from './services/api/strategy.service';
 import { savedWalletsApi } from './services/api/savedWallets.service';
+import apiClient from './services/api/api-client';
 
 // Initialize token metadata cache
 const tokenMetadataCache = new Map<string, { symbol: string; decimals: number }>();
@@ -600,6 +601,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [levels, setLevels] = useState<Level[]>([]);
   const [newLevelPrice, setNewLevelPrice] = useState(0);
   const [newLevelPercentage, setNewLevelPercentage] = useState<string | number>('');
+  
+  // Add state for pair trade
+  const [pairTokenA, setPairTokenA] = useState('');
+  const [pairTokenB, setPairTokenB] = useState('');
+  const [pairTokenASymbol, setPairTokenASymbol] = useState('');
+  const [pairTokenBSymbol, setPairTokenBSymbol] = useState('');
+  const [pairAllocationPercentage, setPairAllocationPercentage] = useState<string | number>('50');
+  const [pairCurrentToken, setPairCurrentToken] = useState<'A' | 'B'>('A');
+  const [pairMaxSlippage, setPairMaxSlippage] = useState<string | number>('1');
+  const [supportedTokens, setSupportedTokens] = useState<any[]>([]);
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+  
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
@@ -692,6 +705,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     });
   }, []);
 
+  // Load supported tokens on mount
+  useEffect(() => {
+    // Add a small delay to ensure the backend is ready
+    const timer = setTimeout(() => {
+      loadSupportedTokens();
+    }, 1000);
+    
+    return () => clearTimeout(timer);
+  }, []);
+
   // Sync jobs with service worker when they change
   useEffect(() => {
     if (serviceWorkerRef.current?.active && jobs.length > 0) {
@@ -733,13 +756,28 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   }, [wallet.publicKey]);
 
   // Minimal converter for backend strategies
-  const convertBackendStrategyToJob = (strategy: any): AnyJob => {
+  const convertBackendStrategyToJob = async (strategy: any): Promise<AnyJob> => {
+    // For wallet monitor strategies without a name, try to look up from saved wallets
+    let strategyName = strategy.name;
+    if (!strategyName && strategy.strategy_type === JobType.WALLET_MONITOR && strategy.config?.walletAddress) {
+      try {
+        const savedWallets = await savedWalletsApi.getAll(wallet.publicKey!.toString());
+        const foundWallet = savedWallets.find(w => w.wallet_address === strategy.config.walletAddress);
+        if (foundWallet?.name) {
+          strategyName = foundWallet.name;
+          console.log(`Found saved wallet name "${foundWallet.name}" for existing strategy ${strategy.id}`);
+        }
+      } catch (error) {
+        console.log('Could not lookup saved wallet name for existing strategy:', error);
+      }
+    }
+
     const baseJob = {
       id: strategy.id.toString(),
       tradingWalletPublicKey: strategy.wallet_pubkey || strategy.current_wallet_pubkey,
       isActive: strategy.is_active ?? true,
       createdAt: strategy.created_at,
-      name: strategy.name,
+      name: strategyName,
       tradingWalletSecretKey: new Uint8Array(), // Will be loaded separately if needed
       profitTracking: {
         initialBalance: 0,
@@ -878,7 +916,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         return true; // Backend already filters by main_wallet_pubkey
       });
       
-      const convertedStrategies = validStrategies.map(convertBackendStrategyToJob);
+      const convertedStrategies = await Promise.all(validStrategies.map(convertBackendStrategyToJob));
       console.log('✅ Converted', convertedStrategies.length, 'strategies to jobs');
       
       // Convert saved wallets to jobs
@@ -1645,6 +1683,19 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               levelsJob.lastTriggerPrice ? `Last Trigger: $${levelsJob.lastTriggerPrice}` : null
                             ].filter(Boolean)
                           };
+                        case JobType.PAIR_TRADE:
+                          const pairTradeJob = job as PairTradeJob;
+                          return {
+                            title: 'Pair Trade',
+                            details: [
+                              `Pair: ${pairTradeJob.tokenASymbol} ↔ ${pairTradeJob.tokenBSymbol}`,
+                              `Currently: ${pairTradeJob.currentToken === 'A' ? pairTradeJob.tokenASymbol : pairTradeJob.tokenBSymbol}`,
+                              `Allocation: ${pairTradeJob.allocationPercentage}%`,
+                              `Max Slippage: ${pairTradeJob.maxSlippage}%`,
+                              pairTradeJob.lastSwapTimestamp ? `Last Swap: ${new Date(pairTradeJob.lastSwapTimestamp).toLocaleString()}` : null,
+                              pairTradeJob.swapHistory.length > 0 ? `Swaps: ${pairTradeJob.swapHistory.length}` : null
+                            ].filter(Boolean)
+                          };
                         default:
                           return {
                             title: 'Unknown Strategy',
@@ -2208,13 +2259,28 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
       const strategyInstance = StrategyService.getInstance(connection);
 
+      // Look up saved wallet name if it exists
+      let walletName: string | undefined;
+      try {
+        const savedWallets = await savedWalletsApi.getAll(wallet.publicKey!.toString());
+        console.log('Saved wallets fetched:', savedWallets);
+        console.log('Looking for wallet address:', monitoredWallet);
+        const foundWallet = savedWallets.find(w => w.wallet_address === monitoredWallet);
+        console.log('Found wallet:', foundWallet);
+        walletName = foundWallet?.name;
+        console.log('Wallet name to use:', walletName);
+      } catch (error) {
+        console.log('Could not fetch saved wallets for name lookup:', error);
+      }
+
       // Always create a new job and use the backend's returned id
       const newJob = await strategyInstance.createWalletMonitorStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
         walletAddress: monitoredWallet,
-        percentage: autoTradePercentage
+        percentage: autoTradePercentage,
+        name: walletName
       });
 
       // Add job to manager
@@ -3071,6 +3137,132 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
+  const loadSupportedTokens = async () => {
+    if (isLoadingTokens) return;
+    
+    setIsLoadingTokens(true);
+    try {
+      console.log('🪙 Frontend: Loading supported tokens...');
+      console.log('🪙 Frontend: Auth token available:', !!authService.getToken());
+      console.log('🪙 Frontend: Making API call to /strategies/tokens/supported');
+      
+      const response = await apiClient.get('/strategies/tokens/supported');
+      
+      console.log('🪙 Frontend: API response status:', response.status);
+      console.log('🪙 Frontend: API response data:', response.data);
+      console.log('🪙 Frontend: Number of tokens received:', response.data?.length || 0);
+      
+      if (response.data && Array.isArray(response.data)) {
+        const activeTokens = response.data.filter(token => token.isActive);
+        console.log('🪙 Frontend: Active tokens:', activeTokens.length);
+        console.log('🪙 Frontend: Active token details:', activeTokens.map(t => ({ symbol: t.symbol, name: t.name })));
+      }
+      
+      setSupportedTokens(response.data || []);
+      console.log('✅ Frontend: Tokens set in state successfully');
+    } catch (error) {
+      console.error('❌ Frontend: Error loading supported tokens:', error);
+      console.error('❌ Frontend: Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      setNotification({
+        message: 'Failed to load supported tokens',
+        type: 'error'
+      });
+    } finally {
+      setIsLoadingTokens(false);
+    }
+  };
+
+  const createPairTradeStrategy = async () => {
+    if (!selectedTradingWallet) {
+      setNotification({
+        message: 'Please select a trading wallet first',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (!pairTokenA || !pairTokenB) {
+      setNotification({
+        message: 'Please select both tokens for the pair',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (pairTokenA === pairTokenB) {
+      setNotification({
+        message: 'Please select different tokens for the pair',
+        type: 'error'
+      });
+      return;
+    }
+
+    try {
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
+
+      const strategyInstance = StrategyService.getInstance(connection);
+      
+      // Check if a pair trade strategy already exists for this trading wallet
+      const existingJob = jobs.find(
+        job => 
+          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
+          job.type === JobType.PAIR_TRADE
+      );
+
+      const newJob = await strategyInstance.createPairTradeStrategy({
+        tradingWallet: selectedTradingWallet,
+        initialBalance,
+        tokenAMint: pairTokenA,
+        tokenBMint: pairTokenB,
+        tokenASymbol: pairTokenASymbol,
+        tokenBSymbol: pairTokenBSymbol,
+        allocationPercentage: Number(pairAllocationPercentage),
+        currentToken: pairCurrentToken,
+        maxSlippage: Number(pairMaxSlippage),
+        autoRebalance: false
+      });
+
+      // Add job to manager
+      jobManagerRef.current?.addJob(newJob);
+
+      // Update local state
+      if (existingJob) {
+        setJobs(prevJobs => prevJobs.map(job => 
+          job.id === existingJob.id ? newJob : job
+        ));
+        setNotification({
+          message: 'Updated existing pair trade strategy',
+          type: 'success'
+        });
+      } else {
+        setJobs(prevJobs => [...prevJobs, newJob]);
+        setNotification({
+          message: 'Created new pair trade strategy',
+          type: 'success'
+        });
+      }
+
+      // Reset form
+      setPairTokenA('');
+      setPairTokenB('');
+      setPairTokenASymbol('');
+      setPairTokenBSymbol('');
+      setPairAllocationPercentage('50');
+      setPairCurrentToken('A');
+      setPairMaxSlippage('1');
+    } catch (error) {
+      console.error('Error creating pair trade strategy:', error);
+      setNotification({
+        message: error instanceof Error ? error.message : 'Failed to create pair trade strategy',
+        type: 'error'
+      });
+    }
+  };
+
   // Add deleteJob function before the return statement
   const deleteJob = async (jobId: string) => {
     try {
@@ -3650,6 +3842,27 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }));
   }
 
+  // Helper to get the correct strategy icon based on job type
+  function getStrategyIcon(job: AnyJob, isActive: boolean, onClick: () => void) {
+    const iconProps = { isActive, onClick };
+    
+    switch (job.type) {
+      case JobType.WALLET_MONITOR:
+        return <WalletMonitorIcon isActive={isActive} onClick={onClick} />;
+      case JobType.PRICE_MONITOR:
+        return <PriceMonitorIcon {...iconProps} />;
+      case JobType.VAULT:
+        return <VaultIcon {...iconProps} />;
+      case JobType.LEVELS:
+        return <LevelsIcon {...iconProps} />;
+      case JobType.PAIR_TRADE:
+        return <PairTradeIcon {...iconProps} />;
+      case JobType.SAVED_WALLET:
+      default:
+        return <LackeyIcon {...iconProps} />;
+    }
+  }
+
   // Fetch and merge saved wallets on wallet connect
   useEffect(() => {
     if (wallet.publicKey) {
@@ -3941,10 +4154,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                     gap: '0.5rem'
                                   }}>
                                       <span style={{ fontSize: '1rem' }}>
-                                        <WalletMonitorIcon
-                                          isActive={job.isActive && !pausedJobs.has(job.id)}
-                                          onClick={() => toggleJobPause(job.id)}
-                                        />
+                                        {getStrategyIcon(
+                                          job, 
+                                          job.isActive && !pausedJobs.has(job.id), 
+                                          () => toggleJobPause(job.id)
+                                        )}
                                       </span>
                                       <span style={{ color: '#94a3b8' }}>|</span>
                                       <span>
@@ -5181,6 +5395,296 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}
                     >
                       Create Levels Strategy
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Pair Trade Strategy */}
+              <div style={{
+                backgroundColor: '#1e293b',
+                padding: '1.125rem',
+                borderRadius: '0.75rem',
+                border: '1px solid #2d3748',
+                marginBottom: '1.125rem'
+              }}>
+                <div 
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => toggleStrategy('pair-trade')}
+                >
+                  <div style={{
+                    backgroundColor: '#3b82f6',
+                    padding: '0.5rem',
+                    borderRadius: '0.5rem',
+                    width: '1.875rem',
+                    height: '1.875rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.875rem'
+                  }}>
+                    <PairTradeIcon isActive={true} onClick={() => {}} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ 
+                      color: '#e2e8f0',
+                      margin: 0,
+                      fontSize: '0.9375rem'
+                    }}>Pair Trade</h3>
+                    {expandedStrategy !== 'pair-trade' && (
+                      <p style={{ 
+                        color: '#94a3b8',
+                        margin: '0.1875rem 0 0 0',
+                        fontSize: '0.75rem'
+                      }}>
+                        Trade between two tokens back and forth
+                      </p>
+                    )}
+                  </div>
+                  <div style={{
+                    color: '#94a3b8',
+                    transform: expandedStrategy === 'pair-trade' ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 0.2s ease',
+                    fontSize: '0.75rem'
+                  }}>
+                    ▼
+                  </div>
+                </div>
+                {expandedStrategy === 'pair-trade' && (
+                  <div style={{
+                    marginTop: '1.125rem',
+                    animation: 'fadeIn 0.2s ease'
+                  }}>
+                    <p style={{ 
+                      color: '#94a3b8',
+                      margin: '0 0 1.125rem 0',
+                      fontSize: '0.75rem'
+                    }}>
+                      Set up automated trading between two tokens with external triggers
+                    </p>
+
+                    {/* Token A Selection */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Token A
+                      </label>
+                      <select
+                        value={pairTokenA}
+                        onChange={(e) => {
+                          const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
+                          setPairTokenA(e.target.value);
+                          setPairTokenASymbol(selectedToken?.symbol || '');
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        <option value="">Select Token A</option>
+                        {supportedTokens.filter(token => token.isActive).map(token => (
+                          <option key={token.mintAddress} value={token.mintAddress}>
+                            {token.symbol} - {token.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Token B Selection */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Token B
+                      </label>
+                      <select
+                        value={pairTokenB}
+                        onChange={(e) => {
+                          const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
+                          setPairTokenB(e.target.value);
+                          setPairTokenBSymbol(selectedToken?.symbol || '');
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        <option value="">Select Token B</option>
+                        {supportedTokens.filter(token => token.isActive && token.mintAddress !== pairTokenA).map(token => (
+                          <option key={token.mintAddress} value={token.mintAddress}>
+                            {token.symbol} - {token.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Current Token Selection */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Currently Holding
+                      </label>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => setPairCurrentToken('A')}
+                          style={{
+                            flex: 1,
+                            padding: '0.75rem',
+                            backgroundColor: pairCurrentToken === 'A' ? '#3b82f6' : '#1e293b',
+                            border: '1px solid ' + (pairCurrentToken === 'A' ? '#60a5fa' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Token A ({pairTokenASymbol || 'Not Selected'})
+                        </button>
+                        <button
+                          onClick={() => setPairCurrentToken('B')}
+                          style={{
+                            flex: 1,
+                            padding: '0.75rem',
+                            backgroundColor: pairCurrentToken === 'B' ? '#3b82f6' : '#1e293b',
+                            border: '1px solid ' + (pairCurrentToken === 'B' ? '#60a5fa' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Token B ({pairTokenBSymbol || 'Not Selected'})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Allocation Percentage */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Allocation Percentage
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="number"
+                          value={pairAllocationPercentage}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setPairAllocationPercentage('');
+                            } else {
+                              const num = parseFloat(value);
+                              if (!isNaN(num)) {
+                                setPairAllocationPercentage(Math.min(100, Math.max(1, num)));
+                              }
+                            }
+                          }}
+                          style={{
+                            width: '80px',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          min="1"
+                          max="100"
+                          placeholder="50"
+                        />
+                        <span style={{ color: '#e2e8f0' }}>% of wallet to use</span>
+                      </div>
+                    </div>
+
+                    {/* Max Slippage */}
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Max Slippage
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <input
+                          type="number"
+                          value={pairMaxSlippage}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setPairMaxSlippage('');
+                            } else {
+                              const num = parseFloat(value);
+                              if (!isNaN(num)) {
+                                setPairMaxSlippage(Math.min(10, Math.max(0.1, num)));
+                              }
+                            }
+                          }}
+                          style={{
+                            width: '80px',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          min="0.1"
+                          max="10"
+                          step="0.1"
+                          placeholder="1.0"
+                        />
+                        <span style={{ color: '#e2e8f0' }}>%</span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={createPairTradeStrategy}
+                      disabled={!selectedTradingWallet || !pairTokenA || !pairTokenB || pairTokenA === pairTokenB}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        backgroundColor: (selectedTradingWallet && pairTokenA && pairTokenB && pairTokenA !== pairTokenB) ? '#3b82f6' : '#1e293b',
+                        border: '1px solid ' + ((selectedTradingWallet && pairTokenA && pairTokenB && pairTokenA !== pairTokenB) ? '#60a5fa' : '#4b5563'),
+                        borderRadius: '0.375rem',
+                        color: '#e2e8f0',
+                        cursor: (selectedTradingWallet && pairTokenA && pairTokenB && pairTokenA !== pairTokenB) ? 'pointer' : 'not-allowed',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      Create Pair Trade Strategy
                     </button>
                   </div>
                 )}

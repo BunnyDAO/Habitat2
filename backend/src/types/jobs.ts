@@ -2,7 +2,8 @@ export enum JobType {
   WALLET_MONITOR = 'wallet-monitor',
   PRICE_MONITOR = 'price-monitor',
   VAULT = 'vault',
-  LEVELS = 'levels'
+  LEVELS = 'levels',
+  PAIR_TRADE = 'pair-trade'
 }
 
 export interface ProfitSnapshot {
@@ -88,6 +89,28 @@ export interface LevelsStrategy extends BaseJob {
   lastTriggerPrice?: number;
 }
 
+export interface PairTradeJob extends BaseJob {
+  type: JobType.PAIR_TRADE;
+  tokenAMint: string;           // First token mint address
+  tokenBMint: string;           // Second token mint address
+  tokenASymbol: string;         // Display symbol (e.g., "TSLAx")
+  tokenBSymbol: string;         // Display symbol (e.g., "wBTC")
+  allocationPercentage: number; // Percentage of wallet to use (1-100)
+  currentToken: 'A' | 'B';      // Which token currently held
+  maxSlippage: number;          // Max slippage for swaps (default: 1%)
+  autoRebalance: boolean;       // Future: auto-rebalancing feature
+  lastSwapTimestamp?: string;   // Last time a swap occurred
+  swapHistory: {
+    timestamp: string;
+    fromToken: 'A' | 'B';
+    toToken: 'A' | 'B';
+    fromAmount: number;
+    toAmount: number;
+    price: number;
+    profit: number;
+  }[];
+}
+
 export interface ProfitTracking {
   initialBalance: number;
   currentBalance: number;
@@ -96,4 +119,4 @@ export interface ProfitTracking {
   trades: TradeRecord[];
 }
 
-export type AnyJob = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy; 
+export type AnyJob = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob; 

@@ -3,7 +3,9 @@ import { WalletMonitorWorker } from '../workers/WalletMonitorWorker';
 import { PriceMonitorWorker } from '../workers/PriceMonitorWorker';
 import { VaultWorker } from '../workers/VaultWorker';
 import { LevelsWorker } from '../workers/LevelsWorker';
+import { PairTradeWorker } from '../workers/PairTradeWorker';
 import { EncryptionService } from '../services/encryption.service';
+import { TokenService } from '../services/TokenService';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,10 +20,11 @@ const supabase = createClient(
 );
 
 class StrategyDaemon {
-  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker> = new Map();
+  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker> = new Map();
   private isRunning: boolean = false;
   private appSecret: string;
   private encryptionService: EncryptionService;
+  private tokenService: TokenService;
 
   constructor() {
     if (!process.env.APP_SECRET) {
@@ -29,6 +32,10 @@ class StrategyDaemon {
     }
     this.appSecret = process.env.APP_SECRET;
     this.encryptionService = EncryptionService.getInstance();
+    
+    // Initialize TokenService - we'll need to pass pool and redis client
+    // For now, we'll initialize it in the worker creation
+    this.tokenService = new TokenService(null as any, null);
   }
 
   async start(): Promise<void> {
@@ -222,7 +229,7 @@ class StrategyDaemon {
       
       console.log(`Secret key validation passed for strategy ${strategy.id}`)
 
-      let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker;
+      let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker;
 
       switch (strategy.strategy_type) {
         case 'wallet-monitor': {
@@ -322,6 +329,43 @@ class StrategyDaemon {
             lastTriggerPrice: strategy.last_trigger_price
           } as import('../types/jobs').LevelsStrategy;
           worker = new LevelsWorker(job, HELIUS_ENDPOINT);
+          break;
+        }
+        case 'pair-trade': {
+          console.log(`Pair Trade strategy ${strategy.id} config:`, JSON.stringify(strategy.config, null, 2));
+          
+          if (!strategy.config?.tokenAMint || !strategy.config?.tokenBMint || !strategy.config?.tokenASymbol || !strategy.config?.tokenBSymbol) {
+            console.error(`Skipping strategy ${strategy.id}: Missing required config - tokenAMint: ${strategy.config?.tokenAMint}, tokenBMint: ${strategy.config?.tokenBMint}, tokenASymbol: ${strategy.config?.tokenASymbol}, tokenBSymbol: ${strategy.config?.tokenBSymbol}`);
+            return;
+          }
+          
+          const job = {
+            id: strategy.id,
+            type: 'pair-trade',
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
+            tradingWalletSecretKey: secretKey,
+            isActive: true,
+            createdAt: strategy.created_at,
+            lastActivity: strategy.last_activity,
+            profitTracking: {
+              initialBalance: strategy.initial_balance || 0,
+              currentBalance: strategy.current_balance || 0,
+              totalProfit: strategy.total_profit || 0,
+              profitHistory: strategy.profit_history || [],
+              trades: strategy.trades || []
+            },
+            tokenAMint: strategy.config?.tokenAMint,
+            tokenBMint: strategy.config?.tokenBMint,
+            tokenASymbol: strategy.config?.tokenASymbol,
+            tokenBSymbol: strategy.config?.tokenBSymbol,
+            allocationPercentage: strategy.config?.allocationPercentage || 100,
+            currentToken: strategy.config?.currentToken || 'A',
+            maxSlippage: strategy.config?.maxSlippage || 1.0,
+            autoRebalance: strategy.config?.autoRebalance || false,
+            lastSwapTimestamp: strategy.last_swap_timestamp,
+            swapHistory: strategy.swap_history || []
+          } as import('../types/jobs').PairTradeJob;
+          worker = new PairTradeWorker(job, HELIUS_ENDPOINT, this.tokenService);
           break;
         }
         default:

@@ -88,6 +88,58 @@ export const validateStrategyRequest = (
         });
       }
       break;
+
+    case 'pair-trade':
+      console.log('Validating pair trade config:', config);
+      const requiredFields = ['tokenAMint', 'tokenBMint', 'tokenASymbol', 'tokenBSymbol', 'allocationPercentage', 'currentToken'];
+      const missingFields = requiredFields.filter(field => !config[field]);
+      
+      if (missingFields.length > 0) {
+        console.log('Invalid pair trade config - missing fields:', missingFields);
+        return res.status(400).json({
+          error: 'Invalid pair trade configuration',
+          required: requiredFields,
+          missing: missingFields
+        });
+      }
+      
+      // Validate token addresses are different
+      if (config.tokenAMint === config.tokenBMint) {
+        console.log('Invalid pair trade config - same token addresses');
+        return res.status(400).json({
+          error: 'Invalid pair trade configuration',
+          details: 'Token A and Token B must be different'
+        });
+      }
+      
+      // Validate allocation percentage
+      if (config.allocationPercentage < 1 || config.allocationPercentage > 100) {
+        console.log('Invalid pair trade config - allocation percentage out of range:', config.allocationPercentage);
+        return res.status(400).json({
+          error: 'Invalid pair trade configuration',
+          details: 'Allocation percentage must be between 1 and 100'
+        });
+      }
+      
+      // Validate current token
+      if (config.currentToken !== 'A' && config.currentToken !== 'B') {
+        console.log('Invalid pair trade config - invalid current token:', config.currentToken);
+        return res.status(400).json({
+          error: 'Invalid pair trade configuration',
+          details: 'Current token must be either "A" or "B"'
+        });
+      }
+      
+      // Validate max slippage if provided
+      if (config.maxSlippage && (config.maxSlippage < 0.1 || config.maxSlippage > 10)) {
+        console.log('Invalid pair trade config - max slippage out of range:', config.maxSlippage);
+        return res.status(400).json({
+          error: 'Invalid pair trade configuration',
+          details: 'Max slippage must be between 0.1% and 10%'
+        });
+      }
+      
+      break;
   }
 
   next();

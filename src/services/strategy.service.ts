@@ -1,11 +1,11 @@
 import { Connection } from '@solana/web3.js';
 import { strategyApiService } from './api/strategy.service';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, ensureUint8Array } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, ensureUint8Array } from '../types/jobs';
 import { TradingWallet } from '../types/wallet';
 import type { ProfitTracking } from '../types/profit';
 
 // Base Job interface that all strategy types extend
-type Job = WalletMonitoringJob | VaultStrategy | LevelsStrategy;
+type Job = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob;
 
 interface BaseStrategyParams {
   tradingWallet: TradingWallet;
@@ -16,6 +16,7 @@ interface BaseStrategyParams {
 interface WalletMonitorParams extends BaseStrategyParams {
   walletAddress: string;
   percentage: number;
+  name?: string;
 }
 
 interface PriceMonitorParams extends BaseStrategyParams {
@@ -30,6 +31,17 @@ interface VaultParams extends BaseStrategyParams {
 
 interface LevelsParams extends BaseStrategyParams {
   levels: Array<{ price: number; percentage: number }>;
+}
+
+interface PairTradeParams extends BaseStrategyParams {
+  tokenAMint: string;
+  tokenBMint: string;
+  tokenASymbol: string;
+  tokenBSymbol: string;
+  allocationPercentage: number;
+  currentToken: 'A' | 'B';
+  maxSlippage: number;
+  autoRebalance: boolean;
 }
 
 export class StrategyService {
@@ -110,6 +122,7 @@ export class StrategyService {
     const backendStrategy = await strategyApiService.createStrategy({
         tradingWalletPublicKey: params.tradingWallet.publicKey,
         strategy_type: JobType.WALLET_MONITOR,
+        name: params.name,
         config: {
           walletAddress: params.walletAddress,
           percentage: params.percentage
@@ -120,6 +133,7 @@ export class StrategyService {
       id: backendStrategy.id.toString(),
       type: JobType.WALLET_MONITOR,
       walletAddress: params.walletAddress,
+      name: params.name,
       percentage: params.percentage,
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
@@ -263,6 +277,46 @@ export class StrategyService {
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
       levels: params.levels,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
+
+    this.jobs.set(newJob.id, newJob);
+    return newJob;
+  }
+
+  async createPairTradeStrategy(params: PairTradeParams): Promise<PairTradeJob> {
+    // Save to backend and get backend ID
+    const backendStrategy = await strategyApiService.createStrategy({
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      strategy_type: JobType.PAIR_TRADE,
+      config: {
+        tokenAMint: params.tokenAMint,
+        tokenBMint: params.tokenBMint,
+        tokenASymbol: params.tokenASymbol,
+        tokenBSymbol: params.tokenBSymbol,
+        allocationPercentage: params.allocationPercentage,
+        currentToken: params.currentToken,
+        maxSlippage: params.maxSlippage,
+        autoRebalance: params.autoRebalance
+      }
+    });
+
+    const newJob: PairTradeJob = {
+      id: backendStrategy.id.toString(),
+      type: JobType.PAIR_TRADE,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      tokenAMint: params.tokenAMint,
+      tokenBMint: params.tokenBMint,
+      tokenASymbol: params.tokenASymbol,
+      tokenBSymbol: params.tokenBSymbol,
+      allocationPercentage: params.allocationPercentage,
+      currentToken: params.currentToken,
+      maxSlippage: params.maxSlippage,
+      autoRebalance: params.autoRebalance,
+      swapHistory: [],
       isActive: true,
       createdAt: new Date().toISOString(),
       profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)

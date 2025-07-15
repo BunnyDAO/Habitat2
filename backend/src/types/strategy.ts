@@ -68,4 +68,18 @@ export interface LevelsConfig extends StrategyConfig {
   };
 }
 
-export type AnyStrategyConfig = WalletMonitorConfig | PriceMonitorConfig | VaultConfig | LevelsConfig; 
+export interface PairTradeConfig extends StrategyConfig {
+  type: 'pair-trade';
+  parameters: {
+    tokenAMint: string;
+    tokenBMint: string;
+    tokenASymbol: string;
+    tokenBSymbol: string;
+    allocationPercentage: number;
+    currentToken: 'A' | 'B';
+    maxSlippage: number;
+    autoRebalance: boolean;
+  };
+}
+
+export type AnyStrategyConfig = WalletMonitorConfig | PriceMonitorConfig | VaultConfig | LevelsConfig | PairTradeConfig; 

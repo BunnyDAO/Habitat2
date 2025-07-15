@@ -12,6 +12,7 @@ import { createTradingWalletsRouter } from './routes/trading-wallets.routes';
 import { createWalletBalancesRouter } from './api/v1/routes/wallet-balances.routes';
 import { createTokenRouter } from './routes/token.routes';
 import { TokenService } from './services/token.service';
+import { TokenService as PairTradeTokenService } from './services/TokenService';
 import healthRoutes from './api/v1/routes/health.routes';
 import { createPriceFeedRouter } from './api/v1/routes/price-feed.routes';
 import { createChartDataRouter } from './api/v1/routes/chart-data.routes';
@@ -20,7 +21,7 @@ import { createProxyRouter } from './api/v1/routes/proxy.routes';
 import { createTokenMetadataRouter } from './api/v1/routes/token-metadata.routes';
 import { createSwapRouter } from './api/v1/routes/swap.routes';
 import { createJupiterRouter } from './api/v1/routes/jupiter.routes';
-import strategiesRouter from './routes/strategies.routes';
+import { createStrategiesRouter } from './routes/strategies.routes';
 import authRouter from './routes/auth.routes';
 import walletTransactionRouter from './routes/wallet-transaction.routes';
 import savedWalletsRouter from './routes/saved-wallets.routes';
@@ -53,6 +54,18 @@ export function createApp() {
   // Initialize services
   const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '');
   const tokenService = new TokenService(pool);
+  const pairTradeTokenService = new PairTradeTokenService(pool, redisClient);
+
+  // Initialize supported tokens for pair trading on startup
+  setTimeout(async () => {
+    try {
+      console.log('🪙 Initializing supported tokens for pair trading...');
+      await pairTradeTokenService.initializeSupportedTokens();
+      console.log('✅ Supported tokens initialized successfully');
+    } catch (error) {
+      console.error('❌ Error initializing supported tokens:', error);
+    }
+  }, 2000); // Wait 2 seconds for database connection to be ready
 
   // Configure CORS
   app.use(cors({
@@ -68,7 +81,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/rpc', rpcRouter);
   app.use('/api/trading-wallets', createTradingWalletsRouter());
-  app.use('/api/strategies', strategiesRouter);
+  app.use('/api/strategies', createStrategiesRouter(pool, redisClient));
   app.use('/api/saved-wallets', savedWalletsRouter);
   app.use('/api/wallet-transactions', walletTransactionRouter);
 
@@ -81,7 +94,7 @@ export function createApp() {
   app.use('/api/v1/jupiter', createJupiterRouter(pool, redisClient));
   app.use('/api/v1', healthRoutes);
   app.use('/api/v1', createPriceFeedRouter(redisClient, heliusService));
-  app.use('/api/v1/strategies', strategiesRouter);
+  app.use('/api/v1/strategies', createStrategiesRouter(pool, redisClient));
   app.use('/api/v1/saved-wallets', savedWalletsRouter);
   app.use('/api/v1/wallet-transactions', walletTransactionRouter);
   

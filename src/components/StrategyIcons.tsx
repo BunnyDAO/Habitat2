@@ -178,4 +178,40 @@ export const LevelsIcon: React.FC<IconProps> = ({ isActive = true, onClick }) =>
       <line x1="4" y1="18" x2="20" y2="18" />
     </svg>
   </span>
+);
+
+export const PairTradeIcon: React.FC<IconProps> = ({ isActive = true, onClick }) => (
+  <span
+    onClick={(e) => {
+      if (onClick) {
+        e.stopPropagation();
+        onClick();
+      }
+    }}
+    style={{
+      cursor: onClick ? 'pointer' : 'default',
+      opacity: isActive ? 1 : 0.5,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white',
+      marginTop: '2px'
+    }}
+  >
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M7 17L17 7" />
+      <path d="M17 17H7V7" />
+      <circle cx="7" cy="7" r="2" />
+      <circle cx="17" cy="17" r="2" />
+    </svg>
+  </span>
 ); 

@@ -5,7 +5,8 @@ export enum JobType {
   SAVED_WALLET = 'saved-wallet',
   PRICE_MONITOR = 'price-monitor',
   VAULT = 'vault',
-  LEVELS = 'levels'
+  LEVELS = 'levels',
+  PAIR_TRADE = 'pair-trade'
 }
 
 export interface ProfitSnapshot {
@@ -98,4 +99,26 @@ export interface LevelsStrategy extends BaseJob {
   lastTriggerPrice?: number;
 }
 
-export type AnyJob = WalletMonitoringJob | SavedWalletJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy; 
+export interface PairTradeJob extends BaseJob {
+  type: JobType.PAIR_TRADE;
+  tokenAMint: string;
+  tokenBMint: string;
+  tokenASymbol: string;
+  tokenBSymbol: string;
+  allocationPercentage: number;
+  currentToken: 'A' | 'B';
+  maxSlippage: number;
+  autoRebalance: boolean;
+  lastSwapTimestamp?: string;
+  swapHistory: Array<{
+    timestamp: string;
+    fromToken: 'A' | 'B';
+    toToken: 'A' | 'B';
+    fromAmount: number;
+    toAmount: number;
+    price: number;
+    profit: number;
+  }>;
+}
+
+export type AnyJob = WalletMonitoringJob | SavedWalletJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob; 
