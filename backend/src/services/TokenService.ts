@@ -18,137 +18,15 @@ export class TokenService {
   private CACHE_KEY = 'pair-trade:tokens';
   private CACHE_DURATION = 3600; // 1 hour
 
-  // Predefined token list for pair trading
-  private static readonly SUPPORTED_TOKENS: TokenInfo[] = [
-    // xStocks (based on research)
-    {
-      mintAddress: 'XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB',
-      symbol: 'TSLAx',
-      name: 'Tesla xStock',
-      decimals: 6,
-      category: 'xstock',
-      isActive: true,
-      lastUpdated: new Date()
-    },
-    {
-      mintAddress: 'XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp',
-      symbol: 'AAPLx',
-      name: 'Apple xStock',
-      decimals: 6,
-      category: 'xstock',
-      isActive: true,
-      lastUpdated: new Date()
-    },
-    // Add more xStocks as they become available
-    {
-      mintAddress: 'XsGOOGLAddress123', // Placeholder - replace with actual when available
-      symbol: 'GOOGLx',
-      name: 'Google xStock',
-      decimals: 6,
-      category: 'xstock',
-      isActive: false, // Set to false until confirmed
-      lastUpdated: new Date()
-    },
-    {
-      mintAddress: 'XsMSFTAddress123', // Placeholder - replace with actual when available
-      symbol: 'MSFTx',
-      name: 'Microsoft xStock',
-      decimals: 6,
-      category: 'xstock',
-      isActive: false, // Set to false until confirmed
-      lastUpdated: new Date()
-    },
-    // Crypto tokens
-    {
-      mintAddress: 'So11111111111111111111111111111111111111112',
-      symbol: 'SOL',
-      name: 'Solana',
-      decimals: 9,
-      category: 'crypto',
-      isActive: true,
-      lastUpdated: new Date()
-    },
-    {
-      mintAddress: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
-      symbol: 'wBTC',
-      name: 'Wrapped Bitcoin (Portal)',
-      decimals: 8,
-      category: 'crypto',
-      isActive: true,
-      lastUpdated: new Date()
-    },
-    // Stablecoins
-    {
-      mintAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-      symbol: 'USDC',
-      name: 'USD Coin',
-      decimals: 6,
-      category: 'stablecoin',
-      isActive: true,
-      lastUpdated: new Date()
-    },
-    {
-      mintAddress: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-      symbol: 'USDT',
-      name: 'Tether USD',
-      decimals: 6,
-      category: 'stablecoin',
-      isActive: true,
-      lastUpdated: new Date()
-    }
-  ];
 
   constructor(pool: Pool, redisClient: ReturnType<typeof createClient> | null = null) {
     this.pool = pool;
     this.redisClient = redisClient;
   }
 
-  /**
-   * Initialize supported tokens in the database
-   */
-  async initializeSupportedTokens(): Promise<void> {
-    try {
-      const client = await this.pool.connect();
-      
-      try {
-        await client.query('BEGIN');
-        
-        for (const token of TokenService.SUPPORTED_TOKENS) {
-          await client.query(`
-            INSERT INTO tokens (mint_address, name, symbol, decimals, logo_uri, last_updated)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (mint_address) DO UPDATE
-            SET name = EXCLUDED.name,
-                symbol = EXCLUDED.symbol,
-                decimals = EXCLUDED.decimals,
-                logo_uri = EXCLUDED.logo_uri,
-                last_updated = EXCLUDED.last_updated
-          `, [
-            token.mintAddress,
-            token.name,
-            token.symbol,
-            token.decimals,
-            token.logoURI,
-            token.lastUpdated
-          ]);
-        }
-        
-        await client.query('COMMIT');
-        console.log('Initialized supported tokens for pair trading');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
-    } catch (error) {
-      console.error('Error initializing supported tokens:', error);
-      throw error;
-    }
-  }
 
   /**
-   * Get all supported tokens for pair trading
+   * Get all supported tokens for pair trading from database
    */
   async getSupportedTokens(): Promise<TokenInfo[]> {
     try {
@@ -167,63 +45,53 @@ export class TokenService {
         console.log('❌ Redis client not available');
       }
 
-      // Get from database
-      console.log('🔍 Querying database for tokens...');
-      const mintAddresses = TokenService.SUPPORTED_TOKENS.map(t => t.mintAddress);
-      console.log('🔍 Looking for mint addresses:', mintAddresses);
+      // Query database for tokens suitable for pair trading
+      console.log('🔍 Querying database for supported tokens...');
       
       const result = await this.pool.query(`
         SELECT mint_address, name, symbol, decimals, logo_uri, last_updated
         FROM tokens
-        WHERE mint_address = ANY($1)
-        ORDER BY symbol ASC
-      `, [mintAddresses]);
+        WHERE (
+          -- xStocks (tokenized stocks)
+          symbol LIKE '%x' AND (
+            symbol = 'TSLAx' OR 
+            symbol = 'AAPLx' OR 
+            symbol = 'NVDAx' OR 
+            symbol = 'METAx' OR 
+            symbol = 'COINx' OR
+            symbol = 'GOOGLx' OR
+            symbol = 'MSFTx' OR
+            symbol = 'AMZNx' OR
+            symbol = 'SPYx' OR
+            symbol = 'QQQx'
+          )
+        ) OR (
+          -- Major crypto tokens
+          mint_address = 'So11111111111111111111111111111111111111112' OR -- SOL
+          mint_address = '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh' OR -- wBTC
+          mint_address = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' OR -- USDC
+          mint_address = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'    -- USDT
+        )
+        ORDER BY 
+          CASE 
+            WHEN symbol LIKE '%x' THEN 1 
+            WHEN symbol IN ('SOL', 'wBTC') THEN 2
+            WHEN symbol IN ('USDC', 'USDT') THEN 3
+            ELSE 4
+          END,
+          symbol ASC
+      `);
 
       console.log('🔍 Database query result:', result.rows.length, 'rows found');
-      console.log('🔍 Database rows:', result.rows.map(r => ({ 
+      console.log('🔍 Found tokens:', result.rows.map(r => ({ 
         symbol: r.symbol, 
         mint: r.mint_address.slice(0, 10) + '...' 
       })));
 
       if (result.rows.length === 0) {
-        console.log('⚠️  No tokens found in database! Tokens table might be empty.');
-        console.log('🔍 Checking if tokens table exists and has any data...');
-        
-        const checkResult = await this.pool.query('SELECT COUNT(*) as count FROM tokens');
-        console.log('🔍 Total tokens in database:', checkResult.rows[0].count);
-        
-        if (parseInt(checkResult.rows[0].count) === 0) {
-          console.log('⚠️  Tokens table is empty! Running initialization...');
-          await this.initializeSupportedTokens();
-          console.log('✅ Token initialization completed, re-querying...');
-          
-          const retryResult = await this.pool.query(`
-            SELECT mint_address, name, symbol, decimals, logo_uri, last_updated
-            FROM tokens
-            WHERE mint_address = ANY($1)
-            ORDER BY symbol ASC
-          `, [mintAddresses]);
-          
-          console.log('🔍 After initialization, found:', retryResult.rows.length, 'tokens');
-          
-          const tokens: TokenInfo[] = retryResult.rows.map(row => ({
-            mintAddress: row.mint_address,
-            symbol: row.symbol,
-            name: row.name,
-            decimals: row.decimals,
-            logoURI: row.logo_uri,
-            category: this.getTokenCategory(row.mint_address),
-            isActive: this.isTokenActive(row.mint_address),
-            lastUpdated: row.last_updated
-          }));
-
-          console.log('🔍 Returning tokens after initialization:', tokens.map(t => ({ 
-            symbol: t.symbol, 
-            isActive: t.isActive 
-          })));
-
-          return tokens;
-        }
+        console.log('⚠️  No supported tokens found in database!');
+        console.log('💡 Please run the xStock token update script to populate tokens');
+        return [];
       }
 
       const tokens: TokenInfo[] = result.rows.map(row => ({
@@ -232,13 +100,14 @@ export class TokenService {
         name: row.name,
         decimals: row.decimals,
         logoURI: row.logo_uri,
-        category: this.getTokenCategory(row.mint_address),
-        isActive: this.isTokenActive(row.mint_address),
+        category: this.getTokenCategory(row.symbol),
+        isActive: true, // All tokens from database are considered active
         lastUpdated: row.last_updated
       }));
 
       console.log('🔍 Final tokens being returned:', tokens.map(t => ({ 
         symbol: t.symbol, 
+        category: t.category,
         isActive: t.isActive 
       })));
 
@@ -281,7 +150,7 @@ export class TokenService {
         name: row.name,
         decimals: row.decimals,
         logoURI: row.logo_uri,
-        category: this.getTokenCategory(row.mint_address),
+        category: this.getTokenCategory(row.symbol),
         isActive: this.isTokenActive(row.mint_address),
         lastUpdated: row.last_updated
       };
@@ -294,47 +163,57 @@ export class TokenService {
   /**
    * Validate if two tokens can be paired
    */
-  validateTokenPair(tokenAMint: string, tokenBMint: string): { isValid: boolean; error?: string } {
+  async validateTokenPair(tokenAMint: string, tokenBMint: string): Promise<{ isValid: boolean; error?: string }> {
     if (tokenAMint === tokenBMint) {
       return { isValid: false, error: 'Cannot pair the same token with itself' };
     }
 
-    const tokenA = TokenService.SUPPORTED_TOKENS.find(t => t.mintAddress === tokenAMint);
-    const tokenB = TokenService.SUPPORTED_TOKENS.find(t => t.mintAddress === tokenBMint);
+    try {
+      const tokenA = await this.getTokenInfo(tokenAMint);
+      const tokenB = await this.getTokenInfo(tokenBMint);
 
-    if (!tokenA) {
-      return { isValid: false, error: 'Token A is not supported for pair trading' };
+      if (!tokenA) {
+        return { isValid: false, error: 'Token A is not supported for pair trading' };
+      }
+
+      if (!tokenB) {
+        return { isValid: false, error: 'Token B is not supported for pair trading' };
+      }
+
+      if (!tokenA.isActive) {
+        return { isValid: false, error: `Token A (${tokenA.symbol}) is currently inactive` };
+      }
+
+      if (!tokenB.isActive) {
+        return { isValid: false, error: `Token B (${tokenB.symbol}) is currently inactive` };
+      }
+
+      return { isValid: true };
+    } catch (error) {
+      console.error('Error validating token pair:', error);
+      return { isValid: false, error: 'Error validating tokens' };
     }
-
-    if (!tokenB) {
-      return { isValid: false, error: 'Token B is not supported for pair trading' };
-    }
-
-    if (!tokenA.isActive) {
-      return { isValid: false, error: `Token A (${tokenA.symbol}) is currently inactive` };
-    }
-
-    if (!tokenB.isActive) {
-      return { isValid: false, error: `Token B (${tokenB.symbol}) is currently inactive` };
-    }
-
-    return { isValid: true };
   }
 
   /**
-   * Get token category by mint address
+   * Get token category by symbol
    */
-  private getTokenCategory(mintAddress: string): 'xstock' | 'crypto' | 'stablecoin' {
-    const token = TokenService.SUPPORTED_TOKENS.find(t => t.mintAddress === mintAddress);
-    return token?.category || 'crypto';
+  private getTokenCategory(symbol: string): 'xstock' | 'crypto' | 'stablecoin' {
+    if (symbol.endsWith('x')) {
+      return 'xstock';
+    }
+    if (['USDC', 'USDT', 'BUSD', 'DAI', 'FRAX'].includes(symbol)) {
+      return 'stablecoin';
+    }
+    return 'crypto';
   }
 
   /**
-   * Check if token is active
+   * Check if token is active (all tokens from database are considered active)
    */
   private isTokenActive(mintAddress: string): boolean {
-    const token = TokenService.SUPPORTED_TOKENS.find(t => t.mintAddress === mintAddress);
-    return token?.isActive || false;
+    // For now, all tokens in our curated database are considered active
+    return true;
   }
 
   /**

@@ -102,6 +102,27 @@ export function createTradingWalletsRouter() {
     }
   });
 
+  // Update trading wallet name
+  router.put('/:walletPubkey/name', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    console.log('Received PUT request to update trading wallet name');
+    const { walletPubkey } = req.params;
+    const { name } = req.body;
+    console.log('Wallet public key:', walletPubkey);
+    console.log('New name:', name);
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Name is required and must be a string' });
+    }
+
+    try {
+      await walletService.updateWalletName(walletPubkey, name, req.user!.main_wallet_pubkey);
+      res.json({ success: true, message: 'Wallet name updated successfully' });
+    } catch (error) {
+      console.error('Error updating wallet name:', error);
+      res.status(500).json({ error: 'Failed to update wallet name' });
+    }
+  });
+
   // Get trading wallet ID by public key
   router.get('/by-pubkey/:walletPubkey', authMiddleware, async (req: AuthenticatedRequest, res) => {
     console.log('Received GET request for trading wallet ID by public key');

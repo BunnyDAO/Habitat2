@@ -112,6 +112,19 @@ export const tradingWalletService = {
       console.error('Error getting trading wallet ID:', error);
       throw error;
     }
+  },
+
+  async updateWalletName(publicKey: string, newName: string): Promise<void> {
+    try {
+      console.log(`Updating wallet name for ${publicKey} to "${newName}"`);
+      const response = await apiClient.put(`${TRADING_WALLETS_ENDPOINT}/${publicKey}/name`, { 
+        name: newName 
+      });
+      console.log('Wallet name update response:', response.data);
+    } catch (error) {
+      console.error('Error updating wallet name:', error);
+      throw error;
+    }
   }
 };
 

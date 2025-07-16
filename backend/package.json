@@ -15,6 +15,7 @@
     "start:partitions": "ts-node src/scripts/manage_partitions.ts",
     "update-tokens": "ts-node src/scripts/update-token-data.ts",
     "update-prices": "ts-node src/scripts/update-token-prices.ts",
+    "update-xstock-tokens": "ts-node src/scripts/update-xstock-tokens.ts",
     "run-schema": "ts-node src/scripts/run-schema.ts",
     "initialize-tokens": "ts-node src/scripts/initialize-tokens.ts",
     "start:strategy-executor": "ts-node src/scripts/run-strategy-executor.ts",

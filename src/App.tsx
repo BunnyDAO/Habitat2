@@ -824,6 +824,22 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           levels: strategy.config.levels || []
         } as LevelsStrategy;
         
+      case JobType.PAIR_TRADE:
+        return {
+          ...baseJob,
+          type: JobType.PAIR_TRADE,
+          tokenAMint: strategy.config.tokenAMint,
+          tokenBMint: strategy.config.tokenBMint,
+          tokenASymbol: strategy.config.tokenASymbol,
+          tokenBSymbol: strategy.config.tokenBSymbol,
+          allocationPercentage: strategy.config.allocationPercentage,
+          currentToken: strategy.config.currentToken || 'A',
+          maxSlippage: strategy.config.maxSlippage || 2.0,
+          autoRebalance: strategy.config.autoRebalance || false,
+          lastSwapTimestamp: strategy.config.lastSwapTimestamp,
+          swapHistory: strategy.config.swapHistory || []
+        } as PairTradeJob;
+        
       default:
         throw new Error(`Unknown strategy type: ${strategy.strategy_type}`);
     }
@@ -3315,19 +3331,36 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
-  const updateWalletName = (publicKey: string, newName: string) => {
-    const updatedWallets = tradingWallets.map(wallet =>
-      wallet.publicKey === publicKey ? { ...wallet, name: newName } : wallet
-    );
-    
-    setTradingWallets(updatedWallets);
-    
-    // Save to localStorage
-    if (wallet && wallet.publicKey) {
-      localStorage.setItem('tradingWallets', JSON.stringify({
-        ...JSON.parse(localStorage.getItem('tradingWallets') || '{}'),
-        [wallet.publicKey.toString()]: updatedWallets
-      }));
+  const updateWalletName = async (publicKey: string, newName: string) => {
+    try {
+      // Update database first
+      await tradingWalletService.updateWalletName(publicKey, newName);
+      
+      // Then update local state
+      const updatedWallets = tradingWallets.map(wallet =>
+        wallet.publicKey === publicKey ? { ...wallet, name: newName } : wallet
+      );
+      
+      setTradingWallets(updatedWallets);
+      
+      // Update localStorage to stay in sync
+      if (wallet && wallet.publicKey) {
+        localStorage.setItem('tradingWallets', JSON.stringify({
+          ...JSON.parse(localStorage.getItem('tradingWallets') || '{}'),
+          [wallet.publicKey.toString()]: updatedWallets
+        }));
+      }
+
+      setNotification({
+        message: 'Wallet name updated successfully',
+        type: 'success'
+      });
+    } catch (error) {
+      console.error('Error updating wallet name:', error);
+      setNotification({
+        message: 'Failed to update wallet name',
+        type: 'error'
+      });
     }
   };
 

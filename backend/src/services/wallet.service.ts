@@ -245,4 +245,24 @@ export class WalletService {
       throw error;
     }
   }
+
+  public async updateWalletName(walletPublicKey: string, newName: string, userId: string): Promise<void> {
+    try {
+      const { error } = await this.supabase
+        .from('trading_wallets')
+        .update({ name: newName })
+        .eq('wallet_pubkey', walletPublicKey)
+        .eq('main_wallet_pubkey', userId);
+
+      if (error) {
+        console.error('Error updating wallet name:', error);
+        throw error;
+      }
+
+      console.log(`Successfully updated wallet name for ${walletPublicKey} to "${newName}"`);
+    } catch (error) {
+      console.error('Error updating wallet name:', error);
+      throw error;
+    }
+  }
 } 
