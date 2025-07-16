@@ -44,7 +44,7 @@ export class PairTradeWorker extends BaseWorker {
       this.connection = createRateLimitedConnection('https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a');
       
       // Validate token pair
-      const validation = this.tokenService.validateTokenPair(
+      const validation = await this.tokenService.validateTokenPair(
         (this.job as PairTradeJob).tokenAMint,
         (this.job as PairTradeJob).tokenBMint
       );

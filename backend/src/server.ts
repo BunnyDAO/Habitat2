@@ -59,11 +59,11 @@ export function createApp() {
   // Initialize supported tokens for pair trading on startup
   setTimeout(async () => {
     try {
-      console.log('🪙 Initializing supported tokens for pair trading...');
-      await pairTradeTokenService.initializeSupportedTokens();
-      console.log('✅ Supported tokens initialized successfully');
+      console.log('🪙 Pair trade token service ready');
+      console.log('💡 To initialize tokens, run: npm run update-xstock-tokens');
+      console.log('✅ Token service initialized successfully');
     } catch (error) {
-      console.error('❌ Error initializing supported tokens:', error);
+      console.error('❌ Error initializing token service:', error);
     }
   }, 2000); // Wait 2 seconds for database connection to be ready
 

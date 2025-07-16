@@ -190,9 +190,10 @@ export async function decryptPrivateKey(
             base64String: encryptedPrivateKey // Log the actual base64 string
         });
         
-        // Validate minimum length
-        if (encryptedData.length <= 28) {
-            throw new Error('Invalid encrypted data format: data too short');
+        // Validate minimum length (IV + some data + auth tag)
+        const minLength = 12 + 1 + 16; // IV + at least 1 byte + auth tag
+        if (encryptedData.length < minLength) {
+            throw new Error(`Invalid encrypted data format: data too short (${encryptedData.length} bytes, minimum ${minLength} required)`);
         }
         
         // Extract IV and encrypted content
@@ -206,8 +207,18 @@ export async function decryptPrivateKey(
             dataSize: data.length,
             dataBytes: Array.from(data),
             expectedAuthTagSize: 16,
-            expectedKeySize: 64
+            expectedKeySize: 64,
+            totalDataLength: encryptedData.length
         });
+        
+        // Check if this looks like an AES-GCM encrypted payload
+        if (data.length < 16) {
+            console.error('🚨 Critical: Encrypted data too short for AES-GCM auth tag');
+            console.error('🚨 Expected format: IV(12) + EncryptedKey(64) + AuthTag(16) = 92 bytes');
+            console.error('🚨 Actual format: IV(12) + Data(' + data.length + ') = ' + encryptedData.length + ' bytes');
+            console.error('🚨 This suggests export/import version mismatch or corrupted data');
+            throw new Error(`Encrypted data too short: ${data.length} bytes (need at least 16 for auth tag)`);
+        }
         
         // Decrypt the data
         const decryptedData = await crypto.subtle.decrypt(

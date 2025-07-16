@@ -55,8 +55,8 @@ async function initializeTokens() {
     
     const tokenService = new TokenService(mockPool as any, null);
     
-    // Initialize the supported tokens
-    await tokenService.initializeSupportedTokens();
+    // Note: initializeSupportedTokens method removed - tokens are now managed via update-xstock-tokens.ts script
+    console.log('Tokens should be initialized using: npm run update-xstock-tokens');
     
     console.log('Successfully initialized supported tokens!');
     
