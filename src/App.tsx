@@ -15,7 +15,7 @@ import PasswordModal from './components/PasswordModal';
 import ImportWalletModal from './components/ImportWalletModal';
 import Notification from './components/Notification';
 import { WhaleTracker } from './components/WhaleTracker/WhaleTracker';
-import { exportWallets, storeWalletSecretKey } from './utils/walletExportImport';
+import { exportWallets, storeWalletSecretKey, getWalletSecretKey } from './utils/walletExportImport';
 import { importLackeys, mergeLackeys } from './utils/lackeyExportImport';
 import WalletLimitDialog from './components/WalletLimitDialog';
 import DeleteWalletDialog from './components/DeleteWalletDialog';
@@ -772,13 +772,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
     }
 
+    // Load secret key from localStorage
+    const tradingWalletPublicKey = strategy.wallet_pubkey || strategy.current_wallet_pubkey;
+    const secretKey = getWalletSecretKey(tradingWalletPublicKey);
+    
+    if (!secretKey || secretKey.length !== 64) {
+      console.warn(`Warning: No valid secret key found for trading wallet ${tradingWalletPublicKey}. Strategy will be loaded but workers may fail.`);
+    }
+
     const baseJob = {
       id: strategy.id.toString(),
-      tradingWalletPublicKey: strategy.wallet_pubkey || strategy.current_wallet_pubkey,
+      tradingWalletPublicKey,
       isActive: strategy.is_active ?? true,
       createdAt: strategy.created_at,
       name: strategyName,
-      tradingWalletSecretKey: new Uint8Array(), // Will be loaded separately if needed
+      tradingWalletSecretKey: secretKey || new Uint8Array(),
       profitTracking: {
         initialBalance: 0,
         currentProfit: 0,

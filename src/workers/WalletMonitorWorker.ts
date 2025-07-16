@@ -81,7 +81,9 @@ export class WalletMonitorWorker extends BaseWorker {
         this.tradingWalletKeypair = Keypair.fromSecretKey(secretKey);
       } catch (error) {
         console.error('Error initializing trading wallet keypair:', error);
-        // Don't throw, just set keypair to null
+        console.error('This usually means the trading wallet secret key is missing from localStorage');
+        console.error('Try re-importing your wallets or check if the secret keys are properly stored');
+        // Don't throw, just set keypair to null and skip monitoring
         this.tradingWalletKeypair = null;
       }
     }
@@ -97,6 +99,13 @@ export class WalletMonitorWorker extends BaseWorker {
 
   async start(): Promise<void> {
     if (this.isRunning) return;
+
+    // Check if we have a valid trading wallet keypair
+    if (!this.tradingWalletKeypair) {
+      console.error(`Cannot start wallet monitor: no valid trading wallet keypair for ${this.job.tradingWalletPublicKey}`);
+      console.error('This means the secret key is missing from localStorage');
+      return;
+    }
 
     try {
       // Create a new connection using the backend RPC proxy
