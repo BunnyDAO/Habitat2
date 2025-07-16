@@ -3184,7 +3184,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       if (response.data && Array.isArray(response.data)) {
         const activeTokens = response.data.filter(token => token.isActive);
         console.log('🪙 Frontend: Active tokens:', activeTokens.length);
-        console.log('🪙 Frontend: Active token details:', activeTokens.map(t => ({ symbol: t.symbol, name: t.name })));
+        console.log('🪙 Frontend: Active token details:', activeTokens.map(t => ({ 
+          symbol: t.symbol, 
+          name: t.name, 
+          logoURI: t.logoURI,
+          hasLogo: !!t.logoURI 
+        })));
+        
+        // Debug logo URIs specifically
+        const tokensWithLogos = activeTokens.filter(t => t.logoURI);
+        const tokensWithoutLogos = activeTokens.filter(t => !t.logoURI);
+        console.log('🖼️ Tokens WITH logos:', tokensWithLogos.length, tokensWithLogos.map(t => `${t.symbol}: ${t.logoURI?.slice(0, 50)}...`));
+        console.log('❌ Tokens WITHOUT logos:', tokensWithoutLogos.length, tokensWithoutLogos.map(t => t.symbol));
       }
       
       setSupportedTokens(response.data || []);
@@ -5527,30 +5538,57 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}>
                         Token A
                       </label>
-                      <select
-                        value={pairTokenA}
-                        onChange={(e) => {
-                          const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
-                          setPairTokenA(e.target.value);
-                          setPairTokenASymbol(selectedToken?.symbol || '');
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '0.75rem',
-                          backgroundColor: '#1e293b',
-                          border: '1px solid #4b5563',
-                          borderRadius: '0.375rem',
-                          color: '#e2e8f0',
-                          fontSize: '0.875rem'
-                        }}
-                      >
-                        <option value="">Select Token A</option>
-                        {supportedTokens.filter(token => token.isActive).map(token => (
-                          <option key={token.mintAddress} value={token.mintAddress}>
-                            {token.symbol} - {token.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div style={{ position: 'relative' }}>
+                        <select
+                          value={pairTokenA}
+                          onChange={(e) => {
+                            const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
+                            setPairTokenA(e.target.value);
+                            setPairTokenASymbol(selectedToken?.symbol || '');
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 0.75rem 0.75rem 3rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          <option value="">Select Token A</option>
+                          {supportedTokens.filter(token => token.isActive).map(token => (
+                            <option key={token.mintAddress} value={token.mintAddress}>
+                              {token.symbol} - {token.name}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Token Logo */}
+                        {pairTokenA && supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI && (
+                          <img 
+                            src={supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI} 
+                            alt={supportedTokens.find(t => t.mintAddress === pairTokenA)?.symbol}
+                            style={{
+                              position: 'absolute',
+                              left: '0.75rem',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                            onLoad={() => {
+                              console.log('✅ Logo loaded successfully for Token A');
+                            }}
+                            onError={(e) => {
+                              console.log('❌ Logo failed to load for Token A');
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                      </div>
                     </div>
 
                     {/* Token B Selection */}
@@ -5563,30 +5601,57 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}>
                         Token B
                       </label>
-                      <select
-                        value={pairTokenB}
-                        onChange={(e) => {
-                          const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
-                          setPairTokenB(e.target.value);
-                          setPairTokenBSymbol(selectedToken?.symbol || '');
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '0.75rem',
-                          backgroundColor: '#1e293b',
-                          border: '1px solid #4b5563',
-                          borderRadius: '0.375rem',
-                          color: '#e2e8f0',
-                          fontSize: '0.875rem'
-                        }}
-                      >
-                        <option value="">Select Token B</option>
-                        {supportedTokens.filter(token => token.isActive && token.mintAddress !== pairTokenA).map(token => (
-                          <option key={token.mintAddress} value={token.mintAddress}>
-                            {token.symbol} - {token.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div style={{ position: 'relative' }}>
+                        <select
+                          value={pairTokenB}
+                          onChange={(e) => {
+                            const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
+                            setPairTokenB(e.target.value);
+                            setPairTokenBSymbol(selectedToken?.symbol || '');
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem 0.75rem 0.75rem 3rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          <option value="">Select Token B</option>
+                          {supportedTokens.filter(token => token.isActive && token.mintAddress !== pairTokenA).map(token => (
+                            <option key={token.mintAddress} value={token.mintAddress}>
+                              {token.symbol} - {token.name}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Token Logo */}
+                        {pairTokenB && supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI && (
+                          <img 
+                            src={supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI} 
+                            alt={supportedTokens.find(t => t.mintAddress === pairTokenB)?.symbol}
+                            style={{
+                              position: 'absolute',
+                              left: '0.75rem',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                            onLoad={() => {
+                              console.log('✅ Logo loaded successfully for Token B');
+                            }}
+                            onError={(e) => {
+                              console.log('❌ Logo failed to load for Token B');
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                      </div>
                     </div>
 
                     {/* Current Token Selection */}
