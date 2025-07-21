@@ -25,7 +25,7 @@ interface PostgresError extends Error {
 
 async function applyMigrations() {
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.DATABASE_URL
   });
 
   try {

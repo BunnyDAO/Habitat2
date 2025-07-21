@@ -227,6 +227,75 @@ router.post('/',
       }
 
       console.log('Successfully created strategy with ID:', data.id);
+
+      // Special handling for pair-trade strategies
+      if (strategy_type === 'pair-trade') {
+        try {
+          // Import services for pair-trade initialization
+          const { ValuationService } = await import('../services/valuation.service');
+          const { HoldingsTracker } = await import('../services/holdings-tracker.service');
+          
+          const valuationService = new ValuationService();
+          const holdingsTracker = new HoldingsTracker(pool);
+
+          // Get initial valuation to determine allocation
+          const valuation = await valuationService.getUndervaluedToken(
+            config.tokenAMint, 
+            config.tokenBMint
+          );
+
+          // Initialize holdings based on allocation percentage and valuation
+          const allocationAmount = config.allocationPercentage || 100; // Use full allocation if not specified
+          const allocationSOL = allocationAmount * 1000000000; // Convert to lamports (assuming 1 SOL base allocation)
+
+          // Determine initial allocation based on valuation
+          let tokenAAmount = 0;
+          let tokenBAmount = 0;
+
+          if (valuation.recommendedToken === 'A') {
+            // Allocate 50% to token A (recommended)
+            tokenAAmount = allocationSOL * 0.5;
+          } else if (valuation.recommendedToken === 'B') {
+            // Allocate 50% to token B (recommended)
+            tokenBAmount = allocationSOL * 0.5;
+          } else {
+            // Equal allocation if no clear recommendation
+            tokenAAmount = allocationSOL * 0.5;
+            tokenBAmount = allocationSOL * 0.5;
+          }
+
+          // Create initial holdings record
+          const initialHoldings = {
+            tokenA: { mint: config.tokenAMint, amount: tokenAAmount },
+            tokenB: { mint: config.tokenBMint, amount: tokenBAmount },
+            totalAllocatedSOL: allocationSOL
+          };
+
+          await holdingsTracker.updateHoldings(data.id, initialHoldings);
+
+          // Record initial allocation trade
+          await holdingsTracker.recordTrade({
+            strategyId: data.id,
+            tradeType: 'initial_allocation',
+            fromMint: 'SOL', // Assuming SOL as base currency
+            toMint: valuation.recommendedToken === 'A' ? config.tokenAMint : config.tokenBMint,
+            inputAmount: allocationSOL,
+            outputAmount: valuation.recommendedToken === 'A' ? tokenAAmount : tokenBAmount,
+            percentageTraded: 50,
+            executionStatus: 'completed',
+            signalData: {
+              initialValuation: valuation,
+              allocationReason: `Initial allocation based on valuation - ${valuation.recommendedToken} token is recommended`
+            }
+          });
+
+          console.log('✅ Pair-trade strategy initialized with valuation-based allocation');
+        } catch (error) {
+          console.error('⚠️ Error initializing pair-trade strategy holdings:', error);
+          // Continue anyway - strategy was created successfully, holdings can be initialized later
+        }
+      }
+
       res.json(data);
     } catch (error) {
       console.error('Error in strategy creation:', error);
@@ -881,6 +950,117 @@ router.post('/tokens/validate-pair',
     } catch (error) {
       console.error('Error validating token pair:', error);
       res.status(500).json({ error: 'Failed to validate token pair' });
+    }
+  }
+);
+
+// Get strategy holdings
+router.get('/:id/holdings',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'pair-trade')
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Pair trade strategy not found or access denied' });
+      }
+
+      // Import HoldingsTracker here to avoid circular dependency
+      const { HoldingsTracker } = await import('../services/holdings-tracker.service');
+      const holdingsTracker = new HoldingsTracker(pool);
+
+      const holdings = await holdingsTracker.getHoldings(id);
+      
+      if (!holdings) {
+        return res.json({
+          success: true,
+          data: null,
+          message: 'No holdings found for this strategy'
+        });
+      }
+
+      // Calculate portfolio value
+      const portfolioValue = await holdingsTracker.calculatePortfolioValue(holdings);
+
+      res.json({
+        success: true,
+        data: {
+          holdings,
+          portfolioValue
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching strategy holdings:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch strategy holdings',
+        message: (error as Error).message
+      });
+    }
+  }
+);
+
+// Get strategy trade history
+router.get('/:id/trade-history',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'pair-trade')
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Pair trade strategy not found or access denied' });
+      }
+
+      // Import HoldingsTracker here to avoid circular dependency
+      const { HoldingsTracker } = await import('../services/holdings-tracker.service');
+      const holdingsTracker = new HoldingsTracker(pool);
+
+      const tradeHistory = await holdingsTracker.getTradeHistory(id, limit, offset);
+
+      res.json({
+        success: true,
+        data: tradeHistory,
+        pagination: {
+          limit,
+          offset,
+          count: tradeHistory.length
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching strategy trade history:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch strategy trade history',
+        message: (error as Error).message
+      });
     }
   }
 );

@@ -608,7 +608,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [pairTokenASymbol, setPairTokenASymbol] = useState('');
   const [pairTokenBSymbol, setPairTokenBSymbol] = useState('');
   const [pairAllocationPercentage, setPairAllocationPercentage] = useState<string | number>('50');
-  const [pairCurrentToken, setPairCurrentToken] = useState<'A' | 'B'>('A');
   const [pairMaxSlippage, setPairMaxSlippage] = useState<string | number>('1');
   const [supportedTokens, setSupportedTokens] = useState<any[]>([]);
   const [isLoadingTokens, setIsLoadingTokens] = useState(false);
@@ -953,51 +952,33 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       setJobs(allJobs);
       
-      // Extract unique trading wallets from strategy jobs only (exclude main wallet from saved wallet jobs)
-      const strategyJobs = convertedStrategies; // These have the actual trading wallet addresses
-      const uniqueWalletAddresses = [...new Set(strategyJobs.map(job => job.tradingWalletPublicKey))];
+      // Fetch ALL trading wallets from backend database first (not just ones with strategies)
+      console.log('🔍 IMPROVED: Fetching ALL trading wallets from backend database...');
+      let allTradingWallets: any[] = [];
+      try {
+        allTradingWallets = await tradingWalletService.getWallets(wallet.publicKey?.toString() || '');
+        console.log('🔍 IMPROVED: Found', allTradingWallets.length, 'trading wallets in database:', allTradingWallets);
+      } catch (error) {
+        console.error('❌ Could not fetch trading wallets from backend:', error);
+      }
       
-      // Debug: Log available data for wallet name lookup
-      console.log('🔍 DEBUG: Available savedWallets:', savedWallets);
-      console.log('🔍 DEBUG: Looking for wallet addresses:', uniqueWalletAddresses);
+      // Get strategy wallet addresses for comparison
+      const strategyJobs = convertedStrategies;
+      const strategyWalletAddresses = new Set(strategyJobs.map(job => job.tradingWalletPublicKey));
+      console.log('🔍 IMPROVED: Strategy wallet addresses:', Array.from(strategyWalletAddresses));
       
-      // Also check localStorage for trading wallets
-      const ownerAddress = wallet.publicKey?.toString();
-      const localStorageKey = `tradingWallets_${ownerAddress}`;
-      const localStorageTradingWallets = localStorage.getItem(localStorageKey);
-      console.log('🔍 DEBUG: localStorage trading wallets:', localStorageTradingWallets ? JSON.parse(localStorageTradingWallets) : 'not found');
-      
-      // Get wallet names from localStorage or backend
-      const tradingWalletsFromJobs = await Promise.all(uniqueWalletAddresses.map(async (address, index) => {
-        // Try to get wallet name from saved wallets first
-        const savedWallet = savedWallets.find(w => w.wallet_address === address);
-        console.log(`🔍 DEBUG: For address ${address}, found savedWallet:`, savedWallet);
-        let walletName = savedWallet?.name;
+      // Create trading wallet objects from ALL database wallets
+      const tradingWalletsFromJobs = allTradingWallets.map((backendWallet, index) => {
+        const address = backendWallet.publicKey || backendWallet.wallet_pubkey;
         
-        // If not found in savedWallets, try localStorage trading wallets
-        if (!walletName && localStorageTradingWallets) {
-          try {
-            const localWallets = JSON.parse(localStorageTradingWallets);
-            const localWallet = localWallets.find((w: any) => w.publicKey === address);
-            console.log(`🔍 DEBUG: For address ${address}, found localStorage wallet:`, localWallet);
-            walletName = localWallet?.name;
-          } catch (error) {
-            console.log('Error parsing localStorage trading wallets:', error);
-          }
-        }
+        // Try to get wallet name from multiple sources
+        let walletName = backendWallet.name; // Backend should have the name
         
-        // If not found in saved wallets, try to query from backend
+        // If not found in backend, try saved wallets
         if (!walletName) {
-          try {
-            console.log(`🔍 DEBUG: Fetching trading wallet names from backend for owner: ${wallet.publicKey?.toString()}`);
-            const tradingWallets = await tradingWalletService.getWallets(wallet.publicKey?.toString() || '');
-            console.log(`🔍 DEBUG: Trading wallets response:`, tradingWallets);
-            const foundWallet = tradingWallets.find((tw: any) => tw.publicKey === address);
-            console.log(`🔍 DEBUG: Looking for address ${address}, found wallet:`, foundWallet);
-            walletName = foundWallet?.name;
-          } catch (error) {
-            console.log('Could not fetch trading wallet name from backend:', error);
-          }
+          const savedWallet = savedWallets.find(w => w.wallet_address === address);
+          walletName = savedWallet?.name;
+          console.log(`🔍 IMPROVED: For address ${address}, found savedWallet name:`, walletName);
         }
         
         // Fallback to address-based name
@@ -1009,12 +990,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           publicKey: address,
           name: walletName,
           secretKey: new Uint8Array(), // Will be loaded when needed
-          strategies: []
+          strategies: [],
+          hasStrategies: strategyWalletAddresses.has(address) // Track which ones have strategies
         };
-      }));
+      });
       
-      console.log('🔗 Extracted', tradingWalletsFromJobs.length, 'trading wallets from strategy jobs:', uniqueWalletAddresses);
-      console.log('🔗 Trading wallet details:', tradingWalletsFromJobs.map(tw => `${tw.name} (${tw.publicKey})`));
+      console.log('🔗 IMPROVED: Loaded', tradingWalletsFromJobs.length, 'trading wallets from backend database');
+      console.log('🔗 IMPROVED: Trading wallet details:', tradingWalletsFromJobs.map(tw => `${tw.name} (${tw.publicKey}) - Has strategies: ${tw.hasStrategies}`));
       setTradingWallets(tradingWalletsFromJobs);
       
       // Cache for next time (only if we actually got backend data)
@@ -3325,7 +3307,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         tokenASymbol: pairTokenASymbol,
         tokenBSymbol: pairTokenBSymbol,
         allocationPercentage: Number(pairAllocationPercentage),
-        currentToken: pairCurrentToken,
         maxSlippage: Number(pairMaxSlippage),
         autoRebalance: false
       });
@@ -5819,47 +5800,29 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       )}
                     </div>
 
-                    {/* Current Token Selection */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ 
-                        display: 'block',
-                        marginBottom: '0.5rem',
-                        color: '#e2e8f0',
-                        fontSize: '0.875rem'
+                    {/* Valuation-Based Allocation Info */}
+                    <div style={{ 
+                      marginBottom: '1rem',
+                      padding: '0.75rem',
+                      backgroundColor: '#0f172a',
+                      borderRadius: '0.375rem',
+                      border: '1px solid #374151'
+                    }}>
+                      <div style={{ 
+                        color: '#10b981',
+                        fontSize: '0.875rem',
+                        fontWeight: '600',
+                        marginBottom: '0.25rem'
                       }}>
-                        Currently Holding
-                      </label>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                          onClick={() => setPairCurrentToken('A')}
-                          style={{
-                            flex: 1,
-                            padding: '0.75rem',
-                            backgroundColor: pairCurrentToken === 'A' ? '#3b82f6' : '#1e293b',
-                            border: '1px solid ' + (pairCurrentToken === 'A' ? '#60a5fa' : '#4b5563'),
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          Token A ({pairTokenASymbol || 'Not Selected'})
-                        </button>
-                        <button
-                          onClick={() => setPairCurrentToken('B')}
-                          style={{
-                            flex: 1,
-                            padding: '0.75rem',
-                            backgroundColor: pairCurrentToken === 'B' ? '#3b82f6' : '#1e293b',
-                            border: '1px solid ' + (pairCurrentToken === 'B' ? '#60a5fa' : '#4b5563'),
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          Token B ({pairTokenBSymbol || 'Not Selected'})
-                        </button>
+                        🤖 Automated Allocation
+                      </div>
+                      <div style={{ 
+                        color: '#94a3b8',
+                        fontSize: '0.75rem',
+                        lineHeight: '1.4'
+                      }}>
+                        The system will automatically allocate 50% to the undervalued token based on external market analysis. 
+                        Allocation will adjust automatically via external trading signals.
                       </div>
                     </div>
 
@@ -5964,6 +5927,163 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     >
                       Create Pair Trade Strategy
                     </button>
+
+                    {/* Strategy Holdings Display */}
+                    {selectedTradingWallet && (
+                      <div style={{ marginTop: '1.5rem' }}>
+                        <div style={{
+                          backgroundColor: '#0f172a',
+                          borderRadius: '0.5rem',
+                          border: '1px solid #374151',
+                          padding: '1rem'
+                        }}>
+                          <h4 style={{
+                            color: '#e2e8f0',
+                            margin: '0 0 1rem 0',
+                            fontSize: '1rem',
+                            fontWeight: '600'
+                          }}>
+                            Portfolio Holdings
+                          </h4>
+                          
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '1rem',
+                            marginBottom: '1rem'
+                          }}>
+                            {/* Token A Holdings */}
+                            <div style={{
+                              backgroundColor: '#1e293b',
+                              padding: '0.75rem',
+                              borderRadius: '0.375rem',
+                              border: '1px solid #374151'
+                            }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                marginBottom: '0.5rem'
+                              }}>
+                                {pairTokenA && supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI && (
+                                  <img 
+                                    src={supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI} 
+                                    alt={pairTokenASymbol}
+                                    style={{
+                                      width: '24px',
+                                      height: '24px',
+                                      borderRadius: '50%',
+                                      border: '1px solid #374151'
+                                    }}
+                                  />
+                                )}
+                                <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
+                                  {pairTokenASymbol || 'Token A'}
+                                </span>
+                              </div>
+                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
+                                Amount: Loading...
+                              </div>
+                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
+                                Value: Loading...
+                              </div>
+                            </div>
+
+                            {/* Token B Holdings */}
+                            <div style={{
+                              backgroundColor: '#1e293b',
+                              padding: '0.75rem',
+                              borderRadius: '0.375rem',
+                              border: '1px solid #374151'
+                            }}>
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                marginBottom: '0.5rem'
+                              }}>
+                                {pairTokenB && supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI && (
+                                  <img 
+                                    src={supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI} 
+                                    alt={pairTokenBSymbol}
+                                    style={{
+                                      width: '24px',
+                                      height: '24px',
+                                      borderRadius: '50%',
+                                      border: '1px solid #374151'
+                                    }}
+                                  />
+                                )}
+                                <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
+                                  {pairTokenBSymbol || 'Token B'}
+                                </span>
+                              </div>
+                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
+                                Amount: Loading...
+                              </div>
+                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
+                                Value: Loading...
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Portfolio Summary */}
+                          <div style={{
+                            backgroundColor: '#1e293b',
+                            padding: '0.75rem',
+                            borderRadius: '0.375rem',
+                            border: '1px solid #374151'
+                          }}>
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}>
+                              <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
+                                Total Portfolio Value
+                              </span>
+                              <span style={{ color: '#10b981', fontSize: '1rem', fontWeight: '700' }}>
+                                $0.00
+                              </span>
+                            </div>
+                            <div style={{ 
+                              color: '#94a3b8', 
+                              fontSize: '0.75rem',
+                              marginTop: '0.25rem'
+                            }}>
+                              Allocation Efficiency: Loading...
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Trade History */}
+                        <div style={{
+                          backgroundColor: '#0f172a',
+                          borderRadius: '0.5rem',
+                          border: '1px solid #374151',
+                          padding: '1rem',
+                          marginTop: '1rem'
+                        }}>
+                          <h4 style={{
+                            color: '#e2e8f0',
+                            margin: '0 0 1rem 0',
+                            fontSize: '1rem',
+                            fontWeight: '600'
+                          }}>
+                            Recent Trades
+                          </h4>
+                          
+                          <div style={{
+                            color: '#94a3b8',
+                            fontSize: '0.875rem',
+                            textAlign: 'center',
+                            padding: '2rem'
+                          }}>
+                            No trades yet. Create a strategy to begin automated trading.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -29,6 +29,8 @@ import rpcRouter from './routes/rpc.routes';
 import strategyPublishingRouter from './routes/strategy-publishing.routes';
 import strategyMarketplaceRouter from './routes/strategy-marketplace.routes';
 import strategyReviewsRouter from './routes/strategy-reviews.routes';
+import { createValuationRoutes } from './routes/valuation.routes';
+import { createTriggersRoutes } from './routes/triggers.routes';
 
 // Load environment variables from the correct path
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -97,6 +99,8 @@ export function createApp() {
   app.use('/api/v1/strategies', createStrategiesRouter(pool, redisClient));
   app.use('/api/v1/saved-wallets', savedWalletsRouter);
   app.use('/api/v1/wallet-transactions', walletTransactionRouter);
+  app.use('/api/v1/valuation', createValuationRoutes(pool));
+  app.use('/api/v1/triggers', createTriggersRoutes(pool));
   
   // Strategy Publishing and Marketplace routes
   app.use('/api/strategies', strategyPublishingRouter);
