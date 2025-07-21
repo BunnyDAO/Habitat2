@@ -5611,7 +5611,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         display: 'block',
                         marginBottom: '0.5rem',
                         color: '#e2e8f0',
-                        fontSize: '0.875rem'
+                        fontSize: '1rem',
+                        fontWeight: '500'
                       }}>
                         Token A
                       </label>
@@ -5630,7 +5631,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             border: '1px solid #4b5563',
                             borderRadius: '0.375rem',
                             color: '#e2e8f0',
-                            fontSize: '0.875rem'
+                            fontSize: '1rem',
+                            fontWeight: '500'
                           }}
                         >
                           <option value="">Select Token A</option>
@@ -5650,11 +5652,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               left: '0.75rem',
                               top: '50%',
                               transform: 'translateY(-50%)',
-                              width: '24px',
-                              height: '24px',
+                              width: '28px',
+                              height: '28px',
                               borderRadius: '50%',
                               pointerEvents: 'none',
-                              zIndex: 1
+                              zIndex: 1,
+                              border: '2px solid #374151'
                             }}
                             onLoad={() => {
                               console.log('✅ Logo loaded successfully for Token A');
@@ -5666,6 +5669,47 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           />
                         )}
                       </div>
+                      {/* Selected Token A Display */}
+                      {pairTokenA && (
+                        <div style={{
+                          marginTop: '0.5rem',
+                          padding: '0.75rem',
+                          backgroundColor: '#0f172a',
+                          borderRadius: '0.375rem',
+                          border: '1px solid #374151',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.75rem'
+                        }}>
+                          {supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI && (
+                            <img 
+                              src={supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI} 
+                              alt={supportedTokens.find(t => t.mintAddress === pairTokenA)?.symbol}
+                              style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                border: '2px solid #374151'
+                              }}
+                            />
+                          )}
+                          <div>
+                            <div style={{ 
+                              color: '#e2e8f0', 
+                              fontSize: '1.125rem', 
+                              fontWeight: '600' 
+                            }}>
+                              {supportedTokens.find(t => t.mintAddress === pairTokenA)?.symbol}
+                            </div>
+                            <div style={{ 
+                              color: '#94a3b8', 
+                              fontSize: '0.875rem' 
+                            }}>
+                              {supportedTokens.find(t => t.mintAddress === pairTokenA)?.name}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Token B Selection */}
@@ -5674,7 +5718,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         display: 'block',
                         marginBottom: '0.5rem',
                         color: '#e2e8f0',
-                        fontSize: '0.875rem'
+                        fontSize: '1rem',
+                        fontWeight: '500'
                       }}>
                         Token B
                       </label>
@@ -5693,7 +5738,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             border: '1px solid #4b5563',
                             borderRadius: '0.375rem',
                             color: '#e2e8f0',
-                            fontSize: '0.875rem'
+                            fontSize: '1rem',
+                            fontWeight: '500'
                           }}
                         >
                           <option value="">Select Token B</option>
@@ -5713,11 +5759,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               left: '0.75rem',
                               top: '50%',
                               transform: 'translateY(-50%)',
-                              width: '24px',
-                              height: '24px',
+                              width: '28px',
+                              height: '28px',
                               borderRadius: '50%',
                               pointerEvents: 'none',
-                              zIndex: 1
+                              zIndex: 1,
+                              border: '2px solid #374151'
                             }}
                             onLoad={() => {
                               console.log('✅ Logo loaded successfully for Token B');
@@ -5729,6 +5776,47 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           />
                         )}
                       </div>
+                      {/* Selected Token B Display */}
+                      {pairTokenB && (
+                        <div style={{
+                          marginTop: '0.5rem',
+                          padding: '0.75rem',
+                          backgroundColor: '#0f172a',
+                          borderRadius: '0.375rem',
+                          border: '1px solid #374151',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.75rem'
+                        }}>
+                          {supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI && (
+                            <img 
+                              src={supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI} 
+                              alt={supportedTokens.find(t => t.mintAddress === pairTokenB)?.symbol}
+                              style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                border: '2px solid #374151'
+                              }}
+                            />
+                          )}
+                          <div>
+                            <div style={{ 
+                              color: '#e2e8f0', 
+                              fontSize: '1.125rem', 
+                              fontWeight: '600' 
+                            }}>
+                              {supportedTokens.find(t => t.mintAddress === pairTokenB)?.symbol}
+                            </div>
+                            <div style={{ 
+                              color: '#94a3b8', 
+                              fontSize: '0.875rem' 
+                            }}>
+                              {supportedTokens.find(t => t.mintAddress === pairTokenB)?.name}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Current Token Selection */}
