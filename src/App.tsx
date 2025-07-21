@@ -840,7 +840,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           tokenASymbol: strategy.config.tokenASymbol,
           tokenBSymbol: strategy.config.tokenBSymbol,
           allocationPercentage: strategy.config.allocationPercentage,
-          currentToken: strategy.config.currentToken || 'A',
           maxSlippage: strategy.config.maxSlippage || 2.0,
           autoRebalance: strategy.config.autoRebalance || false,
           lastSwapTimestamp: strategy.config.lastSwapTimestamp,
@@ -1759,7 +1758,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             title: 'Pair Trade',
                             details: [
                               `Pair: ${pairTradeJob.tokenASymbol} ↔ ${pairTradeJob.tokenBSymbol}`,
-                              `Currently: ${pairTradeJob.currentToken === 'A' ? pairTradeJob.tokenASymbol : pairTradeJob.tokenBSymbol}`,
+                              `Automated allocation based on valuation`,
                               `Allocation: ${pairTradeJob.allocationPercentage}%`,
                               `Max Slippage: ${pairTradeJob.maxSlippage}%`,
                               pairTradeJob.lastSwapTimestamp ? `Last Swap: ${new Date(pairTradeJob.lastSwapTimestamp).toLocaleString()}` : null,
@@ -3337,7 +3336,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       setPairTokenASymbol('');
       setPairTokenBSymbol('');
       setPairAllocationPercentage('50');
-      setPairCurrentToken('A');
       setPairMaxSlippage('1');
     } catch (error) {
       console.error('Error creating pair trade strategy:', error);
@@ -5927,163 +5925,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     >
                       Create Pair Trade Strategy
                     </button>
-
-                    {/* Strategy Holdings Display */}
-                    {selectedTradingWallet && (
-                      <div style={{ marginTop: '1.5rem' }}>
-                        <div style={{
-                          backgroundColor: '#0f172a',
-                          borderRadius: '0.5rem',
-                          border: '1px solid #374151',
-                          padding: '1rem'
-                        }}>
-                          <h4 style={{
-                            color: '#e2e8f0',
-                            margin: '0 0 1rem 0',
-                            fontSize: '1rem',
-                            fontWeight: '600'
-                          }}>
-                            Portfolio Holdings
-                          </h4>
-                          
-                          <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: '1fr 1fr',
-                            gap: '1rem',
-                            marginBottom: '1rem'
-                          }}>
-                            {/* Token A Holdings */}
-                            <div style={{
-                              backgroundColor: '#1e293b',
-                              padding: '0.75rem',
-                              borderRadius: '0.375rem',
-                              border: '1px solid #374151'
-                            }}>
-                              <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                marginBottom: '0.5rem'
-                              }}>
-                                {pairTokenA && supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI && (
-                                  <img 
-                                    src={supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI} 
-                                    alt={pairTokenASymbol}
-                                    style={{
-                                      width: '24px',
-                                      height: '24px',
-                                      borderRadius: '50%',
-                                      border: '1px solid #374151'
-                                    }}
-                                  />
-                                )}
-                                <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
-                                  {pairTokenASymbol || 'Token A'}
-                                </span>
-                              </div>
-                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                                Amount: Loading...
-                              </div>
-                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                                Value: Loading...
-                              </div>
-                            </div>
-
-                            {/* Token B Holdings */}
-                            <div style={{
-                              backgroundColor: '#1e293b',
-                              padding: '0.75rem',
-                              borderRadius: '0.375rem',
-                              border: '1px solid #374151'
-                            }}>
-                              <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                marginBottom: '0.5rem'
-                              }}>
-                                {pairTokenB && supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI && (
-                                  <img 
-                                    src={supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI} 
-                                    alt={pairTokenBSymbol}
-                                    style={{
-                                      width: '24px',
-                                      height: '24px',
-                                      borderRadius: '50%',
-                                      border: '1px solid #374151'
-                                    }}
-                                  />
-                                )}
-                                <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
-                                  {pairTokenBSymbol || 'Token B'}
-                                </span>
-                              </div>
-                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                                Amount: Loading...
-                              </div>
-                              <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                                Value: Loading...
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Portfolio Summary */}
-                          <div style={{
-                            backgroundColor: '#1e293b',
-                            padding: '0.75rem',
-                            borderRadius: '0.375rem',
-                            border: '1px solid #374151'
-                          }}>
-                            <div style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center'
-                            }}>
-                              <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: '600' }}>
-                                Total Portfolio Value
-                              </span>
-                              <span style={{ color: '#10b981', fontSize: '1rem', fontWeight: '700' }}>
-                                $0.00
-                              </span>
-                            </div>
-                            <div style={{ 
-                              color: '#94a3b8', 
-                              fontSize: '0.75rem',
-                              marginTop: '0.25rem'
-                            }}>
-                              Allocation Efficiency: Loading...
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Trade History */}
-                        <div style={{
-                          backgroundColor: '#0f172a',
-                          borderRadius: '0.5rem',
-                          border: '1px solid #374151',
-                          padding: '1rem',
-                          marginTop: '1rem'
-                        }}>
-                          <h4 style={{
-                            color: '#e2e8f0',
-                            margin: '0 0 1rem 0',
-                            fontSize: '1rem',
-                            fontWeight: '600'
-                          }}>
-                            Recent Trades
-                          </h4>
-                          
-                          <div style={{
-                            color: '#94a3b8',
-                            fontSize: '0.875rem',
-                            textAlign: 'center',
-                            padding: '2rem'
-                          }}>
-                            No trades yet. Create a strategy to begin automated trading.
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

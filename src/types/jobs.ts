@@ -106,7 +106,6 @@ export interface PairTradeJob extends BaseJob {
   tokenASymbol: string;
   tokenBSymbol: string;
   allocationPercentage: number;
-  currentToken: 'A' | 'B';
   maxSlippage: number;
   autoRebalance: boolean;
   lastSwapTimestamp?: string;

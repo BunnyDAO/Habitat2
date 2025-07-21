@@ -91,7 +91,7 @@ export const validateStrategyRequest = (
 
     case 'pair-trade':
       console.log('Validating pair trade config:', config);
-      const requiredFields = ['tokenAMint', 'tokenBMint', 'tokenASymbol', 'tokenBSymbol', 'allocationPercentage', 'currentToken'];
+      const requiredFields = ['tokenAMint', 'tokenBMint', 'tokenASymbol', 'tokenBSymbol', 'allocationPercentage'];
       const missingFields = requiredFields.filter(field => !config[field]);
       
       if (missingFields.length > 0) {
@@ -121,14 +121,6 @@ export const validateStrategyRequest = (
         });
       }
       
-      // Validate current token
-      if (config.currentToken !== 'A' && config.currentToken !== 'B') {
-        console.log('Invalid pair trade config - invalid current token:', config.currentToken);
-        return res.status(400).json({
-          error: 'Invalid pair trade configuration',
-          details: 'Current token must be either "A" or "B"'
-        });
-      }
       
       // Validate max slippage if provided
       if (config.maxSlippage && (config.maxSlippage < 0.1 || config.maxSlippage > 10)) {

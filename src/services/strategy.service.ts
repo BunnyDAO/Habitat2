@@ -39,7 +39,6 @@ interface PairTradeParams extends BaseStrategyParams {
   tokenASymbol: string;
   tokenBSymbol: string;
   allocationPercentage: number;
-  currentToken: 'A' | 'B';
   maxSlippage: number;
   autoRebalance: boolean;
 }
@@ -297,7 +296,6 @@ export class StrategyService {
         tokenASymbol: params.tokenASymbol,
         tokenBSymbol: params.tokenBSymbol,
         allocationPercentage: params.allocationPercentage,
-        currentToken: params.currentToken,
         maxSlippage: params.maxSlippage,
         autoRebalance: params.autoRebalance
       }
@@ -313,7 +311,6 @@ export class StrategyService {
       tokenASymbol: params.tokenASymbol,
       tokenBSymbol: params.tokenBSymbol,
       allocationPercentage: params.allocationPercentage,
-      currentToken: params.currentToken,
       maxSlippage: params.maxSlippage,
       autoRebalance: params.autoRebalance,
       swapHistory: [],
