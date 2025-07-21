@@ -953,6 +953,70 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       setJobs(allJobs);
       
+      // Extract unique trading wallets from strategy jobs only (exclude main wallet from saved wallet jobs)
+      const strategyJobs = convertedStrategies; // These have the actual trading wallet addresses
+      const uniqueWalletAddresses = [...new Set(strategyJobs.map(job => job.tradingWalletPublicKey))];
+      
+      // Debug: Log available data for wallet name lookup
+      console.log('🔍 DEBUG: Available savedWallets:', savedWallets);
+      console.log('🔍 DEBUG: Looking for wallet addresses:', uniqueWalletAddresses);
+      
+      // Also check localStorage for trading wallets
+      const ownerAddress = wallet.publicKey?.toString();
+      const localStorageKey = `tradingWallets_${ownerAddress}`;
+      const localStorageTradingWallets = localStorage.getItem(localStorageKey);
+      console.log('🔍 DEBUG: localStorage trading wallets:', localStorageTradingWallets ? JSON.parse(localStorageTradingWallets) : 'not found');
+      
+      // Get wallet names from localStorage or backend
+      const tradingWalletsFromJobs = await Promise.all(uniqueWalletAddresses.map(async (address, index) => {
+        // Try to get wallet name from saved wallets first
+        const savedWallet = savedWallets.find(w => w.wallet_address === address);
+        console.log(`🔍 DEBUG: For address ${address}, found savedWallet:`, savedWallet);
+        let walletName = savedWallet?.name;
+        
+        // If not found in savedWallets, try localStorage trading wallets
+        if (!walletName && localStorageTradingWallets) {
+          try {
+            const localWallets = JSON.parse(localStorageTradingWallets);
+            const localWallet = localWallets.find((w: any) => w.publicKey === address);
+            console.log(`🔍 DEBUG: For address ${address}, found localStorage wallet:`, localWallet);
+            walletName = localWallet?.name;
+          } catch (error) {
+            console.log('Error parsing localStorage trading wallets:', error);
+          }
+        }
+        
+        // If not found in saved wallets, try to query from backend
+        if (!walletName) {
+          try {
+            console.log(`🔍 DEBUG: Fetching trading wallet names from backend for owner: ${wallet.publicKey?.toString()}`);
+            const tradingWallets = await tradingWalletService.getWallets(wallet.publicKey?.toString() || '');
+            console.log(`🔍 DEBUG: Trading wallets response:`, tradingWallets);
+            const foundWallet = tradingWallets.find((tw: any) => tw.publicKey === address);
+            console.log(`🔍 DEBUG: Looking for address ${address}, found wallet:`, foundWallet);
+            walletName = foundWallet?.name;
+          } catch (error) {
+            console.log('Could not fetch trading wallet name from backend:', error);
+          }
+        }
+        
+        // Fallback to address-based name
+        if (!walletName) {
+          walletName = `Trading Wallet ${index + 1} (${address.slice(0, 4)}...${address.slice(-4)})`;
+        }
+        
+        return {
+          publicKey: address,
+          name: walletName,
+          secretKey: new Uint8Array(), // Will be loaded when needed
+          strategies: []
+        };
+      }));
+      
+      console.log('🔗 Extracted', tradingWalletsFromJobs.length, 'trading wallets from strategy jobs:', uniqueWalletAddresses);
+      console.log('🔗 Trading wallet details:', tradingWalletsFromJobs.map(tw => `${tw.name} (${tw.publicKey})`));
+      setTradingWallets(tradingWalletsFromJobs);
+      
       // Cache for next time (only if we actually got backend data)
       if (allJobs.length > 0) {
         localStorage.setItem(cacheKey, JSON.stringify(allJobs));
@@ -4128,6 +4192,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   transition: 'all 0.3s ease-in-out',
                   marginTop: isActiveLackeysExpanded ? '1rem' : '0'
                 }}>
+                {console.log(`🔍 ACTIVE LACKEYS DEBUG: jobs.length = ${jobs.length}, tradingWallets.length = ${tradingWallets.length}`)}
                 {jobs.length === 0 ? (
                   <div style={{
                     color: '#94a3b8',
@@ -4144,8 +4209,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {tradingWallets.map((tw) => {
-                      const walletJobs = jobs.filter(job => job.tradingWalletPublicKey === tw.publicKey);
-                      if (walletJobs.length === 0) return null;
+                      console.log(`🔍 WALLET DEBUG: Checking wallet ${tw.publicKey}`);
+                      console.log(`🔍 WALLET DEBUG: Available jobs count: ${jobs.length}`);
+                      
+                      const walletJobs = jobs.filter(job => {
+                        console.log(`🔍 JOB DEBUG: Job ${job.id} has tradingWalletPublicKey: ${job.tradingWalletPublicKey}`);
+                        console.log(`🔍 JOB DEBUG: Comparing '${job.tradingWalletPublicKey}' === '${tw.publicKey}': ${job.tradingWalletPublicKey === tw.publicKey}`);
+                        return job.tradingWalletPublicKey === tw.publicKey;
+                      });
+                      
+                      console.log(`🔍 WALLET DEBUG: Found ${walletJobs.length} jobs for wallet ${tw.publicKey}`);
+                      if (walletJobs.length === 0) {
+                        console.log(`🔍 WALLET DEBUG: Hiding wallet ${tw.publicKey} - no matching jobs found`);
+                        return null;
+                      }
 
                       return (
                         <div key={tw.publicKey} style={{

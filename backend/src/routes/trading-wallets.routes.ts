@@ -40,7 +40,7 @@ export function createTradingWalletsRouter() {
       // Get all trading wallets for this user
       const { data: wallets, error } = await supabase
         .from('trading_wallets')
-        .select('wallet_pubkey as "publicKey", name, created_at as "createdAt"')
+        .select('wallet_pubkey, name, created_at')
         .eq('main_wallet_pubkey', ownerAddress)
         .order('created_at', { ascending: false });
 
@@ -49,8 +49,15 @@ export function createTradingWalletsRouter() {
         throw error;
       }
 
-      console.log('Found wallets:', wallets);
-      res.json(wallets);
+      // Map database fields to expected frontend format
+      const mappedWallets = wallets?.map(wallet => ({
+        publicKey: wallet.wallet_pubkey,
+        name: wallet.name,
+        createdAt: wallet.created_at
+      })) || [];
+      
+      console.log('Found wallets:', mappedWallets);
+      res.json(mappedWallets);
     } catch (error) {
       console.error('Error fetching trading wallets:', error);
       res.status(500).json({ error: 'Failed to fetch trading wallets' });
