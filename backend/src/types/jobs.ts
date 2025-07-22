@@ -74,7 +74,8 @@ export interface PriceMonitoringJob extends BaseJob {
 
 export interface VaultStrategy extends BaseJob {
   type: JobType.VAULT;
-  vaultPercentage: number;
+  vaultPercentage: number; // Must be capped at 5%
+  mainWalletPublicKey: string; // User's main connected wallet for vault transfers
 }
 
 export interface Level {

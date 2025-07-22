@@ -43,7 +43,11 @@ Create automated trading strategies that work 24/7:
 
 This protects you from missing important trades due to temporary market volatility while preventing excessive slippage losses.
 
-**UI Note for Future**: Add to strategy creation UI: "Note: We automatically retry failed swaps with up to 5% slippage"
+**UI Updates Implemented**:
+- ✅ Vault Strategy: 5% maximum limit enforced in UI
+- ✅ Vault Strategy: Default value set to 0.5%
+- ✅ Vault Strategy: Clear description of functionality and limits
+- **Future**: Add slippage retry note to strategy creation UI
 
 ### Platform Fees
 - **Trading Fee**: 0.2% on all successful swaps

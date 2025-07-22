@@ -633,7 +633,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [sellPercentage, setSellPercentage] = useState<string | number>('5');
   const [jupiterInitialized, setJupiterInitialized] = useState(false);
   const [jupiterError, setJupiterError] = useState<string | null>(null);
-  const [vaultPercentage, setVaultPercentage] = useState<string | number>('');
+  const [vaultPercentage, setVaultPercentage] = useState<string | number>('0.5');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -2959,7 +2959,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         });
       }
 
-      setVaultPercentage(''); // Reset to default
+      setVaultPercentage('0.5'); // Reset to default
     } catch (error) {
       console.error('Error creating vault strategy:', error);
       setNotification({
@@ -5306,9 +5306,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <p style={{ 
                       color: '#94a3b8',
                       margin: '0 0 1.125rem 0',
-                      fontSize: '0.75rem'
+                      fontSize: '0.75rem',
+                      lineHeight: '1.4'
                     }}>
-                      Automate your vault strategy trades with customizable settings
+                      Automatically transfer a percentage of your portfolio to your main connected wallet for safekeeping. 
+                      Tokens are converted to SOL before transfer. <strong style={{ color: '#fbbf24' }}>Maximum 5%</strong> to ensure trading liquidity.
                     </p>
                     <div style={{ marginBottom: '1.5rem' }}>
                       <label style={{ 
@@ -5330,7 +5332,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             } else {
                               const num = parseFloat(value);
                               if (!isNaN(num)) {
-                                setVaultPercentage(Math.min(100, Math.max(0, num)));
+                                // Enforce 5% maximum limit
+                                setVaultPercentage(Math.min(5, Math.max(0, num)));
                               }
                             }
                           }}
@@ -5338,16 +5341,25 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             width: '60px',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
+                            border: `1px solid ${parseFloat(vaultPercentage.toString()) > 5 ? '#ef4444' : '#4b5563'}`,
                             borderRadius: '0.375rem',
                             color: '#e2e8f0',
                             fontSize: '0.875rem'
                           }}
-                          min="1"
-                          max="100"
+                          min="0.1"
+                          max="5"
+                          step="0.1"
+                          placeholder="0.5"
                         />
                         <span style={{ color: '#e2e8f0' }}>%</span>
                       </div>
+                      <p style={{ 
+                        color: '#6b7280',
+                        fontSize: '0.75rem',
+                        margin: '0.25rem 0 0 0'
+                      }}>
+                        Enter 0.1% to 5.0% (Default: 0.5%)
+                      </p>
                     </div>
 
                     <button
