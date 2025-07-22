@@ -14,6 +14,14 @@ export interface StrategyConfig {
     price: number;
     percentage: number;
   }>;
+  // Pair trade specific fields
+  tokenAMint?: string;
+  tokenBMint?: string;
+  tokenASymbol?: string;
+  tokenBSymbol?: string;
+  allocationPercentage?: number;
+  maxSlippage?: number;
+  autoRebalance?: boolean;
 }
 
 export interface CreateStrategyRequest {

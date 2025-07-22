@@ -568,6 +568,57 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const jobManagerRef = useRef<JobManager | null>(null);
   const [tradingWallets, setTradingWallets] = useState<TradingWallet[]>([]);
   const [selectedTradingWallet, setSelectedTradingWallet] = useState<TradingWallet | null>(null);
+
+  // Utility functions for persisting selected trading wallet
+  const saveSelectedTradingWallet = (wallet: TradingWallet | null) => {
+    try {
+      if (wallet) {
+        console.log('💾 Saving selected wallet:', wallet.name, 'publicKey:', wallet.publicKey);
+        localStorage.setItem('selectedTradingWalletPublicKey', wallet.publicKey);
+      } else {
+        console.log('💾 Clearing saved wallet selection');
+        localStorage.removeItem('selectedTradingWalletPublicKey');
+      }
+    } catch (error) {
+      console.warn('Failed to save selected trading wallet:', error);
+    }
+  };
+
+  const restoreSelectedTradingWallet = (wallets: TradingWallet[]) => {
+    try {
+      // Clean up old localStorage key if it exists
+      localStorage.removeItem('selectedTradingWalletId');
+      
+      const savedWalletPublicKey = localStorage.getItem('selectedTradingWalletPublicKey');
+      console.log('🔄 Restoring wallet selection - savedPublicKey:', savedWalletPublicKey);
+      console.log('🔄 Available wallets:', wallets.map(w => ({ name: w.name, publicKey: w.publicKey })));
+      
+      if (savedWalletPublicKey && wallets.length > 0) {
+        const savedWallet = wallets.find(w => w.publicKey === savedWalletPublicKey);
+        console.log('🔄 Found saved wallet:', savedWallet ? savedWallet.name : 'NOT FOUND');
+        
+        if (savedWallet) {
+          setSelectedTradingWallet(savedWallet);
+          console.log('✅ Successfully restored wallet selection:', savedWallet.name);
+          return savedWallet;
+        } else {
+          // Clean up if saved wallet no longer exists
+          console.log('🧹 Cleaning up non-existent saved wallet');
+          localStorage.removeItem('selectedTradingWalletPublicKey');
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to restore selected trading wallet:', error);
+    }
+    console.log('❌ No wallet restored, will use fallback');
+    return null;
+  };
+
+  // Enhanced setSelectedTradingWallet with persistence
+  const handleSetSelectedTradingWallet = (wallet: TradingWallet | null) => {
+    setSelectedTradingWallet(wallet);
+    saveSelectedTradingWallet(wallet);
+  };
   const [expandedWalletId, setExpandedWalletId] = useState<string | 'all' | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState('');
@@ -746,9 +797,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         });
         
         setTradingWallets(processedWallets);
-        // Auto-select the most recently created wallet if none selected
+        // Auto-select: first try to restore from localStorage, then select first wallet
         if (!selectedTradingWallet && processedWallets.length > 0) {
-          setSelectedTradingWallet(processedWallets[processedWallets.length - 1]);
+          const restoredWallet = restoreSelectedTradingWallet(processedWallets);
+          if (!restoredWallet) {
+            handleSetSelectedTradingWallet(processedWallets[0]);
+          }
         }
       }
     }
@@ -966,8 +1020,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const strategyWalletAddresses = new Set(strategyJobs.map(job => job.tradingWalletPublicKey));
       console.log('🔍 IMPROVED: Strategy wallet addresses:', Array.from(strategyWalletAddresses));
       
+      // Sort wallets by creation date (oldest first) to ensure proper ordering
+      const sortedTradingWallets = allTradingWallets.sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.created_at).getTime();
+        const dateB = new Date(b.createdAt || b.created_at).getTime();
+        return dateA - dateB; // Ascending order (oldest first)
+      });
+
       // Create trading wallet objects from ALL database wallets
-      const tradingWalletsFromJobs = allTradingWallets.map((backendWallet, index) => {
+      const tradingWalletsFromJobs = sortedTradingWallets.map((backendWallet, index) => {
         const address = backendWallet.publicKey || backendWallet.wallet_pubkey;
         
         // Try to get wallet name from multiple sources
@@ -1017,7 +1078,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       // Clear jobs and trading wallets when wallet disconnects
       setJobs([]);
       setTradingWallets([]);
-      setSelectedTradingWallet(null);
+      // Only clear wallet selection if we actually had wallets before (not initial load)
+      if (tradingWallets.length > 0) {
+        handleSetSelectedTradingWallet(null);
+      }
       // Also sign out when wallet disconnects
       authService.signOut().catch(error => console.error('Error signing out:', error));
     }
@@ -1077,7 +1141,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     
     localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
     setTradingWallets(allWallets[ownerAddress]);
-    setSelectedTradingWallet(walletToSave);  // Auto-select newly created wallet
+    handleSetSelectedTradingWallet(walletToSave);  // Auto-select newly created wallet
 
     // Save to database (including secret key)
     try {
@@ -1594,7 +1658,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
             <div key={tw.publicKey}>
               <div 
                 className={`${walletStyles.walletItem} ${selectedTradingWallet?.publicKey === tw.publicKey ? walletStyles.active : ''}`}
-                onClick={() => setSelectedTradingWallet(tw)}
+                onClick={() => handleSetSelectedTradingWallet(tw)}
                 onDoubleClick={() => {
                   setExpandedWalletId(expandedWalletId === tw.publicKey ? null : tw.publicKey);
                   setShowPrivateKey(null);
@@ -3678,7 +3742,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       setTradingWallets(uniqueWallets);
       
       if (uniqueWallets.length > 0) {
-        setSelectedTradingWallet(uniqueWallets[0]);
+        const restoredWallet = restoreSelectedTradingWallet(uniqueWallets);
+        if (!restoredWallet) {
+          handleSetSelectedTradingWallet(uniqueWallets[0]);
+        }
       }
     } catch (error) {
       console.error('Error loading trading wallets:', error);
@@ -3850,7 +3917,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     } else {
       setJobs([]);
       setTradingWallets([]);
-      setSelectedTradingWallet(null);
+      // Only clear wallet selection if we actually had wallets before (not initial load)
+      if (tradingWallets.length > 0) {
+        handleSetSelectedTradingWallet(null);
+      }
     }
   }, [wallet.publicKey]);
 
@@ -3982,7 +4052,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     } else {
       setJobs([]);
       setTradingWallets([]);
-      setSelectedTradingWallet(null);
+      // Only clear wallet selection if we actually had wallets before (not initial load)
+      if (tradingWallets.length > 0) {
+        handleSetSelectedTradingWallet(null);
+      }
     }
   }, [wallet.publicKey]);
 

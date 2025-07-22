@@ -56,17 +56,6 @@ export class ValuationService {
   }
 
   private async callValuationAPI(tokenAMint: string, tokenBMint: string): Promise<ValuationAPIResponse> {
-    // Check if we're using test tokens and provide mock response
-    const testTokens = ['XsGOOGLAddress123', 'XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB'];
-    if (testTokens.includes(tokenAMint) || testTokens.includes(tokenBMint)) {
-      console.log('🧪 Using mock valuation for test tokens');
-      return {
-        recommendation: 'A' as 'A' | 'B',
-        reasoning: 'Mock response: Token A appears undervalued based on simulated analysis',
-        confidence: 0.75
-      };
-    }
-
     try {
       const response = await axios.post(process.env.VALUATION_API_URL || 'http://localhost:3002/valuation', {
         tokenA: tokenAMint,
@@ -100,9 +89,9 @@ export class ValuationService {
       return false;
     }
     
-    // Allow demo/test tokens for development
-    const testTokens = ['XsGOOGLAddress123', 'XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB'];
-    if (testTokens.includes(mintAddress)) {
+    // Allow known placeholder addresses for development (until real addresses are available)
+    if (mintAddress === 'XsGOOGLAddress123') {
+      console.log('⚠️ Using placeholder address for GOOGLx - should be updated with real mint address');
       return true;
     }
     
