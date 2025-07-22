@@ -109,6 +109,79 @@ export class SwapService {
   }
 
   async executeSwap(request: SwapRequest): Promise<SwapResponse> {
+    // Progressive slippage retry system
+    const maxSlippage = 500; // 5% hard limit
+    const originalSlippage = request.slippageBps || 50;
+    const slippageSteps = [
+      originalSlippage,  // Original slippage (default 0.5%)
+      150,               // 1.5%
+      300,               // 3.0%
+      500                // 5.0% (maximum)
+    ];
+
+    let lastError: Error | null = null;
+
+    // Try each slippage level
+    for (let attempt = 0; attempt < slippageSteps.length; attempt++) {
+      try {
+        const currentSlippage = slippageSteps[attempt];
+        
+        if (attempt > 0) {
+          console.log(`Swap attempt ${attempt + 1}/${slippageSteps.length} with ${currentSlippage/100}% slippage (previous attempt failed)`);
+        } else {
+          console.log(`Swap attempt ${attempt + 1}/${slippageSteps.length} with ${currentSlippage/100}% slippage (initial attempt)`);
+        }
+
+        const result = await this.executeSwapAttempt({
+          ...request,
+          slippageBps: currentSlippage
+        });
+
+        // Success! Log if we needed retries
+        if (attempt > 0) {
+          console.log(`✅ Swap succeeded on attempt ${attempt + 1} with ${currentSlippage/100}% slippage`);
+          // Add slippage info to response message
+          result.message += ` (succeeded with ${currentSlippage/100}% slippage after ${attempt + 1} attempts)`;
+        }
+
+        return result;
+
+      } catch (error) {
+        lastError = error as Error;
+        const currentSlippage = slippageSteps[attempt];
+        
+        // Check if it's a slippage-related error
+        if (this.isSlippageError(lastError) && attempt < slippageSteps.length - 1) {
+          console.log(`❌ Slippage error on attempt ${attempt + 1} with ${currentSlippage/100}% slippage: ${lastError.message}`);
+          console.log(`🔄 Retrying with higher slippage...`);
+          continue;
+        }
+        
+        // Non-slippage error or final attempt - break out
+        console.log(`❌ Final error on attempt ${attempt + 1}: ${lastError.message}`);
+        break;
+      }
+    }
+
+    // All attempts failed
+    const finalSlippage = slippageSteps[slippageSteps.length - 1];
+    throw new Error(
+      `Swap failed after ${slippageSteps.length} attempts with slippage up to ${finalSlippage/100}%. ` +
+      `Final error: ${lastError?.message || 'Unknown error'}`
+    );
+  }
+
+  private isSlippageError(error: Error): boolean {
+    const errorMessage = error.message.toLowerCase();
+    return errorMessage.includes('slippage') ||
+           errorMessage.includes('price moved') ||
+           errorMessage.includes('insufficient output amount') ||
+           errorMessage.includes('would result in a loss') ||
+           errorMessage.includes('price impact too high') ||
+           errorMessage.includes('slippage tolerance exceeded');
+  }
+
+  private async executeSwapAttempt(request: SwapRequest): Promise<SwapResponse> {
     try {
       const {
         inputMint,
@@ -238,7 +311,7 @@ export class SwapService {
       };
 
     } catch (error) {
-      console.error('Error executing swap:', error);
+      console.error('Error executing swap attempt:', error);
       throw error;
     }
   }
