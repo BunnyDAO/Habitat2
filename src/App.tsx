@@ -27,6 +27,7 @@ import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon,
 import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import { WalletButton } from './components/WalletButton';
+import { TokenDropdown } from './components/TokenDropdown';
 import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
@@ -913,6 +914,26 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           lastSwapTimestamp: strategy.config.lastSwapTimestamp,
           swapHistory: strategy.config.swapHistory || []
         } as PairTradeJob;
+        
+      case JobType.DRIFT_PERP:
+        return {
+          ...baseJob,
+          type: JobType.DRIFT_PERP,
+          marketSymbol: strategy.config.marketSymbol,
+          marketIndex: strategy.config.marketIndex,
+          direction: strategy.config.direction,
+          allocationPercentage: strategy.config.allocationPercentage,
+          entryPrice: strategy.config.entryPrice,
+          exitPrice: strategy.config.exitPrice,
+          leverage: strategy.config.leverage,
+          stopLoss: strategy.config.stopLoss,
+          takeProfit: strategy.config.takeProfit,
+          positionSize: strategy.config.positionSize || 0,
+          entryTimestamp: strategy.config.entryTimestamp,
+          exitTimestamp: strategy.config.exitTimestamp,
+          realizedPnl: strategy.config.realizedPnl || 0,
+          fees: strategy.config.fees || 0
+        } as DriftPerpJob;
         
       default:
         throw new Error(`Unknown strategy type: ${strategy.strategy_type}`);
@@ -1824,8 +1845,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           return {
                             title: 'Levels',
                             details: [
-                              `${levelsJob.levels.length} Level${levelsJob.levels.length !== 1 ? 's' : ''} Set`,
-                              levelsJob.levels.map(level => `$${level.price}: ${level.percentage}%`).join(', '),
+                              levelsJob.levels && levelsJob.levels.length > 0 ? `${levelsJob.levels.length} Level${levelsJob.levels.length !== 1 ? 's' : ''} Set` : 'No Levels Set',
+                              levelsJob.levels && levelsJob.levels.length > 0 ? levelsJob.levels.map(level => `$${level.price}: ${level.percentage}%`).join(', ') : null,
                               levelsJob.lastActivity ? `Last Activity: ${new Date(levelsJob.lastActivity).toLocaleString()}` : null,
                               levelsJob.lastTriggerPrice ? `Last Trigger: $${levelsJob.lastTriggerPrice}` : null
                             ].filter(Boolean)
@@ -1840,7 +1861,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               `Allocation: ${pairTradeJob.allocationPercentage}%`,
                               `Max Slippage: ${pairTradeJob.maxSlippage}%`,
                               pairTradeJob.lastSwapTimestamp ? `Last Swap: ${new Date(pairTradeJob.lastSwapTimestamp).toLocaleString()}` : null,
-                              pairTradeJob.swapHistory.length > 0 ? `Swaps: ${pairTradeJob.swapHistory.length}` : null
+                              pairTradeJob.swapHistory && pairTradeJob.swapHistory.length > 0 ? `Swaps: ${pairTradeJob.swapHistory.length}` : null
                             ].filter(Boolean)
                           };
                         case JobType.DRIFT_PERP:
@@ -1855,7 +1876,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               `Allocation: ${driftPerpJob.allocationPercentage}% of SOL`,
                               driftPerpJob.isPositionOpen ? '🟢 Position Open' : '🔴 No Position',
                               driftPerpJob.currentPosition ? `PnL: $${driftPerpJob.currentPosition.unrealizedPnl.toFixed(2)}` : null,
-                              driftPerpJob.orderHistory.length > 0 ? `Orders: ${driftPerpJob.orderHistory.length}` : null
+                              driftPerpJob.orderHistory && driftPerpJob.orderHistory.length > 0 ? `Orders: ${driftPerpJob.orderHistory.length}` : null
                             ].filter(Boolean)
                           };
                         default:
@@ -3309,8 +3330,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
-  const loadSupportedTokens = async () => {
+  const loadSupportedTokens = async (retryCount = 0) => {
     if (isLoadingTokens) return;
+    
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds
     
     setIsLoadingTokens(true);
     try {
@@ -3350,12 +3374,73 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         status: error.response?.status,
         data: error.response?.data
       });
-      setNotification({
-        message: 'Failed to load supported tokens',
-        type: 'error'
-      });
+      
+      // Retry logic for 401 errors
+      if (error.response?.status === 401 && retryCount < maxRetries) {
+        console.log(`🔄 Retrying token load (attempt ${retryCount + 1}/${maxRetries}) in ${retryDelay/1000} seconds...`);
+        setIsLoadingTokens(false); // Reset loading state for retry
+        setTimeout(() => {
+          loadSupportedTokens(retryCount + 1);
+        }, retryDelay);
+        return;
+      }
+      
+      // Only show error notification after all retries failed
+      if (retryCount >= maxRetries) {
+        setNotification({
+          message: 'Failed to load supported tokens after multiple attempts',
+          type: 'error'
+        });
+      }
     } finally {
       setIsLoadingTokens(false);
+    }
+  };
+
+  // Fetch available Drift markets with leverage info
+  const fetchDriftMarkets = async () => {
+    if (isDriftMarketsLoading) return;
+    
+    setIsDriftMarketsLoading(true);
+    try {
+      console.log('📊 Loading Drift markets...');
+      
+      const response = await fetch(`${API_CONFIG.RPC_BASE}/api/v1/drift/markets`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch Drift markets: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('📊 Drift markets response:', data);
+      
+      if (data.success && Array.isArray(data.markets)) {
+        setAvailableDriftMarkets(data.markets);
+        console.log('✅ Loaded', data.markets.length, 'Drift markets');
+        
+        // Auto-select first market if none selected
+        if (data.markets.length > 0 && !driftMarketSymbol) {
+          const firstMarket = data.markets[0];
+          setDriftMarketSymbol(firstMarket.symbol);
+          setDriftMarketIndex(firstMarket.marketIndex);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading Drift markets:', error);
+      setNotification({
+        message: 'Failed to load Drift markets. Using defaults.',
+        type: 'error'
+      });
+      
+      // Fallback to hardcoded markets
+      const fallbackMarkets = [
+        { marketIndex: 0, symbol: 'SOL-PERP', baseAssetSymbol: 'SOL', maxLeverage: 20 },
+        { marketIndex: 1, symbol: 'BTC-PERP', baseAssetSymbol: 'BTC', maxLeverage: 20 },
+        { marketIndex: 2, symbol: 'ETH-PERP', baseAssetSymbol: 'ETH', maxLeverage: 20 }
+      ];
+      setAvailableDriftMarkets(fallbackMarkets);
+    } finally {
+      setIsDriftMarketsLoading(false);
     }
   };
 
@@ -5834,59 +5919,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}>
                         Token A
                       </label>
-                      <div style={{ position: 'relative' }}>
-                        <select
-                          value={pairTokenA}
-                          onChange={(e) => {
-                            const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
-                            setPairTokenA(e.target.value);
-                            setPairTokenASymbol(selectedToken?.symbol || '');
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem 0.75rem 0.75rem 3rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '1rem',
-                            fontWeight: '500'
-                          }}
-                        >
-                          <option value="">Select Token A</option>
-                          {supportedTokens.filter(token => token.isActive).map(token => (
-                            <option key={token.mintAddress} value={token.mintAddress}>
-                              {token.symbol} - {token.name}
-                            </option>
-                          ))}
-                        </select>
-                        {/* Token Logo */}
-                        {pairTokenA && supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI && (
-                          <img 
-                            src={supportedTokens.find(t => t.mintAddress === pairTokenA)?.logoURI} 
-                            alt={supportedTokens.find(t => t.mintAddress === pairTokenA)?.symbol}
-                            style={{
-                              position: 'absolute',
-                              left: '0.75rem',
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '50%',
-                              pointerEvents: 'none',
-                              zIndex: 1,
-                              border: '2px solid #374151'
-                            }}
-                            onLoad={() => {
-                              console.log('✅ Logo loaded successfully for Token A');
-                            }}
-                            onError={(e) => {
-                              console.log('❌ Logo failed to load for Token A');
-                              e.currentTarget.style.display = 'none';
-                            }}
-                          />
-                        )}
-                      </div>
+                      <TokenDropdown
+                        tokens={supportedTokens}
+                        value={pairTokenA}
+                        onChange={(mintAddress, token) => {
+                          setPairTokenA(mintAddress);
+                          setPairTokenASymbol(token?.symbol || '');
+                        }}
+                        placeholder="Select Token A"
+                      />
                       {/* Selected Token A Display */}
                       {pairTokenA && (
                         <div style={{
@@ -5941,59 +5982,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}>
                         Token B
                       </label>
-                      <div style={{ position: 'relative' }}>
-                        <select
-                          value={pairTokenB}
-                          onChange={(e) => {
-                            const selectedToken = supportedTokens.find(t => t.mintAddress === e.target.value);
-                            setPairTokenB(e.target.value);
-                            setPairTokenBSymbol(selectedToken?.symbol || '');
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem 0.75rem 0.75rem 3rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '1rem',
-                            fontWeight: '500'
-                          }}
-                        >
-                          <option value="">Select Token B</option>
-                          {supportedTokens.filter(token => token.isActive && token.mintAddress !== pairTokenA).map(token => (
-                            <option key={token.mintAddress} value={token.mintAddress}>
-                              {token.symbol} - {token.name}
-                            </option>
-                          ))}
-                        </select>
-                        {/* Token Logo */}
-                        {pairTokenB && supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI && (
-                          <img 
-                            src={supportedTokens.find(t => t.mintAddress === pairTokenB)?.logoURI} 
-                            alt={supportedTokens.find(t => t.mintAddress === pairTokenB)?.symbol}
-                            style={{
-                              position: 'absolute',
-                              left: '0.75rem',
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '50%',
-                              pointerEvents: 'none',
-                              zIndex: 1,
-                              border: '2px solid #374151'
-                            }}
-                            onLoad={() => {
-                              console.log('✅ Logo loaded successfully for Token B');
-                            }}
-                            onError={(e) => {
-                              console.log('❌ Logo failed to load for Token B');
-                              e.currentTarget.style.display = 'none';
-                            }}
-                          />
-                        )}
-                      </div>
+                      <TokenDropdown
+                        tokens={supportedTokens.filter(token => token.mintAddress !== pairTokenA)}
+                        value={pairTokenB}
+                        onChange={(mintAddress, token) => {
+                          setPairTokenB(mintAddress);
+                          setPairTokenBSymbol(token?.symbol || '');
+                        }}
+                        placeholder="Select Token B"
+                      />
                       {/* Selected Token B Display */}
                       {pairTokenB && (
                         <div style={{

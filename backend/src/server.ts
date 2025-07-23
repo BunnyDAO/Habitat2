@@ -31,6 +31,7 @@ import strategyMarketplaceRouter from './routes/strategy-marketplace.routes';
 import strategyReviewsRouter from './routes/strategy-reviews.routes';
 import { createValuationRoutes } from './routes/valuation.routes';
 import { createTriggersRoutes } from './routes/triggers.routes';
+import driftRouter from './routes/drift.routes';
 
 // Load environment variables from the correct path
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -86,6 +87,7 @@ export function createApp() {
   app.use('/api/strategies', createStrategiesRouter(pool, redisClient));
   app.use('/api/saved-wallets', savedWalletsRouter);
   app.use('/api/wallet-transactions', walletTransactionRouter);
+  app.use('/api/drift', driftRouter);
 
   // Also register with /api/v1 prefix 
   app.use('/api/v1/auth', authRouter);
@@ -101,6 +103,7 @@ export function createApp() {
   app.use('/api/v1/wallet-transactions', walletTransactionRouter);
   app.use('/api/v1/valuation', createValuationRoutes(pool));
   app.use('/api/v1/triggers', createTriggersRoutes(pool));
+  app.use('/api/v1/drift', driftRouter);
   
   // Strategy Publishing and Marketplace routes
   app.use('/api/strategies', strategyPublishingRouter);

@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { JobType } from '../types/jobs';
+import { DriftService } from '../services/DriftService';
+import { Keypair } from '@solana/web3.js';
 
-export const validateStrategyRequest = (
+export const validateStrategyRequest = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -167,13 +169,51 @@ export const validateStrategyRequest = (
         });
       }
       
-      // Validate leverage
-      if (config.leverage < 1 || config.leverage > 10) {
-        console.log('Invalid drift perp config - leverage out of range:', config.leverage);
-        return res.status(400).json({
-          error: 'Invalid drift perp configuration',
-          details: 'Leverage must be between 1x and 10x'
-        });
+      // Validate leverage dynamically based on market's max leverage
+      try {
+        const endpoint = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+        const driftService = new DriftService(endpoint);
+        const tempKeypair = Keypair.generate();
+        await driftService.initialize(tempKeypair);
+        
+        const markets = await driftService.getAvailableMarkets();
+        const market = markets.find(m => m.marketIndex === config.marketIndex);
+        
+        if (!market) {
+          console.log('Invalid drift perp config - market not found:', config.marketIndex);
+          return res.status(400).json({
+            error: 'Invalid drift perp configuration',
+            details: `Market with index ${config.marketIndex} not found`
+          });
+        }
+        
+        const maxLeverage = market.maxLeverage;
+        if (config.leverage < 1 || config.leverage > maxLeverage) {
+          console.log('Invalid drift perp config - leverage out of range:', { 
+            leverage: config.leverage, 
+            maxLeverage, 
+            marketIndex: config.marketIndex 
+          });
+          return res.status(400).json({
+            error: 'Invalid drift perp configuration',
+            details: `Leverage must be between 1x and ${maxLeverage}x for ${market.symbol}`
+          });
+        }
+        
+        // Clean up
+        await driftService.cleanup();
+        
+        console.log(`Drift perp config validated - leverage ${config.leverage}x is valid for ${market.symbol} (max: ${maxLeverage}x)`);
+      } catch (error) {
+        console.error('Error validating drift market leverage:', error);
+        // Fall back to conservative limit if we can't fetch market data
+        if (config.leverage < 1 || config.leverage > 10) {
+          console.log('Invalid drift perp config - leverage out of range (fallback):', config.leverage);
+          return res.status(400).json({
+            error: 'Invalid drift perp configuration',
+            details: 'Leverage must be between 1x and 10x (unable to fetch market-specific limits)'
+          });
+        }
       }
       
       // Validate prices
