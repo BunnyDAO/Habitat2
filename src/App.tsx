@@ -1903,6 +1903,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               isActive={job.isActive && !pausedJobs.has(job.id)}
                               onClick={() => toggleJobPause(job.id)}
                             />
+                          ) : job.type === JobType.DRIFT_PERP ? (
+                            <DriftPerpIcon
+                              isActive={job.isActive && !pausedJobs.has(job.id)}
+                              onClick={() => toggleJobPause(job.id)}
+                            />
                           ) : '❓'}
                         </span>
                         {job.profitTracking && (
@@ -6182,7 +6187,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   onClick={() => toggleStrategy('drift-perp')}
                 >
                   <div style={{
-                    backgroundColor: '#8b5cf6',
+                    backgroundColor: '#3b82f6',
                     padding: '0.5rem',
                     borderRadius: '0.5rem',
                     width: '1.875rem',
@@ -6527,7 +6532,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       style={{
                         width: '100%',
                         padding: '0.75rem',
-                        backgroundColor: (selectedTradingWallet && driftEntryPrice && driftExitPrice) ? '#8b5cf6' : '#4b5563',
+                        backgroundColor: (selectedTradingWallet && driftEntryPrice && driftExitPrice) ? '#3b82f6' : '#4b5563',
                         border: 'none',
                         borderRadius: '0.375rem',
                         color: '#e2e8f0',
