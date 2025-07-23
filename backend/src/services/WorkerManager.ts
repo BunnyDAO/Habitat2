@@ -1,1 +1,175 @@
-import { Pool } from 'pg';\nimport { PairTradeWorker } from '../workers/PairTradeWorker';\nimport { TokenService } from './TokenService';\nimport { PairTradeJob, JobType, AnyJob } from '../types/jobs';\nimport { BaseWorker } from '../workers/BaseWorker';\n\n/**\n * Manages worker instances for different job types\n * Provides centralized access to workers for the daemon\n */\nexport class WorkerManager {\n  private static workers: Map<string, BaseWorker> = new Map();\n  private static pool: Pool;\n  private static tokenService: TokenService;\n\n  /**\n   * Initialize the WorkerManager with required services\n   */\n  static initialize(pool: Pool, tokenService: TokenService): void {\n    this.pool = pool;\n    this.tokenService = tokenService;\n  }\n\n  /**\n   * Create and register a worker for a job\n   */\n  static async createWorker(job: AnyJob, endpoint: string): Promise<BaseWorker> {\n    const workerId = job.id;\n\n    // Remove existing worker if it exists\n    if (this.workers.has(workerId)) {\n      const existingWorker = this.workers.get(workerId)!;\n      await existingWorker.stop();\n      this.workers.delete(workerId);\n    }\n\n    let worker: BaseWorker;\n\n    switch (job.type) {\n      case JobType.PAIR_TRADE:\n        worker = new PairTradeWorker(\n          job as PairTradeJob, \n          endpoint, \n          this.tokenService,\n          this.pool\n        );\n        break;\n      \n      // Add other worker types as needed\n      // case JobType.LEVELS:\n      //   worker = new LevelsWorker(job as LevelsStrategy, endpoint, ...);\n      //   break;\n      \n      default:\n        throw new Error(`Unsupported job type: ${job.type}`);\n    }\n\n    this.workers.set(workerId, worker);\n    console.log(`[WorkerManager] Created worker for job ${workerId} (${job.type})`);\n    \n    return worker;\n  }\n\n  /**\n   * Get an existing worker by ID\n   */\n  static async getWorker(jobId: string): Promise<BaseWorker | null> {\n    const worker = this.workers.get(jobId);\n    \n    if (!worker) {\n      // Try to load the job from database and create worker\n      try {\n        const result = await this.pool.query(\n          'SELECT * FROM jobs WHERE id = $1 AND is_active = true', \n          [jobId]\n        );\n        \n        if (result.rows.length === 0) {\n          console.warn(`[WorkerManager] Job ${jobId} not found or inactive`);\n          return null;\n        }\n        \n        const jobData = result.rows[0];\n        const job: AnyJob = {\n          ...jobData.data,\n          id: jobData.id,\n          tradingWalletPublicKey: jobData.trading_wallet_public_key,\n          tradingWalletSecretKey: new Uint8Array(jobData.trading_wallet_secret_key),\n          isActive: jobData.is_active,\n          createdAt: jobData.created_at\n        };\n        \n        // Use default endpoint - you might want to make this configurable\n        const worker = await this.createWorker(job, 'https://api.mainnet-beta.solana.com');\n        await worker.start();\n        \n        return worker;\n      } catch (error) {\n        console.error(`[WorkerManager] Error loading worker ${jobId}:`, error);\n        return null;\n      }\n    }\n    \n    return worker;\n  }\n\n  /**\n   * Remove and stop a worker\n   */\n  static async removeWorker(jobId: string): Promise<void> {\n    const worker = this.workers.get(jobId);\n    if (worker) {\n      await worker.stop();\n      this.workers.delete(jobId);\n      console.log(`[WorkerManager] Removed worker for job ${jobId}`);\n    }\n  }\n\n  /**\n   * Get all active workers\n   */\n  static getActiveWorkers(): Map<string, BaseWorker> {\n    return new Map(this.workers);\n  }\n\n  /**\n   * Stop all workers\n   */\n  static async stopAll(): Promise<void> {\n    console.log(`[WorkerManager] Stopping ${this.workers.size} workers...`);\n    \n    const stopPromises = Array.from(this.workers.values()).map(worker => \n      worker.stop().catch(error => \n        console.error('[WorkerManager] Error stopping worker:', error)\n      )\n    );\n    \n    await Promise.all(stopPromises);\n    this.workers.clear();\n    \n    console.log('[WorkerManager] All workers stopped');\n  }\n\n  /**\n   * Get worker count by type\n   */\n  static getWorkerStats(): { [key: string]: number } {\n    const stats: { [key: string]: number } = {};\n    \n    for (const worker of this.workers.values()) {\n      const type = (worker as any).job?.type || 'unknown';\n      stats[type] = (stats[type] || 0) + 1;\n    }\n    \n    return stats;\n  }\n\n  /**\n   * Restart a worker\n   */\n  static async restartWorker(jobId: string): Promise<BaseWorker | null> {\n    await this.removeWorker(jobId);\n    return await this.getWorker(jobId);\n  }\n}
+import { Pool } from 'pg';
+import { PairTradeWorker } from '../workers/PairTradeWorker';
+import { DriftPerpWorker } from '../workers/DriftPerpWorker';
+import { TokenService } from './TokenService';
+import { PairTradeJob, DriftPerpJob, JobType, AnyJob } from '../types/jobs';
+import { BaseWorker } from '../workers/BaseWorker';
+
+/**
+ * Manages worker instances for different job types
+ * Provides centralized access to workers for the daemon
+ */
+export class WorkerManager {
+  private static workers: Map<string, BaseWorker> = new Map();
+  private static pool: Pool;
+  private static tokenService: TokenService;
+
+  /**
+   * Initialize the WorkerManager with required services
+   */
+  static initialize(pool: Pool, tokenService: TokenService): void {
+    this.pool = pool;
+    this.tokenService = tokenService;
+  }
+
+  /**
+   * Create and register a worker for a job
+   */
+  static async createWorker(job: AnyJob, endpoint: string): Promise<BaseWorker> {
+    const workerId = job.id;
+
+    // Remove existing worker if it exists
+    if (this.workers.has(workerId)) {
+      const existingWorker = this.workers.get(workerId)!;
+      await existingWorker.stop();
+      this.workers.delete(workerId);
+    }
+
+    let worker: BaseWorker;
+
+    switch (job.type) {
+      case JobType.PAIR_TRADE:
+        worker = new PairTradeWorker(
+          job as PairTradeJob, 
+          endpoint, 
+          this.tokenService,
+          this.pool
+        );
+        break;
+      
+      case JobType.DRIFT_PERP:
+        worker = new DriftPerpWorker(
+          job as DriftPerpJob,
+          endpoint,
+          this.tokenService,
+          this.pool
+        );
+        break;
+      
+      // Add other worker types as needed
+      // case JobType.LEVELS:
+      //   worker = new LevelsWorker(job as LevelsStrategy, endpoint, ...);
+      //   break;
+      
+      default:
+        throw new Error(`Unsupported job type: ${job.type}`);
+    }
+
+    this.workers.set(workerId, worker);
+    console.log(`[WorkerManager] Created worker for job ${workerId} (${job.type})`);
+    
+    return worker;
+  }
+
+  /**
+   * Get an existing worker by ID
+   */
+  static async getWorker(jobId: string): Promise<BaseWorker | null> {
+    const worker = this.workers.get(jobId);
+    
+    if (!worker) {
+      // Try to load the job from database and create worker
+      try {
+        const result = await this.pool.query(
+          'SELECT * FROM jobs WHERE id = $1 AND is_active = true', 
+          [jobId]
+        );
+        
+        if (result.rows.length === 0) {
+          console.warn(`[WorkerManager] Job ${jobId} not found or inactive`);
+          return null;
+        }
+        
+        const jobData = result.rows[0];
+        const job: AnyJob = {
+          ...jobData.data,
+          id: jobData.id,
+          tradingWalletPublicKey: jobData.trading_wallet_public_key,
+          tradingWalletSecretKey: new Uint8Array(jobData.trading_wallet_secret_key),
+          isActive: jobData.is_active,
+          createdAt: jobData.created_at
+        };
+        
+        // Use default endpoint - you might want to make this configurable
+        const worker = await this.createWorker(job, 'https://api.mainnet-beta.solana.com');
+        await worker.start();
+        
+        return worker;
+      } catch (error) {
+        console.error(`[WorkerManager] Error loading worker ${jobId}:`, error);
+        return null;
+      }
+    }
+    
+    return worker;
+  }
+
+  /**
+   * Remove and stop a worker
+   */
+  static async removeWorker(jobId: string): Promise<void> {
+    const worker = this.workers.get(jobId);
+    if (worker) {
+      await worker.stop();
+      this.workers.delete(jobId);
+      console.log(`[WorkerManager] Removed worker for job ${jobId}`);
+    }
+  }
+
+  /**
+   * Get all active workers
+   */
+  static getActiveWorkers(): Map<string, BaseWorker> {
+    return new Map(this.workers);
+  }
+
+  /**
+   * Stop all workers
+   */
+  static async stopAll(): Promise<void> {
+    console.log(`[WorkerManager] Stopping ${this.workers.size} workers...`);
+    
+    const stopPromises = Array.from(this.workers.values()).map(worker => 
+      worker.stop().catch(error => 
+        console.error('[WorkerManager] Error stopping worker:', error)
+      )
+    );
+    
+    await Promise.all(stopPromises);
+    this.workers.clear();
+    
+    console.log('[WorkerManager] All workers stopped');
+  }
+
+  /**
+   * Get worker count by type
+   */
+  static getWorkerStats(): { [key: string]: number } {
+    const stats: { [key: string]: number } = {};
+    
+    for (const worker of this.workers.values()) {
+      const type = (worker as any).job?.type || 'unknown';
+      stats[type] = (stats[type] || 0) + 1;
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Restart a worker
+   */
+  static async restartWorker(jobId: string): Promise<BaseWorker | null> {
+    await this.removeWorker(jobId);
+    return await this.getWorker(jobId);
+  }
+}

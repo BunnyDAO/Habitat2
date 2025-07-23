@@ -1,1 +1,162 @@
-/**\n * Example integration file showing how to wire together:\n * - PairTradeWorker with database integration\n * - PairTradeTriggerDaemon\n * - API routes\n * - WorkerManager\n * \n * Add this code to your main Express app setup\n */\n\nimport express from 'express';\nimport { Pool } from 'pg';\nimport { TokenService } from './services/TokenService';\nimport { PairTradeTriggerDaemon } from './services/PairTradeTriggerDaemon';\nimport { WorkerManager } from './services/WorkerManager';\nimport { createPairTradeRoutes } from './routes/pairTradeRoutes';\n\n// Example app setup\nexport async function setupPairTradeSystem(\n  app: express.Application,\n  pool: Pool,\n  redisClient?: any\n): Promise<PairTradeTriggerDaemon> {\n  \n  console.log('[App] Setting up PairTrade system...');\n  \n  // 1. Initialize TokenService\n  const tokenService = new TokenService(pool, redisClient);\n  \n  // 2. Initialize WorkerManager\n  WorkerManager.initialize(pool, tokenService);\n  \n  // 3. Create and configure daemon\n  const daemon = new PairTradeTriggerDaemon(pool);\n  \n  // 4. Configure daemon to use WorkerManager\n  daemon.setWorkerGetter(async (strategyId: string) => {\n    return await WorkerManager.getWorker(strategyId);\n  });\n  \n  // 5. Add API routes\n  const pairTradeRoutes = createPairTradeRoutes(pool, daemon);\n  app.use('/api/pair-trades', pairTradeRoutes);\n  \n  // 6. Start daemon\n  await daemon.start();\n  \n  console.log('[App] PairTrade system setup complete');\n  \n  // 7. Return daemon for external control\n  return daemon;\n}\n\n// Example usage in your main app.ts:\n/*\n\nimport { setupPairTradeSystem } from './app-integration-example';\n\nasync function startApp() {\n  const app = express();\n  const pool = new Pool({ connectionString: process.env.DATABASE_URL });\n  \n  // Setup pair trade system\n  const daemon = await setupPairTradeSystem(app, pool);\n  \n  // Graceful shutdown\n  process.on('SIGTERM', async () => {\n    console.log('SIGTERM received, shutting down gracefully');\n    await daemon.stop();\n    await WorkerManager.stopAll();\n    process.exit(0);\n  });\n  \n  app.listen(3000, () => {\n    console.log('Server running on port 3000');\n  });\n}\n\nstartApp().catch(console.error);\n\n*/\n\n// Example manual trigger usage:\n/*\n\n// Set SOL/USDC to swap from SOL to USDC\ncurl -X POST http://localhost:3000/api/pair-trades/trigger \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"tokenA\": \"So11111111111111111111111111111111111111112\",\n    \"tokenB\": \"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v\",\n    \"direction\": \"A_TO_B\"\n  }'\n\n// Check trigger status\ncurl http://localhost:3000/api/pair-trades/triggers\n\n// Check daemon status\ncurl http://localhost:3000/api/pair-trades/daemon/status\n\n// View all strategies\ncurl http://localhost:3000/api/pair-trades/strategies\n\n// Manual daemon check (for testing)\ncurl -X POST http://localhost:3000/api/pair-trades/trigger/manual-check\n\n*/\n\n// Example SQL commands for manual control:\n/*\n\n-- Set trigger to swap SOL -> USDC\nUPDATE pair_trade_triggers \nSET \n  current_direction = 'A_TO_B',\n  trigger_swap = true\nWHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';\n\n-- Set trigger to swap USDC -> SOL\nUPDATE pair_trade_triggers \nSET \n  current_direction = 'B_TO_A',\n  trigger_swap = true\nWHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';\n\n-- Set to HOLD (no swaps)\nUPDATE pair_trade_triggers \nSET \n  current_direction = 'HOLD',\n  trigger_swap = false\nWHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';\n\n-- Check trigger status\nSELECT \n  token_a_symbol || '/' || token_b_symbol as pair,\n  current_direction,\n  trigger_swap,\n  last_triggered_at,\n  trigger_count\nFROM pair_trade_triggers\nORDER BY updated_at DESC;\n\n*/\n\n// Example workflow:\n/*\n\n1. **Setup**: Run migration to create pair_trade_triggers table\n2. **Configure**: Add token pairs via API or SQL\n3. **Start**: Initialize app with daemon running\n4. **Trade**: Set triggers via API or direct SQL updates\n5. **Monitor**: Daemon automatically executes swaps every 5 seconds\n6. **Track**: View results via API endpoints\n\nDaily workflow:\n- Morning: Check market conditions\n- Update triggers: \"All SOL/USDC pairs should swap to USDC\"\n- SQL: UPDATE pair_trade_triggers SET current_direction = 'A_TO_B', trigger_swap = true WHERE ...\n- Daemon executes swaps across all strategies\n- Evening: Check results and set new triggers\n\n*/
+/**
+ * Example integration file showing how to wire together:
+ * - PairTradeWorker with database integration
+ * - PairTradeTriggerDaemon
+ * - API routes
+ * - WorkerManager
+ * 
+ * Add this code to your main Express app setup
+ */
+
+import express from 'express';
+import { Pool } from 'pg';
+import { TokenService } from './services/TokenService';
+import { PairTradeTriggerDaemon } from './services/PairTradeTriggerDaemon';
+import { WorkerManager } from './services/WorkerManager';
+import { createPairTradeRoutes } from './routes/pairTradeRoutes';
+
+// Example app setup
+export async function setupPairTradeSystem(
+  app: express.Application,
+  pool: Pool,
+  redisClient?: any
+): Promise<PairTradeTriggerDaemon> {
+  
+  console.log('[App] Setting up PairTrade system...');
+  
+  // 1. Initialize TokenService
+  const tokenService = new TokenService(pool, redisClient);
+  
+  // 2. Initialize WorkerManager
+  WorkerManager.initialize(pool, tokenService);
+  
+  // 3. Create and configure daemon
+  const daemon = new PairTradeTriggerDaemon(pool);
+  
+  // 4. Configure daemon to use WorkerManager
+  daemon.setWorkerGetter(async (strategyId: string) => {
+    return await WorkerManager.getWorker(strategyId);
+  });
+  
+  // 5. Add API routes
+  const pairTradeRoutes = createPairTradeRoutes(pool, daemon);
+  app.use('/api/pair-trades', pairTradeRoutes);
+  
+  // 6. Start daemon
+  await daemon.start();
+  
+  console.log('[App] PairTrade system setup complete');
+  
+  // 7. Return daemon for external control
+  return daemon;
+}
+
+// Example usage in your main app.ts:
+/*
+
+import { setupPairTradeSystem } from './app-integration-example';
+
+async function startApp() {
+  const app = express();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  
+  // Setup pair trade system
+  const daemon = await setupPairTradeSystem(app, pool);
+  
+  // Graceful shutdown
+  process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    await daemon.stop();
+    await WorkerManager.stopAll();
+    process.exit(0);
+  });
+  
+  app.listen(3000, () => {
+    console.log('Server running on port 3000');
+  });
+}
+
+startApp().catch(console.error);
+
+*/
+
+// Example manual trigger usage:
+/*
+
+// Set SOL/USDC to swap from SOL to USDC
+curl -X POST http://localhost:3000/api/pair-trades/trigger \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenA": "So11111111111111111111111111111111111111112",
+    "tokenB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "direction": "A_TO_B"
+  }'
+
+// Check trigger status
+curl http://localhost:3000/api/pair-trades/triggers
+
+// Check daemon status
+curl http://localhost:3000/api/pair-trades/daemon/status
+
+// View all strategies
+curl http://localhost:3000/api/pair-trades/strategies
+
+// Manual daemon check (for testing)
+curl -X POST http://localhost:3000/api/pair-trades/trigger/manual-check
+
+*/
+
+// Example SQL commands for manual control:
+/*
+
+-- Set trigger to swap SOL -> USDC
+UPDATE pair_trade_triggers 
+SET 
+  current_direction = 'A_TO_B',
+  trigger_swap = true
+WHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';
+
+-- Set trigger to swap USDC -> SOL
+UPDATE pair_trade_triggers 
+SET 
+  current_direction = 'B_TO_A',
+  trigger_swap = true
+WHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';
+
+-- Set to HOLD (no swaps)
+UPDATE pair_trade_triggers 
+SET 
+  current_direction = 'HOLD',
+  trigger_swap = false
+WHERE token_a_symbol = 'SOL' AND token_b_symbol = 'USDC';
+
+-- Check trigger status
+SELECT 
+  token_a_symbol || '/' || token_b_symbol as pair,
+  current_direction,
+  trigger_swap,
+  last_triggered_at,
+  trigger_count
+FROM pair_trade_triggers
+ORDER BY updated_at DESC;
+
+*/
+
+// Example workflow:
+/*
+
+1. **Setup**: Run migration to create pair_trade_triggers table
+2. **Configure**: Add token pairs via API or SQL
+3. **Start**: Initialize app with daemon running
+4. **Trade**: Set triggers via API or direct SQL updates
+5. **Monitor**: Daemon automatically executes swaps every 5 seconds
+6. **Track**: View results via API endpoints
+
+Daily workflow:
+- Morning: Check market conditions
+- Update triggers: "All SOL/USDC pairs should swap to USDC"
+- SQL: UPDATE pair_trade_triggers SET current_direction = 'A_TO_B', trigger_swap = true WHERE ...
+- Daemon executes swaps across all strategies
+- Evening: Check results and set new triggers
+
+*/ 

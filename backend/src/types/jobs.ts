@@ -113,6 +113,47 @@ export interface PairTradeJob extends BaseJob {
   }[];
 }
 
+export interface DriftPerpPosition {
+  timestamp: string;
+  marketIndex: number;
+  direction: 'long' | 'short';
+  baseAssetAmount: number;  // Position size in base asset
+  quoteAssetAmount: number; // Position value in quote asset (USDC)
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  leverage: number;
+  liquidationPrice: number;
+  marginRatio: number;
+}
+
+export interface DriftPerpJob extends BaseJob {
+  type: JobType.DRIFT_PERP;
+  marketSymbol: string;         // e.g., "SOL-PERP", "BTC-PERP", "ETH-PERP"
+  marketIndex: number;          // Drift market index for the perpetal
+  direction: 'long' | 'short';  // Position direction
+  allocationPercentage: number; // Percentage of SOL to allocate (1-100)
+  entryPrice: number;           // Target entry price
+  exitPrice: number;            // Target exit price
+  leverage: number;             // Leverage multiplier (1-10x)
+  stopLoss?: number;            // Optional stop loss price
+  takeProfit?: number;          // Optional take profit price
+  maxSlippage: number;          // Max acceptable slippage (default: 1%)
+  currentPosition?: DriftPerpPosition; // Current active position
+  positionHistory: DriftPerpPosition[]; // Historical positions
+  orderHistory: {
+    timestamp: string;
+    type: 'open' | 'close' | 'liquidated';
+    direction: 'long' | 'short';
+    size: number;
+    price: number;
+    pnl?: number;
+    signature: string;
+  }[];
+  isPositionOpen: boolean;      // Whether position is currently active
+  lastActivityTimestamp?: string;
+}
+
 export interface ProfitTracking {
   initialBalance: number;
   currentBalance: number;
@@ -121,4 +162,4 @@ export interface ProfitTracking {
   trades: TradeRecord[];
 }
 
-export type AnyJob = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob; 
+export type AnyJob = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob | DriftPerpJob; 

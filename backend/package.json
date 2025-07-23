@@ -16,6 +16,8 @@
     "update-tokens": "ts-node src/scripts/update-token-data.ts",
     "update-prices": "ts-node src/scripts/update-token-prices.ts",
     "update-xstock-tokens": "ts-node src/scripts/update-xstock-tokens.ts",
+    "update-xstocks-comprehensive": "ts-node src/scripts/update-xstocks-comprehensive.ts",
+    "test-token-query": "ts-node src/scripts/test-token-query.ts",
     "run-schema": "ts-node src/scripts/run-schema.ts",
     "initialize-tokens": "ts-node src/scripts/initialize-tokens.ts",
     "start:strategy-executor": "ts-node src/scripts/run-strategy-executor.ts",
@@ -27,6 +29,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@drift-labs/sdk": "^2.129.0-beta.2",
     "@prisma/client": "^6.6.0",
     "@pythnetwork/hermes-client": "^2.0.0",
     "@solana/spl-token": "^0.3.9",

@@ -214,4 +214,46 @@ export const PairTradeIcon: React.FC<IconProps> = ({ isActive = true, onClick })
       <circle cx="17" cy="17" r="2" />
     </svg>
   </span>
+);
+
+export const DriftPerpIcon: React.FC<IconProps> = ({ isActive = true, onClick }) => (
+  <span
+    onClick={(e) => {
+      if (onClick) {
+        e.stopPropagation();
+        onClick();
+      }
+    }}
+    style={{
+      cursor: onClick ? 'pointer' : 'default',
+      opacity: isActive ? 1 : 0.5,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white',
+      marginTop: '2px'
+    }}
+  >
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {/* Drift perpetual futures icon - trending line with leverage indicators */}
+      <path d="M3 12L7 8L11 14L17 6L21 10" />
+      <path d="M21 6H17V10" />
+      {/* Leverage indicator */}
+      <rect x="2" y="18" width="4" height="4" rx="1" />
+      <rect x="10" y="18" width="4" height="4" rx="1" />
+      <rect x="18" y="18" width="4" height="4" rx="1" />
+      <text x="4" y="21" fontSize="6" textAnchor="middle" fill="currentColor">x</text>
+      <text x="12" y="21" fontSize="6" textAnchor="middle" fill="currentColor">∞</text>
+      <text x="20" y="21" fontSize="6" textAnchor="middle" fill="currentColor">↕</text>
+    </svg>
+  </span>
 ); 

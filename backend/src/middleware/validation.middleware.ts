@@ -29,20 +29,22 @@ export const validateStrategyRequest = (
 
   // Validate strategy type
   const validTypes = Object.values(JobType);
+  // Ensure drift-perp is included in case of enum loading issues
+  const allValidTypes = [...validTypes, 'drift-perp'];
   console.log('Checking strategy type:', {
     received: strategy_type,
-    validTypes,
-    isIncluded: validTypes.includes(strategy_type)
+    validTypes: allValidTypes,
+    isIncluded: allValidTypes.includes(strategy_type)
   });
 
-  if (!validTypes.includes(strategy_type)) {
+  if (!allValidTypes.includes(strategy_type)) {
     console.log('Invalid strategy type:', {
       received: strategy_type,
-      validTypes
+      validTypes: allValidTypes
     });
     return res.status(400).json({
       error: 'Invalid strategy type',
-      validTypes
+      validTypes: allValidTypes
     });
   }
 
@@ -128,6 +130,67 @@ export const validateStrategyRequest = (
         return res.status(400).json({
           error: 'Invalid pair trade configuration',
           details: 'Max slippage must be between 0.1% and 10%'
+        });
+      }
+      
+      break;
+
+    case 'drift-perp':
+      console.log('Validating drift perp config:', config);
+      const requiredDriftFields = ['marketSymbol', 'marketIndex', 'direction', 'allocationPercentage', 'entryPrice', 'exitPrice', 'leverage'];
+      const missingDriftFields = requiredDriftFields.filter(field => config[field] === undefined || config[field] === null);
+      
+      if (missingDriftFields.length > 0) {
+        console.log('Invalid drift perp config - missing fields:', missingDriftFields);
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          required: requiredDriftFields,
+          missing: missingDriftFields
+        });
+      }
+      
+      // Validate direction
+      if (!['long', 'short'].includes(config.direction)) {
+        console.log('Invalid drift perp config - invalid direction:', config.direction);
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          details: 'Direction must be either "long" or "short"'
+        });
+      }
+      
+      // Validate allocation percentage
+      if (config.allocationPercentage < 1 || config.allocationPercentage > 100) {
+        console.log('Invalid drift perp config - allocation percentage out of range:', config.allocationPercentage);
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          details: 'Allocation percentage must be between 1 and 100'
+        });
+      }
+      
+      // Validate leverage
+      if (config.leverage < 1 || config.leverage > 10) {
+        console.log('Invalid drift perp config - leverage out of range:', config.leverage);
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          details: 'Leverage must be between 1x and 10x'
+        });
+      }
+      
+      // Validate prices
+      if (config.entryPrice <= 0 || config.exitPrice <= 0) {
+        console.log('Invalid drift perp config - invalid prices:', { entryPrice: config.entryPrice, exitPrice: config.exitPrice });
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          details: 'Entry and exit prices must be greater than 0'
+        });
+      }
+      
+      // Validate market index
+      if (config.marketIndex < 0 || !Number.isInteger(config.marketIndex)) {
+        console.log('Invalid drift perp config - invalid market index:', config.marketIndex);
+        return res.status(400).json({
+          error: 'Invalid drift perp configuration',
+          details: 'Market index must be a non-negative integer'
         });
       }
       

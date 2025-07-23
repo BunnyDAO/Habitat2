@@ -8,7 +8,7 @@ import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adap
 import '@solana/wallet-adapter-react-ui/styles.css';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, Keypair, Transaction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js';
 import { JobManager } from './managers/JobManager';
-import { JobType, WalletMonitoringJob, AnyJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, Level, ensureUint8Array } from './types/jobs';
+import { JobType, WalletMonitoringJob, AnyJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, DriftPerpJob, Level, ensureUint8Array } from './types/jobs';
 import { Buffer } from 'buffer';
 import { PriceFeedService } from './services/PriceFeedService';
 import PasswordModal from './components/PasswordModal';
@@ -23,7 +23,7 @@ import DeleteLackeyDialog from './components/DeleteLackeyDialog';
 import LackeyImportExport from './components/LackeyImportExport';
 import { Graphs } from './pages/Graphs';
 import { WalletMonitorIcon } from './components/WalletMonitorIcon';
-import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon, PairTradeIcon } from './components/StrategyIcons';
+import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon, PairTradeIcon, DriftPerpIcon } from './components/StrategyIcons';
 import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import { WalletButton } from './components/WalletButton';
@@ -662,6 +662,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [pairMaxSlippage, setPairMaxSlippage] = useState<string | number>('1');
   const [supportedTokens, setSupportedTokens] = useState<any[]>([]);
   const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+  
+  // Add state for Drift Perp
+  const [driftMarketSymbol, setDriftMarketSymbol] = useState('SOL-PERP');
+  const [driftMarketIndex, setDriftMarketIndex] = useState(0);
+  const [driftDirection, setDriftDirection] = useState<'long' | 'short'>('long');
+  const [driftAllocationPercentage, setDriftAllocationPercentage] = useState<string | number>('25');
+  const [driftEntryPrice, setDriftEntryPrice] = useState<string | number>('');
+  const [driftExitPrice, setDriftExitPrice] = useState<string | number>('');
+  const [driftLeverage, setDriftLeverage] = useState<string | number>('1');
+  const [driftStopLoss, setDriftStopLoss] = useState<string | number>('');
+  const [driftTakeProfit, setDriftTakeProfit] = useState<string | number>('');
+  const [driftMaxSlippage, setDriftMaxSlippage] = useState<string | number>('1');
+  const [availableDriftMarkets, setAvailableDriftMarkets] = useState<any[]>([]);
+  const [isDriftMarketsLoading, setIsDriftMarketsLoading] = useState(false);
   
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -1827,6 +1841,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                               `Max Slippage: ${pairTradeJob.maxSlippage}%`,
                               pairTradeJob.lastSwapTimestamp ? `Last Swap: ${new Date(pairTradeJob.lastSwapTimestamp).toLocaleString()}` : null,
                               pairTradeJob.swapHistory.length > 0 ? `Swaps: ${pairTradeJob.swapHistory.length}` : null
+                            ].filter(Boolean)
+                          };
+                        case JobType.DRIFT_PERP:
+                          const driftPerpJob = job as DriftPerpJob;
+                          return {
+                            title: 'Drift Perp',
+                            details: [
+                              `Market: ${driftPerpJob.marketSymbol}`,
+                              `Direction: ${driftPerpJob.direction.toUpperCase()}`,
+                              `Entry: $${driftPerpJob.entryPrice} → Exit: $${driftPerpJob.exitPrice}`,
+                              `Leverage: ${driftPerpJob.leverage}x`,
+                              `Allocation: ${driftPerpJob.allocationPercentage}% of SOL`,
+                              driftPerpJob.isPositionOpen ? '🟢 Position Open' : '🔴 No Position',
+                              driftPerpJob.currentPosition ? `PnL: $${driftPerpJob.currentPosition.unrealizedPnl.toFixed(2)}` : null,
+                              driftPerpJob.orderHistory.length > 0 ? `Orders: ${driftPerpJob.orderHistory.length}` : null
                             ].filter(Boolean)
                           };
                         default:
@@ -3410,6 +3439,124 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
+  const createDriftPerpStrategy = async () => {
+    if (!selectedTradingWallet) {
+      setNotification({
+        message: 'Please select a trading wallet first',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (!driftEntryPrice || !driftExitPrice) {
+      setNotification({
+        message: 'Please enter both entry and exit prices',
+        type: 'error'
+      });
+      return;
+    }
+
+    const entryPrice = parseFloat(driftEntryPrice.toString());
+    const exitPrice = parseFloat(driftExitPrice.toString());
+    const leverage = parseFloat(driftLeverage.toString());
+    const allocationPercentage = parseFloat(driftAllocationPercentage.toString());
+
+    if (entryPrice <= 0 || exitPrice <= 0 || leverage <= 0 || allocationPercentage <= 0) {
+      setNotification({
+        message: 'All numeric values must be greater than 0',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (leverage > 10) {
+      setNotification({
+        message: 'Maximum leverage is 10x',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (allocationPercentage > 100) {
+      setNotification({
+        message: 'Allocation percentage cannot exceed 100%',
+        type: 'error'
+      });
+      return;
+    }
+
+    try {
+      const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
+      
+      const strategyInstance = StrategyService.getInstance(connection);
+      
+      // Check if a drift perp strategy already exists for this trading wallet and market
+      const existingJob = jobs.find(
+        job => 
+          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
+          job.type === JobType.DRIFT_PERP &&
+          (job as DriftPerpJob).marketSymbol === driftMarketSymbol
+      );
+
+      let newJob: DriftPerpJob;
+      if (existingJob) {
+        setExistingJobId(existingJob.id);
+        setIsOverrideModalOpen(true);
+        return;
+      } else {
+        newJob = await strategyInstance.createDriftPerpStrategy({
+          tradingWallet: selectedTradingWallet,
+          initialBalance,
+          solPrice: 150, // TODO: Get actual SOL price
+          marketSymbol: driftMarketSymbol,
+          marketIndex: driftMarketIndex,
+          direction: driftDirection,
+          allocationPercentage,
+          entryPrice,
+          exitPrice,
+          leverage,
+          stopLoss: driftStopLoss ? parseFloat(driftStopLoss.toString()) : undefined,
+          takeProfit: driftTakeProfit ? parseFloat(driftTakeProfit.toString()) : undefined,
+          maxSlippage: parseFloat(driftMaxSlippage.toString())
+        });
+      }
+
+      if (existingJob) {
+        setJobs(prevJobs => prevJobs.map(job => 
+          job.id === existingJob.id ? newJob : job
+        ));
+        setNotification({
+          message: 'Updated existing Drift Perp strategy',
+          type: 'success'
+        });
+      } else {
+        setJobs(prevJobs => [...prevJobs, newJob]);
+        setNotification({
+          message: 'Created new Drift Perp strategy',
+          type: 'success'
+        });
+      }
+
+      // Reset form
+      setDriftMarketSymbol('SOL-PERP');
+      setDriftMarketIndex(0);
+      setDriftDirection('long');
+      setDriftAllocationPercentage('25');
+      setDriftEntryPrice('');
+      setDriftExitPrice('');
+      setDriftLeverage('1');
+      setDriftStopLoss('');
+      setDriftTakeProfit('');
+      setDriftMaxSlippage('1');
+    } catch (error) {
+      console.error('Error creating Drift Perp strategy:', error);
+      setNotification({
+        message: error instanceof Error ? error.message : 'Failed to create Drift Perp strategy',
+        type: 'error'
+      });
+    }
+  };
+
   // Add deleteJob function before the return statement
   const deleteJob = async (jobId: string) => {
     try {
@@ -4027,6 +4174,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         return <LevelsIcon {...iconProps} />;
       case JobType.PAIR_TRADE:
         return <PairTradeIcon {...iconProps} />;
+      case JobType.DRIFT_PERP:
+        return <DriftPerpIcon {...iconProps} />;
       case JobType.SAVED_WALLET:
       default:
         return <LackeyIcon {...iconProps} />;
@@ -6009,6 +6158,384 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       }}
                     >
                       Create Pair Trade Strategy
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Drift Perp Strategy Card */}
+              <div style={{
+                backgroundColor: '#1e293b',
+                padding: '1.125rem',
+                borderRadius: '0.75rem',
+                border: '1px solid #2d3748',
+                marginBottom: '1.125rem'
+              }}>
+                <div 
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                  onClick={() => toggleStrategy('drift-perp')}
+                >
+                  <div style={{
+                    backgroundColor: '#8b5cf6',
+                    padding: '0.5rem',
+                    borderRadius: '0.5rem',
+                    width: '1.875rem',
+                    height: '1.875rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.875rem'
+                  }}>
+                    <DriftPerpIcon isActive={true} onClick={() => {}} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ 
+                      color: '#e2e8f0',
+                      margin: 0,
+                      fontSize: '0.9375rem'
+                    }}>Drift Perp</h3>
+                    {expandedStrategy !== 'drift-perp' && (
+                      <p style={{ 
+                        color: '#94a3b8',
+                        margin: '0.1875rem 0 0 0',
+                        fontSize: '0.75rem'
+                      }}>
+                        Trade perpetual futures with leverage on Drift Protocol
+                      </p>
+                    )}
+                  </div>
+                  <div style={{
+                    color: '#94a3b8',
+                    transform: expandedStrategy === 'drift-perp' ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 0.2s ease',
+                    fontSize: '0.75rem'
+                  }}>
+                    ▼
+                  </div>
+                </div>
+                {expandedStrategy === 'drift-perp' && (
+                  <div style={{
+                    marginTop: '1.125rem',
+                    animation: 'fadeIn 0.2s ease'
+                  }}>
+                    <p style={{ 
+                      color: '#94a3b8',
+                      margin: '0 0 1.125rem 0',
+                      fontSize: '0.75rem'
+                    }}>
+                      Open long or short positions on perpetual futures contracts with leverage
+                    </p>
+
+                    {/* Market Selection */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Market
+                      </label>
+                      <select
+                        value={driftMarketSymbol}
+                        onChange={(e) => {
+                          setDriftMarketSymbol(e.target.value);
+                          // Set market index based on symbol
+                          const marketMap: { [key: string]: number } = {
+                            'SOL-PERP': 0,
+                            'BTC-PERP': 1,
+                            'ETH-PERP': 2,
+                            'AVAX-PERP': 3,
+                            'BNB-PERP': 4,
+                            'MATIC-PERP': 5
+                          };
+                          setDriftMarketIndex(marketMap[e.target.value] || 0);
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        <option value="SOL-PERP">SOL-PERP</option>
+                        <option value="BTC-PERP">BTC-PERP</option>
+                        <option value="ETH-PERP">ETH-PERP</option>
+                        <option value="AVAX-PERP">AVAX-PERP</option>
+                        <option value="BNB-PERP">BNB-PERP</option>
+                        <option value="MATIC-PERP">MATIC-PERP</option>
+                      </select>
+                    </div>
+
+                    {/* Direction Selection */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Direction
+                      </label>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          onClick={() => setDriftDirection('long')}
+                          style={{
+                            flex: 1,
+                            padding: '0.75rem',
+                            backgroundColor: driftDirection === 'long' ? '#10b981' : '#1e293b',
+                            border: '1px solid ' + (driftDirection === 'long' ? '#34d399' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Long (Buy)
+                        </button>
+                        <button
+                          onClick={() => setDriftDirection('short')}
+                          style={{
+                            flex: 1,
+                            padding: '0.75rem',
+                            backgroundColor: driftDirection === 'short' ? '#ef4444' : '#1e293b',
+                            border: '1px solid ' + (driftDirection === 'short' ? '#f87171' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Short (Sell)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Entry and Exit Prices */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Entry Price (USD)
+                        </label>
+                        <input
+                          type="number"
+                          value={driftEntryPrice}
+                          onChange={(e) => setDriftEntryPrice(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="e.g., 150.00"
+                          step="0.01"
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Exit Price (USD)
+                        </label>
+                        <input
+                          type="number"
+                          value={driftExitPrice}
+                          onChange={(e) => setDriftExitPrice(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="e.g., 180.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Allocation and Leverage */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Allocation (% of SOL)
+                        </label>
+                        <input
+                          type="number"
+                          value={driftAllocationPercentage}
+                          onChange={(e) => setDriftAllocationPercentage(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="25"
+                          min="1"
+                          max="100"
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Leverage (1-10x)
+                        </label>
+                        <input
+                          type="number"
+                          value={driftLeverage}
+                          onChange={(e) => setDriftLeverage(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="1"
+                          min="1"
+                          max="10"
+                          step="0.1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Optional: Stop Loss and Take Profit */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Stop Loss (USD) - Optional
+                        </label>
+                        <input
+                          type="number"
+                          value={driftStopLoss}
+                          onChange={(e) => setDriftStopLoss(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="e.g., 140.00"
+                          step="0.01"
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Take Profit (USD) - Optional
+                        </label>
+                        <input
+                          type="number"
+                          value={driftTakeProfit}
+                          onChange={(e) => setDriftTakeProfit(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            backgroundColor: '#1e293b',
+                            border: '1px solid #4b5563',
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            fontSize: '0.875rem'
+                          }}
+                          placeholder="e.g., 200.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Max Slippage */}
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Max Slippage (%)
+                      </label>
+                      <input
+                        type="number"
+                        value={driftMaxSlippage}
+                        onChange={(e) => setDriftMaxSlippage(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}
+                        placeholder="1"
+                        min="0.1"
+                        max="10"
+                        step="0.1"
+                      />
+                    </div>
+
+                    <button
+                      onClick={createDriftPerpStrategy}
+                      disabled={!selectedTradingWallet || !driftEntryPrice || !driftExitPrice}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        backgroundColor: (selectedTradingWallet && driftEntryPrice && driftExitPrice) ? '#8b5cf6' : '#4b5563',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        color: '#e2e8f0',
+                        cursor: (selectedTradingWallet && driftEntryPrice && driftExitPrice) ? 'pointer' : 'not-allowed',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      Create Drift Perp Strategy
                     </button>
                   </div>
                 )}

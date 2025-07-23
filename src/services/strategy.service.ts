@@ -1,11 +1,11 @@
 import { Connection } from '@solana/web3.js';
 import { strategyApiService } from './api/strategy.service';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, ensureUint8Array } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, DriftPerpJob, ensureUint8Array } from '../types/jobs';
 import { TradingWallet } from '../types/wallet';
 import type { ProfitTracking } from '../types/profit';
 
 // Base Job interface that all strategy types extend
-type Job = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob;
+type Job = WalletMonitoringJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob | DriftPerpJob;
 
 interface BaseStrategyParams {
   tradingWallet: TradingWallet;
@@ -41,6 +41,19 @@ interface PairTradeParams extends BaseStrategyParams {
   allocationPercentage: number;
   maxSlippage: number;
   autoRebalance: boolean;
+}
+
+interface DriftPerpParams extends BaseStrategyParams {
+  marketSymbol: string;
+  marketIndex: number;
+  direction: 'long' | 'short';
+  allocationPercentage: number;
+  entryPrice: number;
+  exitPrice: number;
+  leverage: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  maxSlippage: number;
 }
 
 export class StrategyService {
@@ -314,6 +327,52 @@ export class StrategyService {
       maxSlippage: params.maxSlippage,
       autoRebalance: params.autoRebalance,
       swapHistory: [],
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+    };
+
+    this.jobs.set(newJob.id, newJob);
+    return newJob;
+  }
+
+  async createDriftPerpStrategy(params: DriftPerpParams): Promise<DriftPerpJob> {
+    // Save to backend and get backend ID
+    const backendStrategy = await strategyApiService.createStrategy({
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      strategy_type: JobType.DRIFT_PERP,
+      config: {
+        marketSymbol: params.marketSymbol,
+        marketIndex: params.marketIndex,
+        direction: params.direction,
+        allocationPercentage: params.allocationPercentage,
+        entryPrice: params.entryPrice,
+        exitPrice: params.exitPrice,
+        leverage: params.leverage,
+        stopLoss: params.stopLoss,
+        takeProfit: params.takeProfit,
+        maxSlippage: params.maxSlippage
+      }
+    });
+
+    const newJob: DriftPerpJob = {
+      id: backendStrategy.id.toString(),
+      type: JobType.DRIFT_PERP,
+      tradingWalletPublicKey: params.tradingWallet.publicKey,
+      tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      marketSymbol: params.marketSymbol,
+      marketIndex: params.marketIndex,
+      direction: params.direction,
+      allocationPercentage: params.allocationPercentage,
+      entryPrice: params.entryPrice,
+      exitPrice: params.exitPrice,
+      leverage: params.leverage,
+      stopLoss: params.stopLoss,
+      takeProfit: params.takeProfit,
+      maxSlippage: params.maxSlippage,
+      positionHistory: [],
+      orderHistory: [],
+      isPositionOpen: false,
       isActive: true,
       createdAt: new Date().toISOString(),
       profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)

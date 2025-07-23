@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { Pool } from 'pg';
 import { WalletMonitorWorker } from '../workers/WalletMonitorWorker';
 import { PriceMonitorWorker } from '../workers/PriceMonitorWorker';
 import { VaultWorker } from '../workers/VaultWorker';
@@ -25,6 +26,7 @@ class StrategyDaemon {
   private appSecret: string;
   private encryptionService: EncryptionService;
   private tokenService: TokenService;
+  private pool: Pool;
 
   constructor() {
     if (!process.env.APP_SECRET) {
@@ -33,9 +35,14 @@ class StrategyDaemon {
     this.appSecret = process.env.APP_SECRET;
     this.encryptionService = EncryptionService.getInstance();
     
-    // Initialize TokenService - we'll need to pass pool and redis client
-    // For now, we'll initialize it in the worker creation
-    this.tokenService = new TokenService(null as any, null);
+    // Initialize database pool
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    });
+    
+    // Initialize TokenService
+    this.tokenService = new TokenService(this.pool, null);
   }
 
   async start(): Promise<void> {
@@ -365,7 +372,7 @@ class StrategyDaemon {
             lastSwapTimestamp: strategy.last_swap_timestamp,
             swapHistory: strategy.swap_history || []
           } as import('../types/jobs').PairTradeJob;
-          worker = new PairTradeWorker(job, HELIUS_ENDPOINT, this.tokenService);
+          worker = new PairTradeWorker(job, HELIUS_ENDPOINT, this.tokenService, this.pool);
           break;
         }
         default:

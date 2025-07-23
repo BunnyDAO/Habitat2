@@ -6,7 +6,8 @@ export enum JobType {
   PRICE_MONITOR = 'price-monitor',
   VAULT = 'vault',
   LEVELS = 'levels',
-  PAIR_TRADE = 'pair-trade'
+  PAIR_TRADE = 'pair-trade',
+  DRIFT_PERP = 'drift-perp'
 }
 
 export interface ProfitSnapshot {
@@ -120,4 +121,45 @@ export interface PairTradeJob extends BaseJob {
   }>;
 }
 
-export type AnyJob = WalletMonitoringJob | SavedWalletJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob; 
+export interface DriftPerpPosition {
+  timestamp: string;
+  marketIndex: number;
+  direction: 'long' | 'short';
+  baseAssetAmount: number;
+  quoteAssetAmount: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  leverage: number;
+  liquidationPrice: number;
+  marginRatio: number;
+}
+
+export interface DriftPerpJob extends BaseJob {
+  type: JobType.DRIFT_PERP;
+  marketSymbol: string;
+  marketIndex: number;
+  direction: 'long' | 'short';
+  allocationPercentage: number;
+  entryPrice: number;
+  exitPrice: number;
+  leverage: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  maxSlippage: number;
+  currentPosition?: DriftPerpPosition;
+  positionHistory: DriftPerpPosition[];
+  orderHistory: Array<{
+    timestamp: string;
+    type: 'open' | 'close' | 'liquidated';
+    direction: 'long' | 'short';
+    size: number;
+    price: number;
+    pnl?: number;
+    signature: string;
+  }>;
+  isPositionOpen: boolean;
+  lastActivityTimestamp?: string;
+}
+
+export type AnyJob = WalletMonitoringJob | SavedWalletJob | PriceMonitoringJob | VaultStrategy | LevelsStrategy | PairTradeJob | DriftPerpJob; 

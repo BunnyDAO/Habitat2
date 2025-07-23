@@ -87,7 +87,8 @@ export const PublishStrategyModal: React.FC<PublishStrategyModalProps> = ({
         category: strategy.strategy_type === 'wallet-monitor' ? 'Wallet Monitor' :
                  strategy.strategy_type === 'price-monitor' ? 'Price Monitor' :
                  strategy.strategy_type === 'vault' ? 'Vault' :
-                 strategy.strategy_type === 'levels' ? 'Levels' : 'Other'
+                 strategy.strategy_type === 'levels' ? 'Levels' :
+                 strategy.strategy_type === 'drift-perp' ? 'Drift Perp' : 'Other'
       }));
     }
   };

@@ -52,19 +52,10 @@ export class TokenService {
         SELECT mint_address, name, symbol, decimals, logo_uri, last_updated
         FROM tokens
         WHERE (
-          -- xStocks (tokenized stocks)
-          symbol LIKE '%x' AND (
-            symbol = 'TSLAx' OR 
-            symbol = 'AAPLx' OR 
-            symbol = 'NVDAx' OR 
-            symbol = 'METAx' OR 
-            symbol = 'COINx' OR
-            symbol = 'GOOGLx' OR
-            symbol = 'MSFTx' OR
-            symbol = 'AMZNx' OR
-            symbol = 'SPYx' OR
-            symbol = 'QQQx'
-          )
+          -- All xStocks (tokenized stocks) - now includes all 61+ tokens from xstocks.com
+          (symbol LIKE '%x' AND mint_address LIKE 'Xs%') OR
+          -- Legacy xStocks with other patterns (for backward compatibility)
+          symbol IN ('TSLAx', 'AAPLx', 'NVDAx', 'METAx', 'COINx', 'GOOGLx', 'MSFTx', 'AMZNx', 'SPYx', 'QQQx')
         ) OR (
           -- Major crypto tokens
           mint_address = 'So11111111111111111111111111111111111111112' OR -- SOL

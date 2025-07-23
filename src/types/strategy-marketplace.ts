@@ -307,6 +307,7 @@ export const STRATEGY_CATEGORIES = [
   'Price Monitor', 
   'Vault',
   'Levels',
+  'Drift Perp',
   'Other'
 ] as const;
 
@@ -333,7 +334,13 @@ export const STRATEGY_TAGS = [
   'level-trading',
   'monitored-wallet',
   'real-time',
-  'configurable'
+  'configurable',
+  'perpetuals',
+  'leverage',
+  'derivatives',
+  'drift-protocol',
+  'long-short',
+  'margin-trading'
 ] as const;
 
 export type StrategyTag = typeof STRATEGY_TAGS[number];

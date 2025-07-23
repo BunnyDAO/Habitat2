@@ -1,1 +1,384 @@
-import { Router, Request, Response } from 'express';\nimport { Pool } from 'pg';\nimport { PairTradeTriggerDaemon } from '../services/PairTradeTriggerDaemon';\n\nexport function createPairTradeRoutes(pool: Pool, daemon?: PairTradeTriggerDaemon): Router {\n  const router = Router();\n\n  /**\n   * GET /api/pair-trades/triggers\n   * Get all pair trade triggers and their status\n   */\n  router.get('/triggers', async (req: Request, res: Response) => {\n    try {\n      const result = await pool.query(`\n        SELECT \n          id,\n          token_a_mint,\n          token_b_mint,\n          token_a_symbol,\n          token_b_symbol,\n          preferred_initial_token,\n          current_direction,\n          trigger_swap,\n          last_triggered_at,\n          trigger_count,\n          created_at,\n          updated_at\n        FROM pair_trade_triggers \n        ORDER BY updated_at DESC\n      `);\n      \n      res.json({\n        success: true,\n        triggers: result.rows,\n        count: result.rows.length\n      });\n    } catch (error) {\n      console.error('Error fetching triggers:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to fetch triggers'\n      });\n    }\n  });\n\n  /**\n   * GET /api/pair-trades/triggers/active\n   * Get only active triggers (trigger_swap = true)\n   */\n  router.get('/triggers/active', async (req: Request, res: Response) => {\n    try {\n      if (daemon) {\n        const activeTriggers = await daemon.getActiveTriggers();\n        res.json({\n          success: true,\n          triggers: activeTriggers,\n          count: activeTriggers.length\n        });\n      } else {\n        const result = await pool.query(`\n          SELECT * FROM pair_trade_triggers \n          WHERE trigger_swap = true\n          ORDER BY updated_at DESC\n        `);\n        \n        res.json({\n          success: true,\n          triggers: result.rows,\n          count: result.rows.length\n        });\n      }\n    } catch (error) {\n      console.error('Error fetching active triggers:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to fetch active triggers'\n      });\n    }\n  });\n\n  /**\n   * POST /api/pair-trades/trigger\n   * Manually set a trigger to execute swaps\n   * \n   * Body:\n   * {\n   *   \"tokenA\": \"So11111111111111111111111111111111111111112\",\n   *   \"tokenB\": \"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v\",\n   *   \"direction\": \"A_TO_B\" // or \"B_TO_A\"\n   * }\n   */\n  router.post('/trigger', async (req: Request, res: Response) => {\n    const { tokenA, tokenB, direction } = req.body;\n\n    // Validation\n    if (!tokenA || !tokenB || !direction) {\n      return res.status(400).json({\n        success: false,\n        error: 'tokenA, tokenB, and direction are required'\n      });\n    }\n\n    if (!['A_TO_B', 'B_TO_A'].includes(direction)) {\n      return res.status(400).json({\n        success: false,\n        error: 'direction must be A_TO_B or B_TO_A'\n      });\n    }\n\n    try {\n      // Check if trigger exists for this pair\n      const checkResult = await pool.query(`\n        SELECT id, token_a_symbol, token_b_symbol FROM pair_trade_triggers\n        WHERE \n          (token_a_mint = $1 AND token_b_mint = $2) OR\n          (token_a_mint = $2 AND token_b_mint = $1)\n      `, [tokenA, tokenB]);\n\n      if (checkResult.rows.length === 0) {\n        return res.status(404).json({\n          success: false,\n          error: `No trigger configuration found for token pair ${tokenA}/${tokenB}`\n        });\n      }\n\n      const trigger = checkResult.rows[0];\n      \n      // Update the trigger\n      await pool.query(`\n        UPDATE pair_trade_triggers\n        SET \n          current_direction = $3,\n          trigger_swap = true,\n          updated_at = NOW()\n        WHERE id = $1\n      `, [trigger.id, tokenA, tokenB, direction]);\n\n      console.log(`[API] Manual trigger set: ${trigger.token_a_symbol}/${trigger.token_b_symbol} - ${direction}`);\n\n      res.json({\n        success: true,\n        message: `Trigger set for ${trigger.token_a_symbol}/${trigger.token_b_symbol} - ${direction}`,\n        trigger: {\n          id: trigger.id,\n          tokenPair: `${trigger.token_a_symbol}/${trigger.token_b_symbol}`,\n          direction,\n          status: 'Active - Daemon will execute swaps'\n        }\n      });\n    } catch (error) {\n      console.error('Error setting trigger:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to set trigger'\n      });\n    }\n  });\n\n  /**\n   * POST /api/pair-trades/trigger/hold\n   * Set a pair to HOLD (no swaps)\n   */\n  router.post('/trigger/hold', async (req: Request, res: Response) => {\n    const { tokenA, tokenB } = req.body;\n\n    if (!tokenA || !tokenB) {\n      return res.status(400).json({\n        success: false,\n        error: 'tokenA and tokenB are required'\n      });\n    }\n\n    try {\n      const result = await pool.query(`\n        UPDATE pair_trade_triggers\n        SET \n          current_direction = 'HOLD',\n          trigger_swap = false,\n          updated_at = NOW()\n        WHERE \n          (token_a_mint = $1 AND token_b_mint = $2) OR\n          (token_a_mint = $2 AND token_b_mint = $1)\n      `, [tokenA, tokenB]);\n\n      if (result.rowCount === 0) {\n        return res.status(404).json({\n          success: false,\n          error: 'Token pair not found'\n        });\n      }\n\n      res.json({\n        success: true,\n        message: 'Pair set to HOLD - no swaps will be executed'\n      });\n    } catch (error) {\n      console.error('Error setting HOLD:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to set HOLD'\n      });\n    }\n  });\n\n  /**\n   * POST /api/pair-trades/trigger/manual-check\n   * Manually trigger daemon to check for triggers now\n   */\n  router.post('/trigger/manual-check', async (req: Request, res: Response) => {\n    try {\n      if (!daemon) {\n        return res.status(503).json({\n          success: false,\n          error: 'Daemon not available'\n        });\n      }\n\n      console.log('[API] Manual daemon check requested');\n      await daemon.checkNow();\n\n      res.json({\n        success: true,\n        message: 'Manual trigger check completed'\n      });\n    } catch (error) {\n      console.error('Error in manual check:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to execute manual check'\n      });\n    }\n  });\n\n  /**\n   * GET /api/pair-trades/daemon/status\n   * Get daemon status\n   */\n  router.get('/daemon/status', (req: Request, res: Response) => {\n    if (!daemon) {\n      return res.status(503).json({\n        success: false,\n        error: 'Daemon not available'\n      });\n    }\n\n    const status = daemon.getStatus();\n    res.json({\n      success: true,\n      daemon: status\n    });\n  });\n\n  /**\n   * POST /api/pair-trades/daemon/interval\n   * Update daemon check interval\n   */\n  router.post('/daemon/interval', (req: Request, res: Response) => {\n    const { intervalMs } = req.body;\n\n    if (!daemon) {\n      return res.status(503).json({\n        success: false,\n        error: 'Daemon not available'\n      });\n    }\n\n    if (!intervalMs || intervalMs < 1000) {\n      return res.status(400).json({\n        success: false,\n        error: 'intervalMs must be at least 1000'\n      });\n    }\n\n    try {\n      daemon.setCheckInterval(intervalMs);\n      res.json({\n        success: true,\n        message: `Daemon check interval updated to ${intervalMs}ms`\n      });\n    } catch (error) {\n      res.status(500).json({\n        success: false,\n        error: error instanceof Error ? error.message : 'Failed to update interval'\n      });\n    }\n  });\n\n  /**\n   * GET /api/pair-trades/strategies\n   * Get all pair trade strategies and their current positions\n   */\n  router.get('/strategies', async (req: Request, res: Response) => {\n    try {\n      const result = await pool.query(`\n        SELECT \n          j.id,\n          j.trading_wallet_public_key,\n          j.data->>'tokenASymbol' as token_a_symbol,\n          j.data->>'tokenBSymbol' as token_b_symbol,\n          j.data->>'currentToken' as current_position,\n          j.data->>'allocationPercentage' as allocation_percentage,\n          j.data->>'lastSwapTimestamp' as last_swap,\n          jsonb_array_length(j.data->'swapHistory') as swap_count,\n          j.is_active,\n          j.created_at\n        FROM jobs j\n        WHERE j.type = 'pair-trade'\n        ORDER BY j.created_at DESC\n      `);\n      \n      res.json({\n        success: true,\n        strategies: result.rows,\n        count: result.rows.length\n      });\n    } catch (error) {\n      console.error('Error fetching strategies:', error);\n      res.status(500).json({ \n        success: false, \n        error: 'Failed to fetch strategies'\n      });\n    }\n  });\n\n  /**\n   * POST /api/pair-trades/pair\n   * Add a new token pair configuration\n   */\n  router.post('/pair', async (req: Request, res: Response) => {\n    const { \n      tokenAMint, \n      tokenBMint, \n      tokenASymbol, \n      tokenBSymbol, \n      preferredInitialToken \n    } = req.body;\n\n    // Validation\n    if (!tokenAMint || !tokenBMint || !tokenASymbol || !tokenBSymbol || !preferredInitialToken) {\n      return res.status(400).json({\n        success: false,\n        error: 'All fields are required: tokenAMint, tokenBMint, tokenASymbol, tokenBSymbol, preferredInitialToken'\n      });\n    }\n\n    if (!['A', 'B'].includes(preferredInitialToken)) {\n      return res.status(400).json({\n        success: false,\n        error: 'preferredInitialToken must be A or B'\n      });\n    }\n\n    try {\n      const result = await pool.query(`\n        INSERT INTO pair_trade_triggers (\n          token_a_mint, token_b_mint, token_a_symbol, token_b_symbol, \n          preferred_initial_token, current_direction, trigger_swap\n        ) VALUES ($1, $2, $3, $4, $5, 'HOLD', false)\n        RETURNING id\n      `, [tokenAMint, tokenBMint, tokenASymbol, tokenBSymbol, preferredInitialToken]);\n\n      res.json({\n        success: true,\n        message: `Token pair ${tokenASymbol}/${tokenBSymbol} added successfully`,\n        pairId: result.rows[0].id\n      });\n    } catch (error) {\n      if (error instanceof Error && error.message.includes('duplicate key')) {\n        res.status(409).json({\n          success: false,\n          error: 'Token pair already exists'\n        });\n      } else {\n        console.error('Error adding pair:', error);\n        res.status(500).json({ \n          success: false, \n          error: 'Failed to add token pair'\n        });\n      }\n    }\n  });\n\n  return router;\n}
+import { Router, Request, Response } from 'express';
+import { Pool } from 'pg';
+import { PairTradeTriggerDaemon } from '../services/PairTradeTriggerDaemon';
+
+export function createPairTradeRoutes(pool: Pool, daemon?: PairTradeTriggerDaemon): Router {
+  const router = Router();
+
+  /**
+   * GET /api/pair-trades/triggers
+   * Get all pair trade triggers and their status
+   */
+  router.get('/triggers', async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          id,
+          token_a_mint,
+          token_b_mint,
+          token_a_symbol,
+          token_b_symbol,
+          preferred_initial_token,
+          current_direction,
+          trigger_swap,
+          last_triggered_at,
+          trigger_count,
+          created_at,
+          updated_at
+        FROM pair_trade_triggers 
+        ORDER BY updated_at DESC
+      `);
+      
+      res.json({
+        success: true,
+        triggers: result.rows,
+        count: result.rows.length
+      });
+    } catch (error) {
+      console.error('Error fetching triggers:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch triggers'
+      });
+    }
+  });
+
+  /**
+   * GET /api/pair-trades/triggers/active
+   * Get only active triggers (trigger_swap = true)
+   */
+  router.get('/triggers/active', async (req: Request, res: Response) => {
+    try {
+      if (daemon) {
+        const activeTriggers = await daemon.getActiveTriggers();
+        res.json({
+          success: true,
+          triggers: activeTriggers,
+          count: activeTriggers.length
+        });
+      } else {
+        const result = await pool.query(`
+          SELECT * FROM pair_trade_triggers 
+          WHERE trigger_swap = true
+          ORDER BY updated_at DESC
+        `);
+        
+        res.json({
+          success: true,
+          triggers: result.rows,
+          count: result.rows.length
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching active triggers:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch active triggers'
+      });
+    }
+  });
+
+  /**
+   * POST /api/pair-trades/trigger
+   * Manually set a trigger to execute swaps
+   * 
+   * Body:
+   * {
+   *   "tokenA": "So11111111111111111111111111111111111111112",
+   *   "tokenB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   *   "direction": "A_TO_B" // or "B_TO_A"
+   * }
+   */
+  router.post('/trigger', async (req: Request, res: Response) => {
+    const { tokenA, tokenB, direction } = req.body;
+
+    // Validation
+    if (!tokenA || !tokenB || !direction) {
+      return res.status(400).json({
+        success: false,
+        error: 'tokenA, tokenB, and direction are required'
+      });
+    }
+
+    if (!['A_TO_B', 'B_TO_A'].includes(direction)) {
+      return res.status(400).json({
+        success: false,
+        error: 'direction must be A_TO_B or B_TO_A'
+      });
+    }
+
+    try {
+      // Check if trigger exists for this pair
+      const checkResult = await pool.query(`
+        SELECT id, token_a_symbol, token_b_symbol FROM pair_trade_triggers
+        WHERE 
+          (token_a_mint = $1 AND token_b_mint = $2) OR
+          (token_a_mint = $2 AND token_b_mint = $1)
+      `, [tokenA, tokenB]);
+
+      if (checkResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: `No trigger configuration found for token pair ${tokenA}/${tokenB}`
+        });
+      }
+
+      const trigger = checkResult.rows[0];
+      
+      // Update the trigger
+      await pool.query(`
+        UPDATE pair_trade_triggers
+        SET 
+          current_direction = $3,
+          trigger_swap = true,
+          updated_at = NOW()
+        WHERE id = $1
+      `, [trigger.id, direction]);
+
+      console.log(`[API] Manual trigger set: ${trigger.token_a_symbol}/${trigger.token_b_symbol} - ${direction}`);
+
+      res.json({
+        success: true,
+        message: `Trigger set for ${trigger.token_a_symbol}/${trigger.token_b_symbol} - ${direction}`,
+        trigger: {
+          id: trigger.id,
+          tokenPair: `${trigger.token_a_symbol}/${trigger.token_b_symbol}`,
+          direction,
+          status: 'Active - Daemon will execute swaps'
+        }
+      });
+    } catch (error) {
+      console.error('Error setting trigger:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to set trigger'
+      });
+    }
+  });
+
+  /**
+   * POST /api/pair-trades/trigger/hold
+   * Set a pair to HOLD (no swaps)
+   */
+  router.post('/trigger/hold', async (req: Request, res: Response) => {
+    const { tokenA, tokenB } = req.body;
+
+    if (!tokenA || !tokenB) {
+      return res.status(400).json({
+        success: false,
+        error: 'tokenA and tokenB are required'
+      });
+    }
+
+    try {
+      const result = await pool.query(`
+        UPDATE pair_trade_triggers
+        SET 
+          current_direction = 'HOLD',
+          trigger_swap = false,
+          updated_at = NOW()
+        WHERE 
+          (token_a_mint = $1 AND token_b_mint = $2) OR
+          (token_a_mint = $2 AND token_b_mint = $1)
+      `, [tokenA, tokenB]);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Token pair not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Pair set to HOLD - no swaps will be executed'
+      });
+    } catch (error) {
+      console.error('Error setting HOLD:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to set HOLD'
+      });
+    }
+  });
+
+  /**
+   * POST /api/pair-trades/trigger/manual-check
+   * Manually trigger daemon to check for triggers now
+   */
+  router.post('/trigger/manual-check', async (req: Request, res: Response) => {
+    try {
+      if (!daemon) {
+        return res.status(503).json({
+          success: false,
+          error: 'Daemon not available'
+        });
+      }
+
+      console.log('[API] Manual daemon check requested');
+      await daemon.checkNow();
+
+      res.json({
+        success: true,
+        message: 'Manual trigger check completed'
+      });
+    } catch (error) {
+      console.error('Error in manual check:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to execute manual check'
+      });
+    }
+  });
+
+  /**
+   * GET /api/pair-trades/daemon/status
+   * Get daemon status
+   */
+  router.get('/daemon/status', (req: Request, res: Response) => {
+    if (!daemon) {
+      return res.status(503).json({
+        success: false,
+        error: 'Daemon not available'
+      });
+    }
+
+    const status = daemon.getStatus();
+    res.json({
+      success: true,
+      daemon: status
+    });
+  });
+
+  /**
+   * POST /api/pair-trades/daemon/interval
+   * Update daemon check interval
+   */
+  router.post('/daemon/interval', (req: Request, res: Response) => {
+    const { intervalMs } = req.body;
+
+    if (!daemon) {
+      return res.status(503).json({
+        success: false,
+        error: 'Daemon not available'
+      });
+    }
+
+    if (!intervalMs || intervalMs < 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'intervalMs must be at least 1000'
+      });
+    }
+
+    try {
+      daemon.setCheckInterval(intervalMs);
+      res.json({
+        success: true,
+        message: `Daemon check interval updated to ${intervalMs}ms`
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update interval'
+      });
+    }
+  });
+
+  /**
+   * GET /api/pair-trades/strategies
+   * Get all pair trade strategies and their current positions
+   */
+  router.get('/strategies', async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          j.id,
+          j.trading_wallet_public_key,
+          j.data->>'tokenASymbol' as token_a_symbol,
+          j.data->>'tokenBSymbol' as token_b_symbol,
+          j.data->>'currentToken' as current_position,
+          j.data->>'allocationPercentage' as allocation_percentage,
+          j.data->>'lastSwapTimestamp' as last_swap,
+          jsonb_array_length(j.data->'swapHistory') as swap_count,
+          j.is_active,
+          j.created_at
+        FROM jobs j
+        WHERE j.type = 'pair-trade'
+        ORDER BY j.created_at DESC
+      `);
+      
+      res.json({
+        success: true,
+        strategies: result.rows,
+        count: result.rows.length
+      });
+    } catch (error) {
+      console.error('Error fetching strategies:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch strategies'
+      });
+    }
+  });
+
+  /**
+   * POST /api/pair-trades/pair
+   * Add a new token pair configuration
+   */
+  router.post('/pair', async (req: Request, res: Response) => {
+    const { 
+      tokenAMint, 
+      tokenBMint, 
+      tokenASymbol, 
+      tokenBSymbol, 
+      preferredInitialToken 
+    } = req.body;
+
+    // Validation
+    if (!tokenAMint || !tokenBMint || !tokenASymbol || !tokenBSymbol || !preferredInitialToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'All fields are required: tokenAMint, tokenBMint, tokenASymbol, tokenBSymbol, preferredInitialToken'
+      });
+    }
+
+    if (!['A', 'B'].includes(preferredInitialToken)) {
+      return res.status(400).json({
+        success: false,
+        error: 'preferredInitialToken must be A or B'
+      });
+    }
+
+    try {
+      const result = await pool.query(`
+        INSERT INTO pair_trade_triggers (
+          token_a_mint, token_b_mint, token_a_symbol, token_b_symbol, 
+          preferred_initial_token, current_direction, trigger_swap
+        ) VALUES ($1, $2, $3, $4, $5, 'HOLD', false)
+        RETURNING id
+      `, [tokenAMint, tokenBMint, tokenASymbol, tokenBSymbol, preferredInitialToken]);
+
+      res.json({
+        success: true,
+        message: `Token pair ${tokenASymbol}/${tokenBSymbol} added successfully`,
+        pairId: result.rows[0].id
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('duplicate key')) {
+        res.status(409).json({
+          success: false,
+          error: 'Token pair already exists'
+        });
+      } else {
+        console.error('Error adding pair:', error);
+        res.status(500).json({ 
+          success: false, 
+          error: 'Failed to add token pair'
+        });
+      }
+    }
+  });
+
+  return router;
+} 
