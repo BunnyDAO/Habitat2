@@ -3,7 +3,8 @@ export enum JobType {
   PRICE_MONITOR = 'price-monitor',
   VAULT = 'vault',
   LEVELS = 'levels',
-  PAIR_TRADE = 'pair-trade'
+  PAIR_TRADE = 'pair-trade',
+  DRIFT_PERP = 'drift-perp'
 }
 
 export interface ProfitSnapshot {

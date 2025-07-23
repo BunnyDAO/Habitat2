@@ -2,6 +2,7 @@ import { BaseWorker } from './BaseWorker';
 import { PairTradeJob } from '../types/jobs';
 import { TokenService } from '../services/TokenService';
 import { createRateLimitedConnection } from '../utils/connection';
+import { Pool } from 'pg';
 import { 
   PublicKey, 
   Keypair, 
@@ -21,14 +22,30 @@ import {
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
 const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
 
+// Trigger info interface
+interface TriggerInfo {
+  id: number;
+  token_a_mint: string;
+  token_b_mint: string;
+  token_a_symbol: string;
+  token_b_symbol: string;
+  preferred_initial_token: 'A' | 'B';
+  current_direction: 'A_TO_B' | 'B_TO_A' | 'HOLD';
+  trigger_swap: boolean;
+  last_triggered_at?: Date;
+  trigger_count: number;
+}
+
 export class PairTradeWorker extends BaseWorker {
   private tradingWalletKeypair: Keypair;
   private tokenService: TokenService;
+  private pool: Pool;
   private isProcessingSwap: boolean = false;
 
-  constructor(job: PairTradeJob, endpoint: string, tokenService: TokenService) {
+  constructor(job: PairTradeJob, endpoint: string, tokenService: TokenService, pool: Pool) {
     super(job, endpoint);
     this.tokenService = tokenService;
+    this.pool = pool;
     
     // Initialize trading wallet keypair
     this.tradingWalletKeypair = Keypair.fromSecretKey(job.tradingWalletSecretKey);
@@ -55,6 +72,11 @@ export class PairTradeWorker extends BaseWorker {
 
       // Ensure token accounts exist
       await this.ensureTokenAccounts();
+      
+      // NEW: Setup initial position if needed
+      if (!this.hasInitialPositionSetup()) {
+        await this.setupInitialPosition();
+      }
       
       this.isRunning = true;
       console.log(`PairTradeWorker started for strategy ${this.job.id}`);
@@ -409,5 +431,141 @@ export class PairTradeWorker extends BaseWorker {
     if (this.job) {
       this.job.lastActivity = new Date().toISOString();
     }
+  }
+
+  /**
+   * Setup initial position based on database configuration
+   */
+  private async setupInitialPosition(): Promise<void> {
+    const job = this.job as PairTradeJob;
+    
+    console.log('[PairTrade] Setting up initial position...');
+    
+    try {
+      // 1. Get preferred initial token from database
+      const triggerInfo = await this.getTriggerInfo(job.tokenAMint, job.tokenBMint);
+      
+      if (!triggerInfo) {
+        console.warn('[PairTrade] No trigger info found, defaulting to token A');
+        job.currentToken = 'A';
+        return;
+      }
+
+      // 2. Get SOL balance
+      const solBalance = await this.connection.getBalance(this.tradingWalletKeypair.publicKey);
+      const solToSell = Math.floor(solBalance * (job.allocationPercentage / 100));
+      
+      if (solToSell <= 0) {
+        console.warn('[PairTrade] Insufficient SOL balance for initial setup');
+        job.currentToken = triggerInfo.preferred_initial_token;
+        return;
+      }
+      
+      // 3. Determine target token based on preference
+      const targetMint = triggerInfo.preferred_initial_token === 'A' ? job.tokenAMint : job.tokenBMint;
+      const targetSymbol = triggerInfo.preferred_initial_token === 'A' ? job.tokenASymbol : job.tokenBSymbol;
+      
+      console.log(`[PairTrade] Initial setup: ${solToSell / 1e9} SOL → ${targetSymbol}`);
+      
+      // 4. Execute SOL → preferred token swap
+      const quote = await this.getJupiterQuote(
+        'So11111111111111111111111111111111111111112', // SOL
+        targetMint,
+        solToSell,
+        job.maxSlippage
+      );
+      
+      const swapResult = await this.executeJupiterSwap(quote);
+      
+      if (swapResult.success) {
+        // Update job state
+        job.currentToken = triggerInfo.preferred_initial_token;
+        job.lastSwapTimestamp = new Date().toISOString();
+        
+        // Calculate amounts for history
+        const toAmount = parseFloat(quote.outAmount);
+        const toDecimals = await this.getTokenDecimals(targetMint);
+        const fromAmountUI = solToSell / 1e9;
+        const toAmountUI = toAmount / Math.pow(10, toDecimals);
+        
+        // Add to swap history
+        job.swapHistory.push({
+          timestamp: new Date().toISOString(),
+          fromToken: 'SOL' as any, // Initial setup from SOL
+          toToken: triggerInfo.preferred_initial_token,
+          fromAmount: fromAmountUI,
+          toAmount: toAmountUI,
+          price: fromAmountUI / toAmountUI,
+          profit: 0 // Initial setup has no profit calculation
+        });
+        
+        console.log(`[PairTrade] Initial position established: Now holding ${targetSymbol}`);
+        console.log(`[PairTrade] Swapped ${fromAmountUI} SOL → ${toAmountUI} ${targetSymbol}`);
+      } else {
+        console.error('[PairTrade] Failed to execute initial swap:', swapResult.error);
+        // Still set the preferred token even if swap failed
+        job.currentToken = triggerInfo.preferred_initial_token;
+      }
+      
+    } catch (error) {
+      console.error('[PairTrade] Error in initial position setup:', error);
+      // Fallback to token A if setup fails
+      job.currentToken = 'A';
+    }
+  }
+
+  /**
+   * Get trigger information from database for this token pair
+   */
+  private async getTriggerInfo(tokenAMint: string, tokenBMint: string): Promise<TriggerInfo | null> {
+    try {
+      const result = await this.pool.query(`
+        SELECT * FROM pair_trade_triggers
+        WHERE 
+          (token_a_mint = $1 AND token_b_mint = $2) OR 
+          (token_a_mint = $2 AND token_b_mint = $1)
+        LIMIT 1
+      `, [tokenAMint, tokenBMint]);
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      return {
+        id: row.id,
+        token_a_mint: row.token_a_mint,
+        token_b_mint: row.token_b_mint,
+        token_a_symbol: row.token_a_symbol,
+        token_b_symbol: row.token_b_symbol,
+        preferred_initial_token: row.preferred_initial_token,
+        current_direction: row.current_direction,
+        trigger_swap: row.trigger_swap,
+        last_triggered_at: row.last_triggered_at,
+        trigger_count: row.trigger_count
+      };
+    } catch (error) {
+      console.error('[PairTrade] Error fetching trigger info:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if initial position has been setup
+   */
+  private hasInitialPositionSetup(): boolean {
+    const job = this.job as PairTradeJob;
+    // Consider setup complete if currentToken is set and we have some activity
+    return job.currentToken !== null && 
+           job.currentToken !== undefined && 
+           (job.swapHistory.length > 0 || job.lastSwapTimestamp !== undefined);
+  }
+
+  /**
+   * Get current trigger status for this pair
+   */
+  async getTriggerStatus(): Promise<TriggerInfo | null> {
+    const job = this.job as PairTradeJob;
+    return await this.getTriggerInfo(job.tokenAMint, job.tokenBMint);
   }
 }
