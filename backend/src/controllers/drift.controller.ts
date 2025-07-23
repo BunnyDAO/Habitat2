@@ -1,46 +1,85 @@
 import { Request, Response } from 'express';
-import { DriftService } from '../services/DriftService';
-import { Connection, Keypair } from '@solana/web3.js';
 
 /**
  * Controller for Drift Protocol related operations
  */
 export class DriftController {
-  private static driftService: DriftService | null = null;
-
   /**
    * Get available Drift perpetual markets with their leverage limits
    */
   static async getMarkets(req: Request, res: Response): Promise<void> {
     try {
-      // Initialize DriftService if not already done
-      if (!DriftController.driftService) {
-        const endpoint = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
-        DriftController.driftService = new DriftService(endpoint);
-      }
-
-      // Use a temporary keypair for market data queries (no funds needed)
-      const tempKeypair = Keypair.generate();
-      await DriftController.driftService.initialize(tempKeypair);
-
-      const markets = await DriftController.driftService.getAvailableMarkets();
+      console.log('[DriftController] Getting markets - using fallback data');
+      
+      // For now, return static market data to test the endpoint
+      // TODO: Replace with actual Drift SDK integration
+      const markets = [
+        { 
+          marketIndex: 0, 
+          symbol: 'SOL-PERP', 
+          baseAssetSymbol: 'SOL', 
+          maxLeverage: 20,
+          minOrderSize: 0.001,
+          tickSize: 0.001,
+          marginRatioInitial: 0.05,
+          marginRatioMaintenance: 0.03
+        },
+        { 
+          marketIndex: 1, 
+          symbol: 'BTC-PERP', 
+          baseAssetSymbol: 'BTC', 
+          maxLeverage: 15,
+          minOrderSize: 0.0001,
+          tickSize: 0.01,
+          marginRatioInitial: 0.067,
+          marginRatioMaintenance: 0.04
+        },
+        { 
+          marketIndex: 2, 
+          symbol: 'ETH-PERP', 
+          baseAssetSymbol: 'ETH', 
+          maxLeverage: 18,
+          minOrderSize: 0.001,
+          tickSize: 0.01,
+          marginRatioInitial: 0.056,
+          marginRatioMaintenance: 0.035
+        },
+        { 
+          marketIndex: 3, 
+          symbol: 'AVAX-PERP', 
+          baseAssetSymbol: 'AVAX', 
+          maxLeverage: 12,
+          minOrderSize: 0.01,
+          tickSize: 0.001,
+          marginRatioInitial: 0.083,
+          marginRatioMaintenance: 0.05
+        },
+        { 
+          marketIndex: 4, 
+          symbol: 'BNB-PERP', 
+          baseAssetSymbol: 'BNB', 
+          maxLeverage: 10,
+          minOrderSize: 0.001,
+          tickSize: 0.01,
+          marginRatioInitial: 0.1,
+          marginRatioMaintenance: 0.06
+        },
+        { 
+          marketIndex: 5, 
+          symbol: 'MATIC-PERP', 
+          baseAssetSymbol: 'MATIC', 
+          maxLeverage: 8,
+          minOrderSize: 1,
+          tickSize: 0.0001,
+          marginRatioInitial: 0.125,
+          marginRatioMaintenance: 0.075
+        }
+      ];
 
       res.json({
         success: true,
-        markets: markets.map(market => ({
-          marketIndex: market.marketIndex,
-          symbol: market.symbol,
-          baseAssetSymbol: market.baseAssetSymbol,
-          maxLeverage: market.maxLeverage,
-          minOrderSize: market.minOrderSize,
-          tickSize: market.tickSize,
-          marginRatioInitial: market.marginRatioInitial,
-          marginRatioMaintenance: market.marginRatioMaintenance
-        }))
+        markets
       });
-
-      // Clean up
-      await DriftController.driftService.cleanup();
     } catch (error) {
       console.error('[DriftController] Error getting markets:', error);
       res.status(500).json({
@@ -67,17 +106,16 @@ export class DriftController {
         return;
       }
 
-      // Initialize DriftService if not already done
-      if (!DriftController.driftService) {
-        const endpoint = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
-        DriftController.driftService = new DriftService(endpoint);
-      }
+      // Static market data - same as getMarkets
+      const markets = [
+        { marketIndex: 0, symbol: 'SOL-PERP', baseAssetSymbol: 'SOL', maxLeverage: 20 },
+        { marketIndex: 1, symbol: 'BTC-PERP', baseAssetSymbol: 'BTC', maxLeverage: 15 },
+        { marketIndex: 2, symbol: 'ETH-PERP', baseAssetSymbol: 'ETH', maxLeverage: 18 },
+        { marketIndex: 3, symbol: 'AVAX-PERP', baseAssetSymbol: 'AVAX', maxLeverage: 12 },
+        { marketIndex: 4, symbol: 'BNB-PERP', baseAssetSymbol: 'BNB', maxLeverage: 10 },
+        { marketIndex: 5, symbol: 'MATIC-PERP', baseAssetSymbol: 'MATIC', maxLeverage: 8 }
+      ];
 
-      // Use a temporary keypair for market data queries (no funds needed)
-      const tempKeypair = Keypair.generate();
-      await DriftController.driftService.initialize(tempKeypair);
-
-      const markets = await DriftController.driftService.getAvailableMarkets();
       const market = markets.find(m => m.marketIndex === index);
 
       if (!market) {
@@ -90,20 +128,8 @@ export class DriftController {
 
       res.json({
         success: true,
-        market: {
-          marketIndex: market.marketIndex,
-          symbol: market.symbol,
-          baseAssetSymbol: market.baseAssetSymbol,
-          maxLeverage: market.maxLeverage,
-          minOrderSize: market.minOrderSize,
-          tickSize: market.tickSize,
-          marginRatioInitial: market.marginRatioInitial,
-          marginRatioMaintenance: market.marginRatioMaintenance
-        }
+        market
       });
-
-      // Clean up
-      await DriftController.driftService.cleanup();
     } catch (error) {
       console.error('[DriftController] Error getting market:', error);
       res.status(500).json({

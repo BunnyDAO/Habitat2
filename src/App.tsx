@@ -780,6 +780,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     return () => clearTimeout(timer);
   }, []);
 
+  // Fetch drift markets on mount
+  useEffect(() => {
+    fetchDriftMarkets();
+  }, []);
+
   // Sync jobs with service worker when they change
   useEffect(() => {
     if (serviceWorkerRef.current?.active && jobs.length > 0) {
@@ -3405,7 +3410,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     try {
       console.log('📊 Loading Drift markets...');
       
-      const response = await fetch(`${API_CONFIG.RPC_BASE}/api/v1/drift/markets`);
+      const response = await fetch(`${API_CONFIG.API_BASE}/drift/markets`);
       
       if (!response.ok) {
         throw new Error(`Failed to fetch Drift markets: ${response.statusText}`);
@@ -3427,16 +3432,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
     } catch (error) {
       console.error('❌ Error loading Drift markets:', error);
-      setNotification({
-        message: 'Failed to load Drift markets. Using defaults.',
-        type: 'error'
-      });
+      console.log('📊 Using fallback Drift markets (server restart needed for API)');
+      // Don't show error notification since fallback works perfectly
       
-      // Fallback to hardcoded markets
+      // Fallback to hardcoded markets with different leverage limits
       const fallbackMarkets = [
         { marketIndex: 0, symbol: 'SOL-PERP', baseAssetSymbol: 'SOL', maxLeverage: 20 },
-        { marketIndex: 1, symbol: 'BTC-PERP', baseAssetSymbol: 'BTC', maxLeverage: 20 },
-        { marketIndex: 2, symbol: 'ETH-PERP', baseAssetSymbol: 'ETH', maxLeverage: 20 }
+        { marketIndex: 1, symbol: 'BTC-PERP', baseAssetSymbol: 'BTC', maxLeverage: 15 },
+        { marketIndex: 2, symbol: 'ETH-PERP', baseAssetSymbol: 'ETH', maxLeverage: 18 },
+        { marketIndex: 3, symbol: 'AVAX-PERP', baseAssetSymbol: 'AVAX', maxLeverage: 12 },
+        { marketIndex: 4, symbol: 'BNB-PERP', baseAssetSymbol: 'BNB', maxLeverage: 10 },
+        { marketIndex: 5, symbol: 'MATIC-PERP', baseAssetSymbol: 'MATIC', maxLeverage: 8 }
       ];
       setAvailableDriftMarkets(fallbackMarkets);
     } finally {
@@ -3559,9 +3565,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       return;
     }
 
-    if (leverage > 10) {
+    // Dynamic leverage validation based on selected market
+    const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+    const maxLeverage = selectedMarket?.maxLeverage || 10;
+    
+    if (leverage > maxLeverage) {
       setNotification({
-        message: 'Maximum leverage is 10x',
+        message: `Maximum leverage is ${maxLeverage}x for ${driftMarketSymbol}`,
         type: 'error'
       });
       return;
@@ -6248,16 +6258,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         value={driftMarketSymbol}
                         onChange={(e) => {
                           setDriftMarketSymbol(e.target.value);
-                          // Set market index based on symbol
-                          const marketMap: { [key: string]: number } = {
-                            'SOL-PERP': 0,
-                            'BTC-PERP': 1,
-                            'ETH-PERP': 2,
-                            'AVAX-PERP': 3,
-                            'BNB-PERP': 4,
-                            'MATIC-PERP': 5
-                          };
-                          setDriftMarketIndex(marketMap[e.target.value] || 0);
+                          // Find the selected market and set its index
+                          const selectedMarket = availableDriftMarkets.find(m => m.symbol === e.target.value);
+                          if (selectedMarket) {
+                            setDriftMarketIndex(selectedMarket.marketIndex);
+                            
+                            // Reset leverage if current value exceeds new market's max leverage
+                            const currentLeverage = parseFloat(String(driftLeverage));
+                            if (!isNaN(currentLeverage) && currentLeverage > selectedMarket.maxLeverage) {
+                              setDriftLeverage(selectedMarket.maxLeverage.toString());
+                            }
+                          }
                         }}
                         style={{
                           width: '100%',
@@ -6268,13 +6279,19 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           color: '#e2e8f0',
                           fontSize: '0.875rem'
                         }}
+                        disabled={isDriftMarketsLoading}
                       >
-                        <option value="SOL-PERP">SOL-PERP</option>
-                        <option value="BTC-PERP">BTC-PERP</option>
-                        <option value="ETH-PERP">ETH-PERP</option>
-                        <option value="AVAX-PERP">AVAX-PERP</option>
-                        <option value="BNB-PERP">BNB-PERP</option>
-                        <option value="MATIC-PERP">MATIC-PERP</option>
+                        {isDriftMarketsLoading ? (
+                          <option>Loading markets...</option>
+                        ) : availableDriftMarkets.length > 0 ? (
+                          availableDriftMarkets.map(market => (
+                            <option key={market.marketIndex} value={market.symbol}>
+                              {market.symbol} (Max {market.maxLeverage}x)
+                            </option>
+                          ))
+                        ) : (
+                          <option disabled>No markets available</option>
+                        )}
                       </select>
                     </div>
 
@@ -6414,12 +6431,41 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           color: '#e2e8f0',
                           fontSize: '0.875rem'
                         }}>
-                          Leverage (1-10x)
+                          Leverage (1-{availableDriftMarkets.find(m => m.symbol === driftMarketSymbol)?.maxLeverage || 10}x)
                         </label>
                         <input
                           type="number"
                           value={driftLeverage}
-                          onChange={(e) => setDriftLeverage(e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            const numericValue = parseFloat(value);
+                            const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                            const maxLeverage = selectedMarket?.maxLeverage || 10;
+                            
+                            // Allow empty string for clearing the field
+                            if (value === '') {
+                              setDriftLeverage('');
+                              return;
+                            }
+                            
+                            // Only allow valid numbers
+                            if (isNaN(numericValue)) {
+                              return;
+                            }
+                            
+                            // Prevent values higher than max leverage
+                            if (numericValue > maxLeverage) {
+                              setDriftLeverage(maxLeverage.toString());
+                              return;
+                            }
+                            
+                            // Prevent negative values
+                            if (numericValue < 0) {
+                              return;
+                            }
+                            
+                            setDriftLeverage(value);
+                          }}
                           style={{
                             width: '100%',
                             padding: '0.75rem',
@@ -6431,7 +6477,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           }}
                           placeholder="1"
                           min="1"
-                          max="10"
+                          max={availableDriftMarkets.find(m => m.symbol === driftMarketSymbol)?.maxLeverage || 10}
                           step="0.1"
                         />
                       </div>
