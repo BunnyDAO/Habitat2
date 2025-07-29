@@ -3590,21 +3590,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       const strategyInstance = StrategyService.getInstance(connection);
       
-      // Check if a drift perp strategy already exists for this trading wallet and market
-      const existingJob = jobs.find(
-        job => 
-          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
-          job.type === JobType.DRIFT_PERP &&
-          (job as DriftPerpJob).marketSymbol === driftMarketSymbol
-      );
-
-      let newJob: DriftPerpJob;
-      if (existingJob) {
-        setExistingJobId(existingJob.id);
-        setIsOverrideModalOpen(true);
-        return;
-      } else {
-        newJob = await strategyInstance.createDriftPerpStrategy({
+      // Allow multiple Drift Perp strategies - no existing job check needed
+      const newJob = await strategyInstance.createDriftPerpStrategy({
           tradingWallet: selectedTradingWallet,
           initialBalance,
           solPrice: 150, // TODO: Get actual SOL price
@@ -3619,23 +3606,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           takeProfit: driftTakeProfit ? parseFloat(driftTakeProfit.toString()) : undefined,
           maxSlippage: parseFloat(driftMaxSlippage.toString())
         });
-      }
 
-      if (existingJob) {
-        setJobs(prevJobs => prevJobs.map(job => 
-          job.id === existingJob.id ? newJob : job
-        ));
-        setNotification({
-          message: 'Updated existing Drift Perp strategy',
-          type: 'success'
-        });
-      } else {
-        setJobs(prevJobs => [...prevJobs, newJob]);
-        setNotification({
-          message: 'Created new Drift Perp strategy',
-          type: 'success'
-        });
-      }
+      // Always add as new job since we allow multiple Drift Perp strategies
+      setJobs(prevJobs => [...prevJobs, newJob]);
+      setNotification({
+        message: 'Created new Drift Perp strategy',
+        type: 'success'
+      });
 
       // Reset form
       setDriftMarketSymbol('SOL-PERP');
@@ -4649,7 +4626,32 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                             ? (job as LevelsStrategy).levels.map(level => `$${level.price}: ${level.percentage}%`).join(' | ')
                                           : job.type === JobType.PAIR_TRADE
                                             ? `${(job as PairTradeJob).tokenASymbol} ↔ ${(job as PairTradeJob).tokenBSymbol} (${(job as PairTradeJob).allocationPercentage}%)`
-                                            : 'Unknown'}
+                                          : job.type === JobType.DRIFT_PERP
+                                            ? (() => {
+                                                const driftJob = job as DriftPerpJob;
+                                                const pos = driftJob.currentPosition;
+                                                if (pos) {
+                                                  const pnlColor = pos.unrealizedPnl >= 0 ? '#22c55e' : '#ef4444';
+                                                  const pnlSign = pos.unrealizedPnl >= 0 ? '+' : '';
+                                                  const distanceToLiq = ((pos.currentPrice - pos.liquidationPrice) / pos.currentPrice * 100);
+                                                  const liquidationWarning = distanceToLiq < 15 ? '⚠️' : distanceToLiq < 30 ? '⚡' : '';
+                                                  
+                                                  return (
+                                                    <div style={{ lineHeight: '1.2' }}>
+                                                      <div>{driftJob.marketSymbol} {driftJob.direction.toUpperCase()} {driftJob.leverage}x ({driftJob.allocationPercentage}%)</div>
+                                                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>
+                                                        Entry: ${pos.entryPrice.toFixed(2)} | Current: ${pos.currentPrice.toFixed(2)} | Liq: ${pos.liquidationPrice.toFixed(2)} {liquidationWarning}
+                                                      </div>
+                                                      <div style={{ fontSize: '0.75rem', color: pnlColor, marginTop: '1px' }}>
+                                                        P&L: {pnlSign}${pos.unrealizedPnl.toFixed(2)} | Margin: {(pos.marginRatio * 100).toFixed(1)}%
+                                                      </div>
+                                                    </div>
+                                                  );
+                                                } else {
+                                                  return `${driftJob.marketSymbol} ${driftJob.direction.toUpperCase()} ${driftJob.leverage}x (${driftJob.allocationPercentage}%) - No Position`;
+                                                }
+                                              })()
+                                            : `Unknown (type: ${job.type})`}
                                       </span>
                                       {job.profitTracking?.currentProfit !== undefined && (
                                         <>
@@ -4689,6 +4691,107 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                     }}>
                                       {pausedJobs.has(job.id) ? 'Paused' : 'Active'}
                                     </span>
+                                    
+                                    {/* Drift Perp position management buttons */}
+                                    {job.type === JobType.DRIFT_PERP && (job as DriftPerpJob).currentPosition && (
+                                      <>
+                                        <button
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const driftJob = job as DriftPerpJob;
+                                            try {
+                                              const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/close-position`, {
+                                                method: 'POST',
+                                                headers: {
+                                                  'Content-Type': 'application/json',
+                                                  'Authorization': `Bearer ${authService.getToken()}`
+                                                },
+                                                body: JSON.stringify({
+                                                  jobId: job.id,
+                                                  marketIndex: driftJob.marketIndex
+                                                })
+                                              });
+                                              
+                                              if (response.ok) {
+                                                setNotification({ message: 'Position closed successfully', type: 'success' });
+                                                await loadActiveJobs();
+                                              } else {
+                                                const error = await response.text();
+                                                setNotification({ message: `Failed to close position: ${error}`, type: 'error' });
+                                              }
+                                            } catch (error) {
+                                              setNotification({ message: `Error closing position: ${error}`, type: 'error' });
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '0.25rem 0.5rem',
+                                            backgroundColor: '#f59e0b',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.25rem',
+                                            cursor: 'pointer',
+                                            fontSize: '0.75rem',
+                                            opacity: 0.8,
+                                            transition: 'opacity 0.2s'
+                                          }}
+                                          onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                          onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+                                        >
+                                          Close
+                                        </button>
+                                        <button
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const driftJob = job as DriftPerpJob;
+                                            const reducePercentage = prompt('Reduce position by what percentage? (e.g., 50 for 50%)', '50');
+                                            
+                                            if (reducePercentage && !isNaN(Number(reducePercentage))) {
+                                              const percentage = Math.min(Math.max(Number(reducePercentage), 1), 100);
+                                              try {
+                                                const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/reduce-position`, {
+                                                  method: 'POST',
+                                                  headers: {
+                                                    'Content-Type': 'application/json',
+                                                    'Authorization': `Bearer ${authService.getToken()}`
+                                                  },
+                                                  body: JSON.stringify({
+                                                    jobId: job.id,
+                                                    marketIndex: driftJob.marketIndex,
+                                                    reducePercentage: percentage
+                                                  })
+                                                });
+                                                
+                                                if (response.ok) {
+                                                  setNotification({ message: `Position reduced by ${percentage}%`, type: 'success' });
+                                                  await loadActiveJobs();
+                                                } else {
+                                                  const error = await response.text();
+                                                  setNotification({ message: `Failed to reduce position: ${error}`, type: 'error' });
+                                                }
+                                              } catch (error) {
+                                                setNotification({ message: `Error reducing position: ${error}`, type: 'error' });
+                                              }
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '0.25rem 0.5rem',
+                                            backgroundColor: '#8b5cf6',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.25rem',
+                                            cursor: 'pointer',
+                                            fontSize: '0.75rem',
+                                            opacity: 0.8,
+                                            transition: 'opacity 0.2s'
+                                          }}
+                                          onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                          onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+                                        >
+                                          Reduce
+                                        </button>
+                                      </>
+                                    )}
+                                    
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -6271,7 +6374,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           }
                         }}
                         style={{
-                          width: '100%',
+                          width: '200px',
+                          maxWidth: '100%',
                           padding: '0.75rem',
                           backgroundColor: '#1e293b',
                           border: '1px solid #4b5563',
@@ -6355,7 +6459,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           value={driftEntryPrice}
                           onChange={(e) => setDriftEntryPrice(e.target.value)}
                           style={{
-                            width: '100%',
+                            width: '140px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6381,7 +6486,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           value={driftExitPrice}
                           onChange={(e) => setDriftExitPrice(e.target.value)}
                           style={{
-                            width: '100%',
+                            width: '140px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6411,7 +6517,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           value={driftAllocationPercentage}
                           onChange={(e) => setDriftAllocationPercentage(e.target.value)}
                           style={{
-                            width: '100%',
+                            width: '100px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6467,7 +6574,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             setDriftLeverage(value);
                           }}
                           style={{
-                            width: '100%',
+                            width: '80px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6499,7 +6607,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           value={driftStopLoss}
                           onChange={(e) => setDriftStopLoss(e.target.value)}
                           style={{
-                            width: '100%',
+                            width: '140px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6525,7 +6634,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           value={driftTakeProfit}
                           onChange={(e) => setDriftTakeProfit(e.target.value)}
                           style={{
-                            width: '100%',
+                            width: '140px',
+                            maxWidth: '100%',
                             padding: '0.75rem',
                             backgroundColor: '#1e293b',
                             border: '1px solid #4b5563',
@@ -6554,7 +6664,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         value={driftMaxSlippage}
                         onChange={(e) => setDriftMaxSlippage(e.target.value)}
                         style={{
-                          width: '100%',
+                          width: '100px',
+                          maxWidth: '100%',
                           padding: '0.75rem',
                           backgroundColor: '#1e293b',
                           border: '1px solid #4b5563',
@@ -7986,7 +8097,6 @@ const App = () => {
 };
 
 export default App;
-
 
 
 
