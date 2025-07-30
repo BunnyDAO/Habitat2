@@ -1,12 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 import { Pool } from 'pg';
+import { Connection } from '@solana/web3.js';
 import { WalletMonitorWorker } from '../workers/WalletMonitorWorker';
 import { PriceMonitorWorker } from '../workers/PriceMonitorWorker';
 import { VaultWorker } from '../workers/VaultWorker';
 import { LevelsWorker } from '../workers/LevelsWorker';
 import { PairTradeWorker } from '../workers/PairTradeWorker';
+import { DriftPerpWorker } from '../workers/DriftPerpWorker';
 import { EncryptionService } from '../services/encryption.service';
 import { TokenService } from '../services/TokenService';
+import { SwapService } from '../services/swap.service';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -21,12 +24,14 @@ const supabase = createClient(
 );
 
 class StrategyDaemon {
-  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker> = new Map();
+  private workers: Map<string, WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker | DriftPerpWorker> = new Map();
   private isRunning: boolean = false;
   private appSecret: string;
   private encryptionService: EncryptionService;
   private tokenService: TokenService;
+  private swapService: SwapService;
   private pool: Pool;
+  private connection: Connection;
 
   constructor() {
     if (!process.env.APP_SECRET) {
@@ -41,8 +46,14 @@ class StrategyDaemon {
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     });
     
+    // Initialize connection for services
+    this.connection = new Connection(HELIUS_ENDPOINT);
+    
     // Initialize TokenService
-    this.tokenService = new TokenService(this.pool, null);
+    this.tokenService = new TokenService(this.pool);
+    
+    // Initialize SwapService
+    this.swapService = new SwapService(this.pool, this.connection);
   }
 
   async start(): Promise<void> {
@@ -190,40 +201,18 @@ class StrategyDaemon {
 
   private async startWorkerForStrategy(strategy: Record<string, any>): Promise<void> {
     try {
-      // Debug log to see strategy data
-      console.log(`Starting worker for strategy ${strategy.id}:`, {
-        type: strategy.strategy_type,
-        trading_wallet_id: strategy.trading_wallet_id,
-        trading_wallet_public_key: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
-        main_wallet_pubkey: strategy.main_wallet_pubkey
-      });
-
-      if (!strategy.strategy_type) {
-        console.error(`Skipping strategy ${strategy.id}: Strategy type is undefined`);
+      console.log(`Starting worker for strategy ${strategy.id} (${strategy.strategy_type})`);
+      
+      let secretKeyString: string;
+      try {
+        secretKeyString = await this.encryptionService.getWalletPrivateKey(strategy.trading_wallet_id);
+      } catch (error) {
+        console.error(`Error retrieving secret key for strategy ${strategy.id}:`, error);
         return;
       }
 
-      // Get the encrypted secret key for the trading wallet
-      const { data: walletData, error: walletError } = await supabase
-        .from('encrypted_wallet_keys')
-        .select('session_key_encrypted, wallet_keys_encrypted')
-        .eq('trading_wallet_id', strategy.trading_wallet_id)
-        .single();
-
-      if (walletError || !walletData) {
-        console.error(`Skipping strategy ${strategy.id}: Could not find encrypted key (session_key_encrypted, wallet_keys_encrypted) for trading wallet ${strategy.trading_wallet_id}. Error:`, walletError);
-        return; // Skip this strategy
-      }
-      
-      console.log(`Found encrypted keys for strategy ${strategy.id}, attempting decryption...`);
-
-      // Use the encryption service to decrypt the keys
-      let secretKeyString;
-      try {
-        secretKeyString = await this.encryptionService.getWalletPrivateKey(strategy.trading_wallet_id);
-        console.log(`Successfully decrypted keys for strategy ${strategy.id}`);
-      } catch (decryptError) {
-        console.error(`Failed to decrypt keys for strategy ${strategy.id}:`, decryptError);
+      if (!secretKeyString) {
+        console.error(`Error: No secret key found for strategy ${strategy.id}`);
         return;
       }
       
@@ -236,7 +225,7 @@ class StrategyDaemon {
       
       console.log(`Secret key validation passed for strategy ${strategy.id}`)
 
-      let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker;
+      let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker | DriftPerpWorker;
 
       switch (strategy.strategy_type) {
         case 'wallet-monitor': {
@@ -260,17 +249,11 @@ class StrategyDaemon {
             mirroredTokens: strategy.mirrored_tokens || {},
             recentTransactions: strategy.recent_transactions || []
           } as import('../types/jobs').WalletMonitoringJob;
-          worker = new WalletMonitorWorker(job, HELIUS_ENDPOINT, strategy.main_wallet_pubkey);
+          worker = new WalletMonitorWorker(job, HELIUS_ENDPOINT, strategy.main_wallet_pubkey, this.swapService);
           break;
         }
         case 'price-monitor': {
-          console.log(`Price Monitor strategy ${strategy.id} config:`, JSON.stringify(strategy.config, null, 2));
-          
-          if (!strategy.config?.targetPrice || !strategy.config?.direction || !strategy.config?.percentageToSell) {
-            console.error(`Skipping strategy ${strategy.id}: Missing required config - targetPrice: ${strategy.config?.targetPrice}, direction: ${strategy.config?.direction}, percentageToSell: ${strategy.config?.percentageToSell}`);
-            return;
-          }
-          
+          console.log(`Creating PriceMonitorWorker for strategy ${strategy.id}`);
           const job = {
             id: strategy.id,
             type: 'price-monitor',
@@ -288,35 +271,36 @@ class StrategyDaemon {
             },
             targetPrice: strategy.config?.targetPrice,
             direction: strategy.config?.direction,
-            percentageToSell: strategy.config?.percentageToSell,
-            lastTriggerPrice: strategy.last_trigger_price,
-            triggerHistory: strategy.trigger_history || []
+            percentageToSell: strategy.config?.percentageToSell
           } as import('../types/jobs').PriceMonitoringJob;
-          worker = new PriceMonitorWorker(job, HELIUS_ENDPOINT);
+          worker = new PriceMonitorWorker(job, HELIUS_ENDPOINT, this.swapService);
           break;
         }
         case 'vault': {
+          console.log(`Creating VaultWorker for strategy ${strategy.id}`);
           const job = {
             id: strategy.id,
             type: 'vault',
             tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
+            mainWalletPublicKey: strategy.main_wallet_pubkey,
             isActive: true,
             createdAt: strategy.created_at,
             lastActivity: strategy.last_activity,
+            vaultPercentage: strategy.config?.vaultPercentage || 5,
             profitTracking: {
               initialBalance: strategy.initial_balance || 0,
               currentBalance: strategy.current_balance || 0,
               totalProfit: strategy.total_profit || 0,
               profitHistory: strategy.profit_history || [],
               trades: strategy.trades || []
-            },
-            vaultPercentage: strategy.config?.vaultPercentage
+            }
           } as import('../types/jobs').VaultStrategy;
           worker = new VaultWorker(job, HELIUS_ENDPOINT);
           break;
         }
         case 'levels': {
+          console.log(`Creating LevelsWorker for strategy ${strategy.id}`);
           const job = {
             id: strategy.id,
             type: 'levels',
@@ -325,27 +309,20 @@ class StrategyDaemon {
             isActive: true,
             createdAt: strategy.created_at,
             lastActivity: strategy.last_activity,
+            levels: strategy.config?.levels || [],
             profitTracking: {
               initialBalance: strategy.initial_balance || 0,
               currentBalance: strategy.current_balance || 0,
               totalProfit: strategy.total_profit || 0,
               profitHistory: strategy.profit_history || [],
               trades: strategy.trades || []
-            },
-            levels: strategy.config?.levels || [],
-            lastTriggerPrice: strategy.last_trigger_price
+            }
           } as import('../types/jobs').LevelsStrategy;
-          worker = new LevelsWorker(job, HELIUS_ENDPOINT);
+          worker = new LevelsWorker(job, HELIUS_ENDPOINT, this.swapService);
           break;
         }
         case 'pair-trade': {
-          console.log(`Pair Trade strategy ${strategy.id} config:`, JSON.stringify(strategy.config, null, 2));
-          
-          if (!strategy.config?.tokenAMint || !strategy.config?.tokenBMint || !strategy.config?.tokenASymbol || !strategy.config?.tokenBSymbol) {
-            console.error(`Skipping strategy ${strategy.id}: Missing required config - tokenAMint: ${strategy.config?.tokenAMint}, tokenBMint: ${strategy.config?.tokenBMint}, tokenASymbol: ${strategy.config?.tokenASymbol}, tokenBSymbol: ${strategy.config?.tokenBSymbol}`);
-            return;
-          }
-          
+          console.log(`Creating PairTradeWorker for strategy ${strategy.id}`);
           const job = {
             id: strategy.id,
             type: 'pair-trade',
@@ -354,39 +331,77 @@ class StrategyDaemon {
             isActive: true,
             createdAt: strategy.created_at,
             lastActivity: strategy.last_activity,
+            tokenAMint: strategy.config?.tokenAMint,
+            tokenBMint: strategy.config?.tokenBMint,
+            tokenASymbol: strategy.config?.tokenASymbol,
+            tokenBSymbol: strategy.config?.tokenBSymbol,
+            allocationPercentage: strategy.config?.allocationPercentage || 50,
+            maxSlippage: strategy.config?.maxSlippage || 1.0,
+            currentToken: strategy.config?.currentToken || 'A',
+            swapHistory: strategy.swap_history || [],
+            lastSwapTimestamp: strategy.last_swap_timestamp,
             profitTracking: {
               initialBalance: strategy.initial_balance || 0,
               currentBalance: strategy.current_balance || 0,
               totalProfit: strategy.total_profit || 0,
               profitHistory: strategy.profit_history || [],
               trades: strategy.trades || []
-            },
-            tokenAMint: strategy.config?.tokenAMint,
-            tokenBMint: strategy.config?.tokenBMint,
-            tokenASymbol: strategy.config?.tokenASymbol,
-            tokenBSymbol: strategy.config?.tokenBSymbol,
-            allocationPercentage: strategy.config?.allocationPercentage || 100,
-            currentToken: strategy.config?.currentToken || 'A',
-            maxSlippage: strategy.config?.maxSlippage || 1.0,
-            autoRebalance: strategy.config?.autoRebalance || false,
-            lastSwapTimestamp: strategy.last_swap_timestamp,
-            swapHistory: strategy.swap_history || []
+            }
           } as import('../types/jobs').PairTradeJob;
-          worker = new PairTradeWorker(job, HELIUS_ENDPOINT, this.tokenService, this.pool);
+          worker = new PairTradeWorker(job, HELIUS_ENDPOINT, this.pool, this.swapService);
+          break;
+        }
+        case 'drift-perp': {
+          console.log(`Creating DriftPerpWorker for strategy ${strategy.id}`);
+          const job = {
+            id: strategy.id,
+            type: 'drift-perp',
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
+            tradingWalletSecretKey: secretKey,
+            isActive: true,
+            createdAt: strategy.created_at,
+            lastActivity: strategy.last_activity,
+            marketSymbol: strategy.config?.marketSymbol || 'SOL-PERP',
+            marketIndex: strategy.config?.marketIndex || 0,
+            direction: strategy.config?.direction || 'long',
+            allocationPercentage: strategy.config?.allocationPercentage || 50,
+            entryPrice: strategy.config?.entryPrice,
+            exitPrice: strategy.config?.exitPrice,
+            leverage: strategy.config?.leverage || 1,
+            stopLoss: strategy.config?.stopLoss,
+            takeProfit: strategy.config?.takeProfit,
+            positionSize: strategy.config?.positionSize || 0,
+            entryTimestamp: strategy.config?.entryTimestamp,
+            exitTimestamp: strategy.config?.exitTimestamp,
+            realizedPnl: strategy.config?.realizedPnl || 0,
+            fees: strategy.config?.fees || 0,
+            maxSlippage: strategy.config?.maxSlippage || 2.0,
+            positionHistory: strategy.config?.positionHistory || [],
+            orderHistory: strategy.config?.orderHistory || [],
+            isPositionOpen: strategy.config?.isPositionOpen || false,
+            profitTracking: {
+              initialBalance: strategy.initial_balance || 0,
+              currentBalance: strategy.current_balance || 0,
+              totalProfit: strategy.total_profit || 0,
+              profitHistory: strategy.profit_history || [],
+              trades: strategy.trades || []
+            }
+          } as import('../types/jobs').DriftPerpJob;
+          worker = new DriftPerpWorker(job, HELIUS_ENDPOINT, this.tokenService, this.pool);
           break;
         }
         default:
-          throw new Error(`Unknown strategy type: ${strategy.strategy_type}`);
+          console.warn(`Unknown strategy type: ${strategy.strategy_type}`);
+          return;
       }
 
       // Start the worker
       await worker.start();
       this.workers.set(strategy.id, worker);
-      console.log(`Started worker for strategy ${strategy.id} (${strategy.strategy_type}) [SUCCESS]`);
+      console.log(`✅ Successfully started ${strategy.strategy_type} worker for strategy ${strategy.id}`);
 
     } catch (error) {
-      console.error(`Error starting worker for strategy ${strategy.id}:`, error);
-      throw error;
+      console.error(`❌ Failed to start worker for strategy ${strategy.id}:`, error);
     }
   }
 }

@@ -2,6 +2,7 @@ import { BaseWorker } from './BaseWorker';
 import { VaultStrategy } from '../types/jobs';
 import { PublicKey, Keypair, SystemProgram, Transaction } from '@solana/web3.js';
 import { SwapService } from '../services/swap.service';
+import { tradeEventsService, TradeSuccessEvent } from '../services/trade-events.service';
 
 export class VaultWorker extends BaseWorker {
   private tradingWalletPublicKey: string;
@@ -10,11 +11,10 @@ export class VaultWorker extends BaseWorker {
   private mainWalletPublicKey: string;
   private tradingWalletKeypair: Keypair;
   private swapService: SwapService;
-  private lastCheck: number = 0;
-  private checkInterval: number = 3600000; // 1 hour
+  private tradeSuccessListener: ((event: TradeSuccessEvent) => void) | null = null;
   
   // Constants
-  private readonly MAX_VAULT_PERCENTAGE = 5; // 5% maximum
+  private readonly MAX_VAULT_PERCENTAGE = 50; // 50% maximum - increased from original 5%
   private readonly MIN_TRANSFER_AMOUNT = 0.01; // 0.01 SOL minimum
   private readonly WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -34,7 +34,8 @@ export class VaultWorker extends BaseWorker {
       null as any, this.connection, null
     );
     
-    console.log(`VaultWorker initialized: ${this.vaultPercentage}% allocation to vault`);
+    console.log(`VaultWorker initialized: ${this.vaultPercentage}% profit capture on successful trades`);
+    console.log(`Trading wallet: ${this.tradingWalletPublicKey}`);
     console.log(`Main wallet: ${this.mainWalletPublicKey}`);
   }
 
@@ -54,7 +55,8 @@ export class VaultWorker extends BaseWorker {
 
     try {
       this.isRunning = true;
-      await this.monitorVault();
+      this.startListeningForTrades();
+      console.log(`✅ VaultWorker started monitoring trades for wallet ${this.tradingWalletPublicKey}`);
     } catch (error) {
       console.error('Error starting vault monitor:', error);
       throw error;
@@ -63,130 +65,100 @@ export class VaultWorker extends BaseWorker {
 
   async stop(): Promise<void> {
     if (!this.isRunning) return;
+    
     this.isRunning = false;
+    this.stopListeningForTrades();
+    console.log(`✅ VaultWorker stopped for wallet ${this.tradingWalletPublicKey}`);
   }
 
-  private async monitorVault(): Promise<void> {
-    while (this.isRunning) {
-      try {
-        const now = Date.now();
-        if (now - this.lastCheck >= this.checkInterval) {
-          await this.checkAndRebalance();
-          this.lastCheck = now;
-        }
-
-        // Wait 10 minutes before next check
-        await new Promise(resolve => setTimeout(resolve, 600000));
-      } catch (error) {
-        console.error('Error monitoring vault:', error);
-        await new Promise(resolve => setTimeout(resolve, 1800000)); // Wait 30 minutes on error
+  /**
+   * Start listening for trade success events from other strategies on the same trading wallet
+   */
+  private startListeningForTrades(): void {
+    this.tradeSuccessListener = (event: TradeSuccessEvent) => {
+      // Only process events for our trading wallet and ignore vault strategy events
+      if (event.tradingWalletAddress === this.tradingWalletPublicKey && 
+          event.strategyType !== 'vault') {
+        this.handleTradeSuccess(event);
       }
+    };
+
+    tradeEventsService.onTradeSuccess(this.tradeSuccessListener);
+    console.log(`[Vault] Listening for trade success events on wallet ${this.tradingWalletPublicKey}`);
+  }
+
+  /**
+   * Stop listening for trade success events
+   */
+  private stopListeningForTrades(): void {
+    if (this.tradeSuccessListener) {
+      tradeEventsService.removeTradeSuccessListener(this.tradeSuccessListener);
+      this.tradeSuccessListener = null;
     }
   }
 
-  private async checkAndRebalance(): Promise<void> {
+  /**
+   * Handle a successful trade from another strategy
+   */
+  private async handleTradeSuccess(event: TradeSuccessEvent): Promise<void> {
     try {
-      const tradingWallet = new PublicKey(this.tradingWalletPublicKey);
-      const mainWallet = new PublicKey(this.mainWalletPublicKey);
+      console.log(`[Vault] Trade success detected: ${event.strategyType} strategy on wallet ${event.tradingWalletAddress}`);
+      console.log(`[Vault] Transaction signature: ${event.signature}`);
       
-      // Get trading wallet balance
-      const tradingBalance = await this.connection.getBalance(tradingWallet);
-      const tradingSolBalance = tradingBalance / 1e9; // Convert lamports to SOL
-
-      // Get main wallet balance (this is our "vault")
-      const mainBalance = await this.connection.getBalance(mainWallet);
-      const mainSolBalance = mainBalance / 1e9;
-
-      console.log(`Trading wallet balance: ${tradingSolBalance} SOL`);
-      console.log(`Main wallet balance: ${mainSolBalance} SOL`);
-
-      // Calculate total portfolio value
-      const totalPortfolioValue = await this.calculateTotalPortfolioValue(tradingWallet);
-      console.log(`Total portfolio value: ${totalPortfolioValue} SOL`);
-
-      // Calculate target vault amount (% of total portfolio)
-      const targetVaultAmount = (totalPortfolioValue * this.vaultPercentage) / 100;
-      console.log(`Target vault amount: ${targetVaultAmount} SOL (${this.vaultPercentage}%)`);
-
-      // Calculate difference (main wallet IS the vault)
-      const difference = targetVaultAmount - mainSolBalance;
-      console.log(`Vault difference: ${difference} SOL`);
-
-      // Only rebalance if difference is significant
-      if (Math.abs(difference) > this.MIN_TRANSFER_AMOUNT) {
-        if (difference > 0) {
-          // Need to move funds TO main wallet (vault)
-          await this.moveToVault(difference);
-        } else {
-          // Need to move funds FROM main wallet back to trading
-          await this.moveFromVault(Math.abs(difference));
-        }
-
-        // Update job status
-        (this.job as VaultStrategy).lastActivity = new Date().toISOString();
-        console.log('✅ Vault rebalancing completed');
+      // Get current SOL balance of trading wallet
+      const tradingWallet = new PublicKey(this.tradingWalletPublicKey);
+      const balance = await this.connection.getBalance(tradingWallet);
+      const solBalance = balance / 1e9; // Convert lamports to SOL
+      
+      console.log(`[Vault] Current trading wallet balance: ${solBalance} SOL`);
+      
+      // Calculate amount to vault (percentage of current balance)
+      const amountToVault = (solBalance * this.vaultPercentage) / 100;
+      
+      console.log(`[Vault] Calculated vault amount: ${amountToVault} SOL (${this.vaultPercentage}% of ${solBalance} SOL)`);
+      
+      // Only transfer if amount is significant
+      if (amountToVault >= this.MIN_TRANSFER_AMOUNT) {
+        await this.captureProfit(amountToVault, event);
       } else {
-        console.log(`✅ Vault is balanced (difference ${difference} SOL < ${this.MIN_TRANSFER_AMOUNT} SOL threshold)`);
+        console.log(`[Vault] Amount ${amountToVault} SOL below minimum transfer threshold ${this.MIN_TRANSFER_AMOUNT} SOL`);
       }
-
+      
     } catch (error) {
-      console.error('❌ Error checking and rebalancing vault:', error);
-      throw error;
+      console.error(`[Vault] Error handling trade success:`, error);
     }
   }
 
-  private async calculateTotalPortfolioValue(tradingWallet: PublicKey): Promise<number> {
-    // Get SOL balance
-    const solBalance = await this.connection.getBalance(tradingWallet);
-    let totalValue = solBalance / 1e9;
-
-    // TODO: Add token holdings value calculation
-    // For now, just use SOL balance as total portfolio value
-    // In production, you'd iterate through all token accounts and calculate USD value
-    
-    return totalValue;
-  }
-
-  private async moveToVault(amount: number): Promise<void> {
-    console.log(`📤 Moving ${amount} SOL from trading wallet to vault (main wallet)`);
-    
+  /**
+   * Capture profit by transferring SOL from trading wallet to main wallet
+   */
+  private async captureProfit(amount: number, triggerEvent: TradeSuccessEvent): Promise<void> {
     try {
-      // Step 1: Swap any tokens to SOL if needed
+      console.log(`[Vault] 📤 Capturing ${amount} SOL profit from trading wallet to vault`);
+      console.log(`[Vault] Triggered by: ${triggerEvent.strategyType} strategy (${triggerEvent.signature})`);
+      
+      // Step 1: Swap any tokens to SOL if needed (future enhancement)
       await this.swapTokensToSol();
       
       // Step 2: Transfer SOL to main wallet
       await this.transferSolToMainWallet(amount);
       
-      console.log(`✅ Successfully moved ${amount} SOL to vault`);
-    } catch (error) {
-      console.error(`❌ Failed to move ${amount} SOL to vault:`, error);
-      throw error;
-    }
-  }
-
-  private async moveFromVault(amount: number): Promise<void> {
-    console.log(`📥 Moving ${amount} SOL from vault (main wallet) to trading wallet`);
-    
-    try {
-      // Note: This would require the main wallet to also be controlled
-      // For now, we'll just log this operation
-      // In production, you'd need user approval or a separate mechanism
-      console.log(`⚠️  Vault withdrawal requires main wallet signature - operation logged only`);
+      // Update job status
+      (this.job as VaultStrategy).lastActivity = new Date().toISOString();
       
-      // TODO: Implement vault withdrawal mechanism
-      // This might require user interaction or a separate approval process
+      console.log(`✅ [Vault] Successfully captured ${amount} SOL profit`);
       
     } catch (error) {
-      console.error(`❌ Failed to move ${amount} SOL from vault:`, error);
+      console.error(`❌ [Vault] Failed to capture ${amount} SOL profit:`, error);
       throw error;
     }
   }
 
   private async swapTokensToSol(): Promise<void> {
-    // TODO: Implement token-to-SOL swapping
+    // TODO: Implement token-to-SOL swapping for future enhancement
     // For now, we assume the trading wallet primarily holds SOL
-    console.log('📊 Checking for tokens to swap to SOL...');
-    // In production: query all token accounts, swap non-SOL tokens to SOL
+    console.log('[Vault] 📊 Checking for tokens to swap to SOL...');
+    // In production: query all token accounts, swap non-SOL tokens to SOL before capturing
   }
 
   private async transferSolToMainWallet(amount: number): Promise<void> {
@@ -212,6 +184,6 @@ export class VaultWorker extends BaseWorker {
     // Confirm transaction
     await this.connection.confirmTransaction(signature, 'confirmed');
     
-    console.log(`✅ SOL transfer completed - Signature: ${signature}`);
+    console.log(`✅ [Vault] SOL transfer completed - Signature: ${signature}`);
   }
 } 

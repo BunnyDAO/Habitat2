@@ -10,6 +10,7 @@
 
 import express from 'express';
 import { Pool } from 'pg';
+import { Connection } from '@solana/web3.js';
 import { TokenService } from './services/TokenService';
 import { PairTradeTriggerDaemon } from './services/PairTradeTriggerDaemon';
 import { WorkerManager } from './services/WorkerManager';
@@ -27,27 +28,30 @@ export async function setupPairTradeSystem(
   // 1. Initialize TokenService
   const tokenService = new TokenService(pool, redisClient);
   
-  // 2. Initialize WorkerManager
-  WorkerManager.initialize(pool, tokenService);
+  // 2. Create Solana connection
+  const connection = new Connection('https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a', 'confirmed');
   
-  // 3. Create and configure daemon
+  // 3. Initialize WorkerManager
+  WorkerManager.initialize(pool, tokenService, connection);
+  
+  // 4. Create and configure daemon
   const daemon = new PairTradeTriggerDaemon(pool);
   
-  // 4. Configure daemon to use WorkerManager
+  // 5. Configure daemon to use WorkerManager
   daemon.setWorkerGetter(async (strategyId: string) => {
     return await WorkerManager.getWorker(strategyId);
   });
   
-  // 5. Add API routes
+  // 6. Add API routes
   const pairTradeRoutes = createPairTradeRoutes(pool, daemon);
   app.use('/api/pair-trades', pairTradeRoutes);
   
-  // 6. Start daemon
+  // 7. Start daemon
   await daemon.start();
   
   console.log('[App] PairTrade system setup complete');
   
-  // 7. Return daemon for external control
+  // 8. Return daemon for external control
   return daemon;
 }
 

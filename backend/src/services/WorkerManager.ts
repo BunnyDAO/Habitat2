@@ -1,7 +1,9 @@
 import { Pool } from 'pg';
+import { Connection } from '@solana/web3.js';
 import { PairTradeWorker } from '../workers/PairTradeWorker';
 import { DriftPerpWorker } from '../workers/DriftPerpWorker';
 import { TokenService } from './TokenService';
+import { SwapService } from './swap.service';
 import { PairTradeJob, DriftPerpJob, JobType, AnyJob } from '../types/jobs';
 import { BaseWorker } from '../workers/BaseWorker';
 
@@ -13,13 +15,15 @@ export class WorkerManager {
   private static workers: Map<string, BaseWorker> = new Map();
   private static pool: Pool;
   private static tokenService: TokenService;
+  private static swapService: SwapService;
 
   /**
    * Initialize the WorkerManager with required services
    */
-  static initialize(pool: Pool, tokenService: TokenService): void {
+  static initialize(pool: Pool, tokenService: TokenService, connection: Connection): void {
     this.pool = pool;
     this.tokenService = tokenService;
+    this.swapService = new SwapService(pool, connection);
   }
 
   /**
@@ -42,8 +46,8 @@ export class WorkerManager {
         worker = new PairTradeWorker(
           job as PairTradeJob, 
           endpoint, 
-          this.tokenService,
-          this.pool
+          this.pool,
+          this.swapService
         );
         break;
       
@@ -58,7 +62,7 @@ export class WorkerManager {
       
       // Add other worker types as needed
       // case JobType.LEVELS:
-      //   worker = new LevelsWorker(job as LevelsStrategy, endpoint, ...);
+      //   worker = new LevelsWorker(job as LevelsStrategy, endpoint, this.swapService);
       //   break;
       
       default:

@@ -4,6 +4,7 @@ import { BaseWorker } from './BaseWorker';
 import { WalletMonitoringJob } from '../types/jobs';
 import { createRateLimitedConnection } from '../utils/connection';
 import { API_CONFIG } from '../config/api';
+import { SwapService } from '../services/swap.service';
 
 const MAX_RECENT_TRANSACTIONS = 50;
 
@@ -22,8 +23,9 @@ export class WalletMonitorWorker extends BaseWorker {
   private processingTransactions: Set<string> = new Set();
   private lastProcessedSignature: string | null = null;
   private tradingWalletKeypair: Keypair | null = null;
+  private swapService: SwapService;
 
-  constructor(job: WalletMonitoringJob, endpoint: string, tradingWallet: PublicKey) {
+  constructor(job: WalletMonitoringJob, endpoint: string, tradingWallet: PublicKey, swapService: SwapService) {
     super(job, endpoint);
     this.walletPubkey = new PublicKey(job.walletAddress);
     this.tradingWallet = tradingWallet;
@@ -73,6 +75,7 @@ export class WalletMonitorWorker extends BaseWorker {
         console.error('Error loading recent transactions:', error);
       }
     }
+    this.swapService = swapService;
   }
 
   async start(): Promise<void> {
@@ -644,113 +647,42 @@ export class WalletMonitorWorker extends BaseWorker {
         await this.ensureTokenAccount(outputMint, this.tradingWalletKeypair.publicKey);
       }
       
-      // Get quote from Jupiter Lite API with platform fee
-      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
-      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=${platformFeeBps}`;
-      const quoteResponse = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${queryString}`);
-
-      if (!quoteResponse.ok) {
-        throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
-      }
-
-      progress.quoteReceived = true;
-      const quote = await quoteResponse.json();
-
-      // Execute swap via Jupiter Lite API with fee account
-      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
-      const swapResponse = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Execute swap using SwapService
+      const swapResult = await this.swapService.executeSwap({
+        inputMint,
+        outputMint,
+        amount,
+        slippageBps: 50, // 0.5% slippage
+        walletKeypair: {
+          publicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
+          secretKey: Array.from(this.tradingWalletKeypair?.secretKey || [])
         },
-        body: JSON.stringify({
-          quoteResponse: quote,
-          userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          wrapAndUnwrapSol: true,
-          feeAccount: feeAccount
-        }),
+        feeWalletPubkey: JUPITER_FEE_ACCOUNT
       });
 
-      if (!swapResponse.ok) {
-        const errorData = await swapResponse.json();
-        throw new Error(`Swap failed: ${JSON.stringify(errorData)}`);
-      }
-
+      progress.quoteReceived = true;
       progress.swapInitiated = true;
-      const swapResult = await swapResponse.json();
-      const signature = swapResult.signature;
+      progress.swapConfirmed = true;
 
-      // Monitor transaction confirmation
-      while (Date.now() - startTime < maxWaitTime) {
-        const tx = await this.connection.getTransaction(signature, {
-          commitment: 'confirmed',
-          maxSupportedTransactionVersion: 0
-        });
-
-        if (!tx) {
-          await new Promise(resolve => setTimeout(resolve, checkInterval));
-          continue;
-        }
-
-        const meta = tx.meta;
-        if (!meta) {
-          return {
-            status: 'failed',
-            progress,
-            error: 'Transaction metadata is missing',
-            tradeDetails: {
-              signature,
-              inputAmount: amount,
-              timestamp: Date.now() / 1000
-            }
-          };
-        }
-
-        if (meta.err) {
-          return {
-            status: 'failed',
-            progress,
-            error: JSON.stringify(meta.err),
-            tradeDetails: {
-              signature,
-              inputAmount: amount,
-              timestamp: tx.blockTime || Date.now() / 1000
-            }
-          };
-        }
-
-        progress.swapConfirmed = true;
-        return {
-          status: 'completed',
-          progress,
-          tradeDetails: {
-            signature,
-            inputAmount: amount,
-            timestamp: tx.blockTime || Date.now() / 1000
-          }
-        };
-      }
+      console.log(`[WalletMonitor] Mirror swap completed: ${swapResult.signature}`);
 
       return {
-        status: 'failed',
+        status: 'completed',
         progress,
-        error: 'Transaction confirmation timeout',
         tradeDetails: {
-          signature,
+          signature: swapResult.signature,
           inputAmount: amount,
-          timestamp: Date.now() / 1000
+          outputAmount: parseFloat(swapResult.outputAmount),
+          timestamp: Date.now()
         }
       };
 
     } catch (error) {
+      console.error('[WalletMonitor] Error in mirroring process:', error);
       return {
         status: 'failed',
         progress,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        tradeDetails: {
-          inputAmount: amount,
-          timestamp: Date.now() / 1000
-        }
+        error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   }
@@ -865,44 +797,20 @@ export class WalletMonitorWorker extends BaseWorker {
         await this.ensureTokenAccount(outputMint, this.tradingWalletKeypair.publicKey);
       }
       
-      // First get a quote from Jupiter Lite API with platform fee
-      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
-      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=50&platformFeeBps=${platformFeeBps}`;
-      const quoteResponse = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${queryString}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-
-      if (!quoteResponse.ok) {
-        throw new Error(`Failed to get quote: ${await quoteResponse.text()}`);
-      }
-
-      const quote = await quoteResponse.json();
-
-      // Execute the swap using the quote via Jupiter Lite API with fee account
-      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
-      const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Execute swap using SwapService
+      const swapResult = await this.swapService.executeSwap({
+        inputMint,
+        outputMint,
+        amount,
+        slippageBps: 50, // 0.5% slippage
+        walletKeypair: {
+          publicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
+          secretKey: Array.from(this.tradingWalletKeypair?.secretKey || [])
         },
-        body: JSON.stringify({
-          quoteResponse: quote,
-          userPublicKey: this.tradingWalletKeypair?.publicKey.toString() || '',
-          wrapAndUnwrapSol: true,
-          feeAccount: feeAccount
-        }),
+        feeWalletPubkey: JUPITER_FEE_ACCOUNT
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Swap failed: ${JSON.stringify(errorData)}`);
-      }
-
-      const result = await response.json();
-      console.log('[Mirror] Mirror swap completed successfully:', result);
+      console.log('[Mirror] Mirror swap completed successfully:', swapResult.signature);
     } catch (error) {
       console.error('[Mirror] Error mirroring swap:', error);
       throw error;

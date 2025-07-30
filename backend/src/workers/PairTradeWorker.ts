@@ -3,6 +3,7 @@ import { PairTradeJob } from '../types/jobs';
 import { TokenService } from '../services/TokenService';
 import { createRateLimitedConnection } from '../utils/connection';
 import { Pool } from 'pg';
+import { SwapService } from '../services/swap.service';
 import { 
   PublicKey, 
   Keypair, 
@@ -17,10 +18,7 @@ import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction
 } from '@solana/spl-token';
-
-// Jupiter Lite API Configuration
-const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
-const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
+import { tradeEventsService } from '../services/trade-events.service';
 
 // Trigger info interface
 interface TriggerInfo {
@@ -38,50 +36,33 @@ interface TriggerInfo {
 
 export class PairTradeWorker extends BaseWorker {
   private tradingWalletKeypair: Keypair;
-  private tokenService: TokenService;
   private pool: Pool;
+  private tokenService: TokenService;
+  private swapService: SwapService;
   private isProcessingSwap: boolean = false;
+  private lastTriggerCheck: number = 0;
+  private readonly TRIGGER_CHECK_INTERVAL = 30000; // 30 seconds
 
-  constructor(job: PairTradeJob, endpoint: string, tokenService: TokenService, pool: Pool) {
+  constructor(job: PairTradeJob, endpoint: string, pool: Pool, swapService: SwapService) {
     super(job, endpoint);
-    this.tokenService = tokenService;
-    this.pool = pool;
-    
-    // Initialize trading wallet keypair
     this.tradingWalletKeypair = Keypair.fromSecretKey(job.tradingWalletSecretKey);
+    this.pool = pool;
+    this.tokenService = new TokenService(pool);
+    this.swapService = swapService;
     
-    console.log(`PairTradeWorker initialized for ${job.tokenASymbol}/${job.tokenBSymbol} pair`);
+    console.log(`[PairTrade] Worker initialized for wallet ${this.tradingWalletKeypair.publicKey.toString()}`);
+    console.log(`[PairTrade] Token pair: ${job.tokenASymbol}/${job.tokenBSymbol}`);
+    console.log(`[PairTrade] Current token: ${job.currentToken}`);
   }
 
   async start(): Promise<void> {
     if (this.isRunning) return;
 
     try {
-      // Create connection
-      this.connection = createRateLimitedConnection('https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a');
-      
-      // Validate token pair
-      const validation = await this.tokenService.validateTokenPair(
-        (this.job as PairTradeJob).tokenAMint,
-        (this.job as PairTradeJob).tokenBMint
-      );
-      
-      if (!validation.isValid) {
-        throw new Error(`Invalid token pair: ${validation.error}`);
-      }
-
-      // Ensure token accounts exist
-      await this.ensureTokenAccounts();
-      
-      // NEW: Setup initial position if needed
-      if (!this.hasInitialPositionSetup()) {
-        await this.setupInitialPosition();
-      }
-      
       this.isRunning = true;
-      console.log(`PairTradeWorker started for strategy ${this.job.id}`);
+      await this.monitorTriggers();
     } catch (error) {
-      console.error('Error starting PairTradeWorker:', error);
+      console.error('[PairTrade] Error starting pair trade monitor:', error);
       throw error;
     }
   }
@@ -89,7 +70,7 @@ export class PairTradeWorker extends BaseWorker {
   async stop(): Promise<void> {
     if (!this.isRunning) return;
     this.isRunning = false;
-    console.log(`PairTradeWorker stopped for strategy ${this.job.id}`);
+    console.log(`[PairTrade] PairTradeWorker stopped for strategy ${this.job.id}`);
   }
 
   /**
@@ -140,55 +121,67 @@ export class PairTradeWorker extends BaseWorker {
       
       console.log(`[PairTrade] Swapping ${amountToSwap} ${fromSymbol} to ${toSymbol}`);
       
-      // Get quote from Jupiter Lite API
-      const quote = await this.getJupiterQuote(fromMint, toMint, amountToSwap, job.maxSlippage);
+      // Execute swap using SwapService
+      const swapResult = await this.swapService.executeSwap({
+        inputMint: fromMint,
+        outputMint: toMint,
+        amount: amountToSwap,
+        slippageBps: Math.floor(job.maxSlippage * 100), // Convert percentage to basis points
+        walletKeypair: {
+          publicKey: this.tradingWalletKeypair.publicKey.toString(),
+          secretKey: Array.from(this.tradingWalletKeypair.secretKey)
+        },
+        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+      });
       
-      // Execute the swap
-      const swapResult = await this.executeJupiterSwap(quote);
+      // Update job state
+      job.currentToken = toToken;
+      job.lastSwapTimestamp = new Date().toISOString();
       
-      if (swapResult.success && swapResult.signature) {
-        // Update job state
-        job.currentToken = toToken;
-        job.lastSwapTimestamp = new Date().toISOString();
-        
-        // Calculate swap details
-        const toAmount = parseFloat(quote.outAmount);
-        const fromAmountUI = amountToSwap / Math.pow(10, await this.getTokenDecimals(fromMint));
-        const toAmountUI = toAmount / Math.pow(10, await this.getTokenDecimals(toMint));
-        const price = fromAmountUI / toAmountUI;
-        
-        const swapDetails = {
-          fromToken,
-          toToken: toToken as 'A' | 'B',
-          fromAmount: fromAmountUI,
-          toAmount: toAmountUI,
-          price
-        };
-        
-        // Add to swap history
-        job.swapHistory.push({
-          timestamp: new Date().toISOString(),
-          fromToken,
-          toToken: toToken as 'A' | 'B',
-          fromAmount: fromAmountUI,
-          toAmount: toAmountUI,
-          price,
-          profit: 0 // Calculate profit later when we have historical data
-        });
-        
-        // Update job activity
-        this.updateJobActivity();
-        
-        console.log(`[PairTrade] Swap completed successfully: ${swapResult.signature}`);
-        
-        return {
-          success: true,
-          signature: swapResult.signature,
-          swapDetails
-        };
-      } else {
-        return { success: false, error: swapResult.error || 'Swap failed' };
-      }
+      // Calculate swap details from swap result
+      const fromAmountUI = parseFloat(swapResult.inputAmount);
+      const toAmountUI = parseFloat(swapResult.outputAmount);
+      const price = fromAmountUI / toAmountUI;
+      
+      const swapDetails = {
+        fromToken,
+        toToken: toToken as 'A' | 'B',
+        fromAmount: fromAmountUI,
+        toAmount: toAmountUI,
+        price
+      };
+      
+      // Add to swap history
+      job.swapHistory.push({
+        timestamp: new Date().toISOString(),
+        fromToken,
+        toToken: toToken as 'A' | 'B',
+        fromAmount: fromAmountUI,
+        toAmount: toAmountUI,
+        price,
+        profit: 0 // Calculate profit later when we have historical data
+      });
+      
+      // Update job activity
+      this.updateJobActivity();
+      
+      console.log(`[PairTrade] Swap completed successfully: ${swapResult.signature}`);
+      
+      // Emit trade success event for vault strategies to monitor
+      tradeEventsService.emitTradeSuccess({
+        strategyId: job.id,
+        tradingWalletAddress: this.tradingWalletKeypair.publicKey.toString(),
+        strategyType: 'pair-trade',
+        signature: swapResult.signature,
+        timestamp: new Date().toISOString(),
+        amount: fromAmountUI
+      });
+      
+      return {
+        success: true,
+        signature: swapResult.signature,
+        swapDetails
+      };
     } catch (error) {
       console.error('[PairTrade] Error executing swap:', error);
       return { 
@@ -218,13 +211,11 @@ export class PairTradeWorker extends BaseWorker {
     const currentSymbol = job.currentToken === 'A' ? job.tokenASymbol : job.tokenBSymbol;
     
     const balance = await this.getTokenBalance(currentMint);
-    const decimals = await this.getTokenDecimals(currentMint);
-    const balanceUI = balance / Math.pow(10, decimals);
     
     return {
       currentToken: job.currentToken,
       currentTokenSymbol: currentSymbol,
-      currentBalance: balanceUI,
+      currentBalance: balance,
       balanceUSD: 0, // TODO: Calculate USD value
       lastSwapTimestamp: job.lastSwapTimestamp,
       swapCount: job.swapHistory.length,
@@ -295,132 +286,49 @@ export class PairTradeWorker extends BaseWorker {
     }
   }
 
-  /**
-   * Get token balance for a specific mint
-   */
   private async getTokenBalance(mintAddress: string): Promise<number> {
     try {
-      const walletPubkey = this.tradingWalletKeypair.publicKey;
+      const walletAddress = this.tradingWalletKeypair.publicKey;
       
-      // Handle SOL differently
+      // Handle SOL (WSOL) specially
       if (mintAddress === 'So11111111111111111111111111111111111111112') {
-        const balance = await this.connection.getBalance(walletPubkey);
-        return balance; // Returns lamports
+        const balance = await this.connection.getBalance(walletAddress);
+        return balance; // Return in lamports
       }
       
-      // Get SPL token balance
-      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(walletPubkey, {
+      // For SPL tokens, get token account balance
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(walletAddress, {
         mint: new PublicKey(mintAddress)
       });
-      
+
       if (tokenAccounts.value.length === 0) {
         return 0;
       }
-      
+
       const tokenAccount = tokenAccounts.value[0];
-      const balance = tokenAccount.account.data.parsed.info.tokenAmount.amount;
-      return parseInt(balance);
+      const amount = tokenAccount.account.data.parsed.info.tokenAmount.amount;
+      return parseInt(amount);
     } catch (error) {
       console.error(`[PairTrade] Error getting token balance for ${mintAddress}:`, error);
       return 0;
     }
   }
 
-  /**
-   * Get token decimals
-   */
   private async getTokenDecimals(mintAddress: string): Promise<number> {
     try {
-      const tokenInfo = await this.tokenService.getTokenInfo(mintAddress);
-      return tokenInfo?.decimals || 6;
+      if (mintAddress === 'So11111111111111111111111111111111111111112') {
+        return 9; // SOL has 9 decimals
+      }
+
+      const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(mintAddress));
+      if (mintInfo.value?.data && 'parsed' in mintInfo.value.data) {
+        return mintInfo.value.data.parsed.info.decimals;
+      }
+      
+      return 6; // Default to 6 decimals for unknown tokens
     } catch (error) {
-      console.error(`[PairTrade] Error getting token decimals for ${mintAddress}:`, error);
+      console.error(`[PairTrade] Error getting decimals for ${mintAddress}:`, error);
       return 6;
-    }
-  }
-
-  /**
-   * Get Jupiter quote for token swap
-   */
-  private async getJupiterQuote(
-    inputMint: string,
-    outputMint: string,
-    amount: number,
-    maxSlippage: number
-  ): Promise<any> {
-    try {
-      const slippageBps = Math.floor(maxSlippage * 100); // Convert percentage to basis points
-      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
-      
-      const queryString = `inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&platformFeeBps=${platformFeeBps}`;
-      const response = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${queryString}`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to get Jupiter quote: ${response.statusText}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('[PairTrade] Error getting Jupiter quote:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Execute Jupiter swap
-   */
-  private async executeJupiterSwap(quote: any): Promise<{ success: boolean; signature?: string; error?: string }> {
-    try {
-      const feeAccount = JUPITER_FEE_ACCOUNT;
-      const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          quoteResponse: quote,
-          userPublicKey: this.tradingWalletKeypair.publicKey.toString(),
-          wrapAndUnwrapSol: true,
-          feeAccount: feeAccount
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Jupiter swap failed: ${JSON.stringify(errorData)}`);
-      }
-
-      const result = await response.json();
-      
-      // The result should contain the transaction that we need to sign and send
-      if (result.swapTransaction) {
-        // Deserialize and sign the transaction
-        const swapTransactionBuf = Buffer.from(result.swapTransaction, 'base64');
-        const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-        
-        // Sign the transaction
-        transaction.sign([this.tradingWalletKeypair]);
-        
-        // Send the transaction
-        const signature = await this.connection.sendTransaction(transaction);
-        
-        // Wait for confirmation
-        const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-        
-        if (confirmation.value.err) {
-          throw new Error(`Transaction failed: ${confirmation.value.err}`);
-        }
-        
-        return { success: true, signature };
-      } else {
-        throw new Error('No swap transaction returned from Jupiter API');
-      }
-    } catch (error) {
-      console.error('[PairTrade] Error executing Jupiter swap:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      };
     }
   }
 
@@ -468,44 +376,39 @@ export class PairTradeWorker extends BaseWorker {
       console.log(`[PairTrade] Initial setup: ${solToSell / 1e9} SOL → ${targetSymbol}`);
       
       // 4. Execute SOL → preferred token swap
-      const quote = await this.getJupiterQuote(
-        'So11111111111111111111111111111111111111112', // SOL
-        targetMint,
-        solToSell,
-        job.maxSlippage
-      );
+      const swapResult = await this.swapService.executeSwap({
+        inputMint: 'So11111111111111111111111111111111111111112', // SOL
+        outputMint: targetMint,
+        amount: solToSell,
+        slippageBps: Math.floor(job.maxSlippage * 100), // Convert percentage to basis points
+        walletKeypair: {
+          publicKey: this.tradingWalletKeypair.publicKey.toString(),
+          secretKey: Array.from(this.tradingWalletKeypair.secretKey)
+        },
+        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+      });
       
-      const swapResult = await this.executeJupiterSwap(quote);
+      // Update job state
+      job.currentToken = triggerInfo.preferred_initial_token;
+      job.lastSwapTimestamp = new Date().toISOString();
       
-      if (swapResult.success) {
-        // Update job state
-        job.currentToken = triggerInfo.preferred_initial_token;
-        job.lastSwapTimestamp = new Date().toISOString();
-        
-        // Calculate amounts for history
-        const toAmount = parseFloat(quote.outAmount);
-        const toDecimals = await this.getTokenDecimals(targetMint);
-        const fromAmountUI = solToSell / 1e9;
-        const toAmountUI = toAmount / Math.pow(10, toDecimals);
-        
-        // Add to swap history
-        job.swapHistory.push({
-          timestamp: new Date().toISOString(),
-          fromToken: 'SOL' as any, // Initial setup from SOL
-          toToken: triggerInfo.preferred_initial_token,
-          fromAmount: fromAmountUI,
-          toAmount: toAmountUI,
-          price: fromAmountUI / toAmountUI,
-          profit: 0 // Initial setup has no profit calculation
-        });
-        
-        console.log(`[PairTrade] Initial position established: Now holding ${targetSymbol}`);
-        console.log(`[PairTrade] Swapped ${fromAmountUI} SOL → ${toAmountUI} ${targetSymbol}`);
-      } else {
-        console.error('[PairTrade] Failed to execute initial swap:', swapResult.error);
-        // Still set the preferred token even if swap failed
-        job.currentToken = triggerInfo.preferred_initial_token;
-      }
+      // Calculate amounts for history
+      const fromAmountUI = parseFloat(swapResult.inputAmount);
+      const toAmountUI = parseFloat(swapResult.outputAmount);
+      
+      // Add to swap history
+      job.swapHistory.push({
+        timestamp: new Date().toISOString(),
+        fromToken: 'SOL' as any, // Initial setup from SOL
+        toToken: triggerInfo.preferred_initial_token,
+        fromAmount: fromAmountUI,
+        toAmount: toAmountUI,
+        price: fromAmountUI / toAmountUI,
+        profit: 0 // Initial setup has no profit calculation
+      });
+      
+      console.log(`[PairTrade] Initial position established: Now holding ${targetSymbol}`);
+      console.log(`[PairTrade] Swapped ${fromAmountUI} SOL → ${toAmountUI} ${targetSymbol}`);
       
     } catch (error) {
       console.error('[PairTrade] Error in initial position setup:', error);
@@ -567,5 +470,68 @@ export class PairTradeWorker extends BaseWorker {
   async getTriggerStatus(): Promise<TriggerInfo | null> {
     const job = this.job as PairTradeJob;
     return await this.getTriggerInfo(job.tokenAMint, job.tokenBMint);
+  }
+
+  private async monitorTriggers(): Promise<void> {
+    while (this.isRunning) {
+      try {
+        const now = Date.now();
+        if (now - this.lastTriggerCheck >= this.TRIGGER_CHECK_INTERVAL) {
+          await this.checkTriggers();
+          this.lastTriggerCheck = now;
+        }
+
+        // Wait 10 seconds before next check
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      } catch (error) {
+        console.error('[PairTrade] Error in trigger monitoring loop:', error);
+        await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds on error
+      }
+    }
+  }
+
+  private async checkTriggers(): Promise<void> {
+    try {
+      const job = this.job as PairTradeJob;
+      const client = await this.pool.connect();
+      
+      try {
+        // Get trigger info for this token pair
+        const result = await client.query(`
+          SELECT * FROM pair_trade_triggers 
+          WHERE token_a_mint = $1 AND token_b_mint = $2 
+          AND trigger_swap = true
+        `, [job.tokenAMint, job.tokenBMint]);
+
+        if (result.rows.length > 0) {
+          console.log(`[PairTrade] Found ${result.rows.length} active triggers for ${job.tokenASymbol}/${job.tokenBSymbol}`);
+          
+          for (const trigger of result.rows) {
+            await this.processTrigger(trigger);
+          }
+        }
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[PairTrade] Error checking triggers:', error);
+      throw error;
+    }
+  }
+
+  private async processTrigger(trigger: TriggerInfo): Promise<void> {
+    const job = this.job as PairTradeJob;
+    
+    // Check if swap is needed based on current position and desired direction
+    const shouldSwap = 
+      (trigger.current_direction === 'A_TO_B' && job.currentToken === 'A') ||
+      (trigger.current_direction === 'B_TO_A' && job.currentToken === 'B');
+
+    if (shouldSwap) {
+      console.log(`[PairTrade] Trigger indicates swap needed: ${trigger.current_direction}`);
+      await this.executeSwap('trigger');
+    } else {
+      console.log(`[PairTrade] Already in correct position for trigger direction: ${trigger.current_direction}`);
+    }
   }
 }

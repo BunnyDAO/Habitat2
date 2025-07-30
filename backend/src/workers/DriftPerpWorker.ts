@@ -16,6 +16,7 @@ import {
   createAssociatedTokenAccountInstruction,
   createTransferInstruction
 } from '@solana/spl-token';
+import { tradeEventsService } from '../services/trade-events.service';
 
 export class DriftPerpWorker extends BaseWorker {
   private tradingWalletKeypair: Keypair;
@@ -346,6 +347,18 @@ export class DriftPerpWorker extends BaseWorker {
         this.updateJobActivity();
         
         console.log(`[DriftPerp] Position opened successfully: ${result.signature}`);
+        
+        // Emit trade success event for vault strategies to monitor
+        if (result.signature) {
+          tradeEventsService.emitTradeSuccess({
+            strategyId: this.job.id,
+            tradingWalletAddress: this.tradingWalletKeypair.publicKey.toString(),
+            strategyType: 'drift-perp',
+            signature: result.signature,
+            timestamp: new Date().toISOString(),
+            amount: positionSize
+          });
+        }
       }
       
       return {
@@ -394,6 +407,17 @@ export class DriftPerpWorker extends BaseWorker {
         this.updateJobActivity();
         
         console.log(`[DriftPerp] Position closed successfully: ${result.signature}`);
+        
+        // Emit trade success event for vault strategies to monitor
+        if (result.signature) {
+          tradeEventsService.emitTradeSuccess({
+            strategyId: this.job.id,
+            tradingWalletAddress: this.tradingWalletKeypair.publicKey.toString(),
+            strategyType: 'drift-perp',
+            signature: result.signature,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
       
       return {

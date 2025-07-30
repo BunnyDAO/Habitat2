@@ -34,7 +34,7 @@ Create automated trading strategies that work 24/7:
 
 ## Important Platform Information
 
-### Swap Execution & Slippage Protection ✅ IMPLEMENTED
+### Swap Execution & Slippage Protection
 **Automatic Retry System**: We automatically retry failed swaps with progressively higher slippage tolerances to ensure your trades execute successfully:
 - Initial attempt: Your configured slippage (default 0.5%)
 - Retry 1: 1.5% slippage
@@ -42,12 +42,6 @@ Create automated trading strategies that work 24/7:
 - Final retry: 5.0% slippage (maximum limit)
 
 This protects you from missing important trades due to temporary market volatility while preventing excessive slippage losses.
-
-**UI Updates Implemented**:
-- ✅ Vault Strategy: 5% maximum limit enforced in UI
-- ✅ Vault Strategy: Default value set to 0.5%
-- ✅ Vault Strategy: Clear description of functionality and limits
-- **Future**: Add slippage retry note to strategy creation UI
 
 ### Platform Fees
 - **Trading Fee**: 0.2% on all successful swaps
@@ -101,7 +95,7 @@ A: We automatically retry with higher slippage (up to 5% max)
 A: Yes, you can pause, edit, or delete strategies anytime
 
 **Q: Are my private keys safe?**
-A: Yes, they're encrypted and stored locally on your device
+A: Yes, they're encrypted and stored locally on your device, and encrypted on our server.
 
 ## Support & Community
 

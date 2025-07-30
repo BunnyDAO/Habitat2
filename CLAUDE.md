@@ -26,7 +26,7 @@
 
 ## Key Features
 1. **Multi-Wallet Trading**: Support for up to 3 trading wallets per strategy
-2. **Automated Strategies**: 5 strategy types (Wallet Monitor, Price Monitor, Vault, Levels, Pair Trade)
+2. **Automated Strategies**: 6 strategy types (Wallet Monitor, Price Monitor, Vault, Levels, Pair Trade, Drift Perp)
 3. **Strategy Marketplace**: Publish, share, and adopt successful strategies
 4. **Whale Tracking**: Monitor large wallet movements via Helius API
 5. **Portfolio Analytics**: ROI tracking, performance metrics, transaction history
@@ -41,6 +41,7 @@
 - `token_prices` - Real-time price data
 - `wallet_balances` - Current token holdings
 - `transactions` - Partitioned transaction history
+- `pair_trade_triggers` - Manual trigger system for pair trade execution
 
 ### Strategy Marketplace Tables
 - `published_strategies` - Strategies shared in marketplace
@@ -98,6 +99,21 @@
 - **Purpose**: Trade between two tokens maintaining ratio
 - **Key Params**: tokenAMint, tokenBMint, allocationPercentage, maxSlippage
 - **Worker**: `backend/src/workers/pairTradeWorker.ts`
+- **Manual Trigger System**: `pair_trade_triggers` table for manual swap execution
+- **Trigger Daemon**: `backend/src/services/PairTradeTriggerDaemon.ts`
+
+### 6. Drift Perp Strategy
+- **Purpose**: Automated perpetual futures trading on Drift Protocol
+- **Key Params**: marketSymbol, marketIndex, direction (long/short), entryPrice, exitPrice, leverage, allocationPercentage, stopLoss, takeProfit
+- **Worker**: `backend/src/workers/DriftPerpWorker.ts`
+- **Service**: `backend/src/services/DriftService.ts`
+- **Features**:
+  - Perpetual futures trading with leverage
+  - Automatic position management
+  - Stop loss and take profit orders
+  - Real-time price monitoring
+  - Position history tracking
+  - Margin ratio and liquidation monitoring
 
 ## External Integrations
 
@@ -105,6 +121,7 @@
 - **Solana Web3.js**: Direct blockchain interaction
 - **Jupiter Aggregator**: Token swap routing (`/backend/src/services/jupiterService.ts`)
 - **SPL Token Program**: Token operations
+- **Drift Protocol**: Perpetual futures trading (`/backend/src/services/DriftService.ts`)
 
 ### Data Providers
 - **Helius API**: 

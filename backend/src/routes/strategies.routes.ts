@@ -87,6 +87,19 @@ router.post('/',
         console.log(`  Strategy ${index + 1}: ID=${strategy.id}, Config=${JSON.stringify(strategy.config)}`);
       });
 
+      // Special handling for vault strategies - only one vault per trading wallet allowed
+      if (strategy_type === 'vault') {
+        console.log('🔍 VAULT DEBUG - Detected vault strategy');
+        console.log('🔍 VAULT DEBUG - Existing vault strategies count:', existingStrategies?.length || 0);
+        
+        if (existingStrategies && existingStrategies.length > 0) {
+          console.log('❌ VAULT DEBUG - Vault strategy already exists for this trading wallet');
+          return res.status(400).json({ 
+            error: 'Only one vault strategy is allowed per trading wallet. Please delete the existing vault strategy first.' 
+          });
+        }
+      }
+
       // Special handling for wallet-monitor strategies
       if (strategy_type === 'wallet-monitor' && config.walletAddress) {
         console.log('🔍 WALLET MONITOR DEBUG - Detected wallet monitor strategy');

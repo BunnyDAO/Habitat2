@@ -8,138 +8,47 @@ import {
   Keypair,
   Connection
 } from '@solana/web3.js';
+import { SwapService } from '../services/swap.service';
+import { tradeEventsService } from '../services/trade-events.service';
 
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
-// Jupiter Lite API Configuration
-const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
-const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
-
-// Helper function to convert instruction fields to TransactionInstruction
-const convertInstruction = (instr: {
-  programId: string;
-  accounts: Array<{
-    pubkey: string;
-    isSigner: boolean;
-    isWritable: boolean;
-  }>;
-  data?: string;
-}): TransactionInstruction | null => {
-  try {
-    if (!instr || typeof instr !== 'object') {
-      console.error('Invalid instruction:', instr);
-      return null;
-    }
-
-    if (!instr.programId || typeof instr.programId !== 'string') {
-      console.error('Invalid programId:', instr.programId);
-      return null;
-    }
-
-    if (!Array.isArray(instr.accounts)) {
-      console.error('Invalid accounts array:', instr.accounts);
-      return null;
-    }
-
-    return {
-      programId: new PublicKey(instr.programId),
-      keys: instr.accounts.map((account) => ({
-        pubkey: new PublicKey(account.pubkey),
-        isSigner: Boolean(account.isSigner),
-        isWritable: Boolean(account.isWritable)
-      })),
-      data: Buffer.from(instr.data || '', 'base64')
-    };
-  } catch (error) {
-    console.error('Error converting instruction:', error);
-    console.error('Problematic instruction:', instr);
-    return null;
-  }
-};
-
-// Helper function to execute transaction with retries
-const executeTransaction = async (
-  connection: Connection,
-  transaction: VersionedTransaction,
-  tradingKeypair: Keypair,
-  lastValidBlockHeight: number,
-  retries = 3
-): Promise<string> => {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      if (attempt > 1) {
-        // Get fresh blockhash for retries
-        const { blockhash: newBlockhash } = await connection.getLatestBlockhash('finalized');
-        transaction.message.recentBlockhash = newBlockhash;
-        // Re-sign with new blockhash
-        transaction.signatures = [];
-        transaction.sign([tradingKeypair]);
-      }
-
-      const signature = await connection.sendTransaction(transaction, {
-        skipPreflight: false,
-        maxRetries: 3,
-        preflightCommitment: 'confirmed'
-      });
-
-      const confirmation = await connection.confirmTransaction({
-        signature,
-        blockhash: transaction.message.recentBlockhash,
-        lastValidBlockHeight
-      });
-
-      if (confirmation.value.err) {
-        throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
-      }
-
-      return signature;
-    } catch (error) {
-      console.log(`Attempt ${attempt} failed:`, error);
-      if (attempt === retries) throw error;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  throw new Error('All retry attempts failed');
-};
-
 export class PriceMonitorWorker extends BaseWorker {
   private lastTriggered: number = 0;
-  private cooldownPeriod: number = 300000; // 5 minutes cooldown
+  private tradingWalletKeypair: Keypair;
   private tradingWalletPublicKey: string;
-  private tradingWalletSecretKey: Uint8Array;
   private targetPrice: number;
   private direction: 'above' | 'below';
   private percentageToSell: number;
-  private tradingWalletKeypair: Keypair;
+  private swapService: SwapService;
+  
+  // Rate limiting
+  private readonly MIN_TIME_BETWEEN_TRIGGERS = 300000; // 5 minutes
+  private readonly CHECK_INTERVAL = 60000; // 1 minute
 
-  constructor(job: PriceMonitoringJob, endpoint: string) {
+  constructor(job: PriceMonitoringJob, endpoint: string, swapService: SwapService) {
     super(job, endpoint);
+    
+    this.tradingWalletKeypair = Keypair.fromSecretKey(job.tradingWalletSecretKey);
     this.tradingWalletPublicKey = job.tradingWalletPublicKey;
-    this.tradingWalletSecretKey = job.tradingWalletSecretKey;
     this.targetPrice = job.targetPrice;
     this.direction = job.direction;
     this.percentageToSell = job.percentageToSell;
-    this.tradingWalletKeypair = Keypair.fromSecretKey(this.tradingWalletSecretKey);
+    this.swapService = swapService;
+
+    console.log(`[PriceMonitor] Initialized for wallet ${this.tradingWalletPublicKey}`);
+    console.log(`[PriceMonitor] Target: ${this.direction} $${this.targetPrice}, sell ${this.percentageToSell}% SOL`);
   }
 
   async start(): Promise<void> {
     if (this.isRunning) return;
 
     try {
-      console.log(`PriceMonitorWorker starting for strategy ${this.job.id}`);
-      console.log(`Target: ${this.direction} $${this.targetPrice}, Percentage: ${this.percentageToSell}%`);
-      
-      // Start price monitoring (don't await - let it run in background)
       this.isRunning = true;
-      this.monitorPrice().catch(error => {
-        console.error(`Fatal error in price monitoring for strategy ${this.job.id}:`, error);
-        this.isRunning = false;
-      });
-      
-      console.log(`PriceMonitorWorker started successfully for strategy ${this.job.id}`);
+      await this.monitorPrice();
     } catch (error) {
-      console.error('Error starting price monitor:', error);
+      console.error('[PriceMonitor] Error starting price monitor:', error);
       throw error;
     }
   }
@@ -147,49 +56,51 @@ export class PriceMonitorWorker extends BaseWorker {
   async stop(): Promise<void> {
     if (!this.isRunning) return;
     this.isRunning = false;
+    console.log(`[PriceMonitor] Stopped price monitoring for wallet ${this.tradingWalletPublicKey}`);
   }
 
   private async monitorPrice(): Promise<void> {
     while (this.isRunning) {
       try {
-        // Get current SOL price from CoinGecko API  
-        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd`);
+        // Get current SOL price from Jupiter API
+        const response = await fetch('https://price.jup.ag/v4/price?ids=So11111111111111111111111111111111111111112');
         if (!response.ok) {
-          throw new Error(`Price API returned ${response.status}: ${response.statusText}`);
+          throw new Error(`Failed to fetch SOL price: ${response.statusText}`);
         }
+
         const data = await response.json();
-        const currentPrice = data.solana?.usd;
+        const priceData = data.data?.['So11111111111111111111111111111111111111112'];
         
-        if (!currentPrice || typeof currentPrice !== 'number') {
-          throw new Error(`Invalid price data received: ${JSON.stringify(data)}`);
-        }
-        
-        console.log(`Current SOL price: $${currentPrice}, Target: ${this.direction} $${this.targetPrice}`);
-
-        const shouldTrigger = this.direction === 'above' 
-          ? currentPrice >= this.targetPrice
-          : currentPrice <= this.targetPrice;
-
-        if (shouldTrigger && Date.now() - this.lastTriggered >= this.cooldownPeriod) {
-          console.log(`Price condition met! SOL price: $${currentPrice}`);
-          await this.executeTrade(currentPrice);
-          this.lastTriggered = Date.now();
-          
-          // Update job status
-          (this.job as PriceMonitoringJob).lastActivity = new Date().toISOString();
-          (this.job as PriceMonitoringJob).lastTriggerPrice = currentPrice;
-          (this.job as PriceMonitoringJob).isActive = false;
-          
-          // Stop monitoring since condition was met
-          await this.stop();
-          break;
+        if (!priceData || !priceData.price) {
+          throw new Error('Invalid price data received');
         }
 
-        // Wait 10 seconds before next check
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        const currentPrice = parseFloat(priceData.price);
+        console.log(`[PriceMonitor] Current SOL price: $${currentPrice} (Target: ${this.direction} $${this.targetPrice})`);
+
+        // Check if price condition is met
+        const priceConditionMet = 
+          (this.direction === 'above' && currentPrice >= this.targetPrice) ||
+          (this.direction === 'below' && currentPrice <= this.targetPrice);
+
+        if (priceConditionMet) {
+          // Check rate limiting
+          const now = Date.now();
+          if (now - this.lastTriggered < this.MIN_TIME_BETWEEN_TRIGGERS) {
+            const remainingTime = Math.ceil((this.MIN_TIME_BETWEEN_TRIGGERS - (now - this.lastTriggered)) / 1000);
+            console.log(`[PriceMonitor] Price condition met but rate limited. ${remainingTime}s remaining.`);
+          } else {
+            console.log(`[PriceMonitor] 🎯 Price condition triggered: $${currentPrice} is ${this.direction} $${this.targetPrice}`);
+            await this.executeTrade(currentPrice);
+            this.lastTriggered = now;
+          }
+        }
+
+        // Wait before next check
+        await new Promise(resolve => setTimeout(resolve, this.CHECK_INTERVAL));
       } catch (error) {
-        console.error('Error monitoring price:', error);
-        await new Promise(resolve => setTimeout(resolve, 30000)); // Wait longer on error
+        console.error('[PriceMonitor] Error in price monitoring loop:', error);
+        await new Promise(resolve => setTimeout(resolve, this.CHECK_INTERVAL * 2)); // Wait longer on error
       }
     }
   }
@@ -214,80 +125,22 @@ export class PriceMonitorWorker extends BaseWorker {
         throw new Error('Invalid swap amount or insufficient balance');
       }
 
-      // Validate fee amount
-      const feeAmount = Math.floor(amountInLamports * 0.0005); // 0.05%
-      if (feeAmount < 1000) { // Minimum fee amount in lamports
-        throw new Error(`Transaction amount too small for fee calculation. Minimum fee amount is 0.000001 SOL`);
-      }
+      console.log(`[PriceMonitor] 💰 Executing trade: ${amountToSwap} SOL → USDC at $${currentPrice}`);
 
-      console.log(`Executing trade for ${amountToSwap} SOL at $${currentPrice}`);
-
-      // Get quote from Jupiter Lite API with platform fee
-      const platformFeeBps = JUPITER_PLATFORM_FEE_BPS;
-      let quoteResponse = await fetch(
-        `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50&platformFeeBps=${platformFeeBps}&onlyDirectRoutes=true`
-      );
-
-      // If direct route fails, try without restrictions
-      if (!quoteResponse.ok) {
-        quoteResponse = await fetch(
-          `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${USDC_MINT}&amount=${amountInLamports}&slippageBps=50&platformFeeBps=${platformFeeBps}`
-        );
-      }
-
-      if (!quoteResponse.ok) {
-        throw new Error(`Failed to get quote: ${quoteResponse.statusText}`);
-      }
-
-      const quote = await quoteResponse.json();
-
-      // Get transaction data from Jupiter Lite API with fee account
-      const feeAccount = JUPITER_FEE_ACCOUNT; // Your fee account
-      const swapResponse = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quoteResponse: quote,
-          userPublicKey: this.tradingWalletPublicKey,
-          wrapAndUnwrapSol: true,
-          feeAccount: feeAccount
-        })
+      // Execute swap using SwapService
+      const swapResult = await this.swapService.executeSwap({
+        inputMint: SOL_MINT,
+        outputMint: USDC_MINT,
+        amount: amountInLamports,
+        slippageBps: 100, // 1% default slippage
+        walletKeypair: {
+          publicKey: this.tradingWalletKeypair.publicKey.toString(),
+          secretKey: Array.from(this.tradingWalletKeypair.secretKey)
+        },
+        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
       });
 
-      if (!swapResponse.ok) {
-        throw new Error(`Failed to get swap transaction: ${swapResponse.statusText}`);
-      }
-
-      const swapData = await swapResponse.json();
-
-      // Convert instructions
-      const instructions = swapData.instructions.map(convertInstruction).filter(Boolean);
-      if (instructions.length !== swapData.instructions.length) {
-        throw new Error('Failed to convert all instructions');
-      }
-
-      // Get latest blockhash
-      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('finalized');
-
-      // Create and sign transaction
-      const messageV0 = new TransactionMessage({
-        payerKey: tradingWallet,
-        recentBlockhash: blockhash,
-        instructions
-      }).compileToV0Message();
-
-      const transaction = new VersionedTransaction(messageV0);
-      transaction.sign([this.tradingWalletKeypair]);
-
-      // Execute transaction with retries
-      const signature = await executeTransaction(
-        this.connection,
-        transaction,
-        this.tradingWalletKeypair,
-        lastValidBlockHeight
-      );
-
-      console.log(`Trade executed successfully! Signature: ${signature}`);
+      console.log(`[PriceMonitor] ✅ Trade executed successfully: ${swapResult.signature}`);
 
       // Update profit tracking
       const profit = currentPrice * amountToSwap - amountToSwap;
@@ -299,8 +152,19 @@ export class PriceMonitorWorker extends BaseWorker {
         profit
       });
 
+      // Emit trade success event for vault strategies to monitor
+      tradeEventsService.emitTradeSuccess({
+        strategyId: this.job.id,
+        tradingWalletAddress: this.tradingWalletKeypair.publicKey.toString(),
+        strategyType: 'price-monitor',
+        signature: swapResult.signature,
+        timestamp: new Date().toISOString(),
+        amount: amountToSwap,
+        profit
+      });
+
     } catch (error) {
-      console.error('Error executing trade:', error);
+      console.error('[PriceMonitor] Error executing trade:', error);
       throw error;
     }
   }
