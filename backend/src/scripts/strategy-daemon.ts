@@ -10,6 +10,8 @@ import { DriftPerpWorker } from '../workers/DriftPerpWorker';
 import { EncryptionService } from '../services/encryption.service';
 import { TokenService } from '../services/TokenService';
 import { SwapService } from '../services/swap.service';
+import { PriceFeedService } from '../api/v1/services/price-feed.service';
+import { HeliusService } from '../services/helius.service';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -30,6 +32,8 @@ class StrategyDaemon {
   private encryptionService: EncryptionService;
   private tokenService: TokenService;
   private swapService: SwapService;
+  private priceFeedService: PriceFeedService;
+  private heliusService: HeliusService;
   private pool: Pool;
   private connection: Connection;
 
@@ -48,6 +52,13 @@ class StrategyDaemon {
     
     // Initialize connection for services
     this.connection = new Connection(HELIUS_ENDPOINT);
+    
+    // Initialize HeliusService with API key from environment
+    const heliusApiKey = process.env.HELIUS_API_KEY || 'dd2b28a0-d00e-44f1-bbda-23c042d7476a';
+    this.heliusService = new HeliusService(heliusApiKey);
+    
+    // Initialize PriceFeedService
+    this.priceFeedService = new PriceFeedService(null, this.heliusService);
     
     // Initialize TokenService
     this.tokenService = new TokenService(this.pool);
@@ -318,7 +329,7 @@ class StrategyDaemon {
               trades: strategy.trades || []
             }
           } as import('../types/jobs').LevelsStrategy;
-          worker = new LevelsWorker(job, HELIUS_ENDPOINT, this.swapService);
+          worker = new LevelsWorker(job, HELIUS_ENDPOINT, this.swapService, this.priceFeedService);
           break;
         }
         case 'pair-trade': {

@@ -3,8 +3,8 @@ import { LevelsStrategy, Level } from '../types/jobs';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import { SwapService } from '../services/swap.service';
 import { tradeEventsService } from '../services/trade-events.service';
+import { PriceFeedService } from '../api/v1/services/price-feed.service';
 
-const JUPITER_PRICE_API = 'https://api.jup.ag/price/v2';
 const MIN_TRADE_AMOUNT = 0.01; // Minimum 0.01 SOL for trades
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -17,15 +17,17 @@ export class LevelsWorker extends BaseWorker {
   private lastCheck: number = 0;
   private checkInterval: number = 60000; // 1 minute
   private swapService: SwapService;
+  private priceFeedService: PriceFeedService;
   private lastPrice: number = 0; // Track last price to detect crossings
 
-  constructor(job: LevelsStrategy, endpoint: string, swapService: SwapService) {
+  constructor(job: LevelsStrategy, endpoint: string, swapService: SwapService, priceFeedService: PriceFeedService) {
     super(job, endpoint);
     this.tradingWalletPublicKey = job.tradingWalletPublicKey;
     this.tradingWalletSecretKey = job.tradingWalletSecretKey;
     this.levels = this.validateAndSortLevels(job.levels);
     this.tradingWalletKeypair = Keypair.fromSecretKey(this.tradingWalletSecretKey);
     this.swapService = swapService;
+    this.priceFeedService = priceFeedService;
     
     console.log(`[Levels] Worker initialized with ${this.levels.length} levels for wallet ${this.tradingWalletPublicKey}`);
     this.levels.forEach(level => {
@@ -89,22 +91,11 @@ export class LevelsWorker extends BaseWorker {
 
   private async checkLevels(): Promise<void> {
     try {
-      // Get current SOL price from Jupiter API
-      const response = await fetch(`${JUPITER_PRICE_API}?ids=${SOL_MINT}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch SOL price: ${response.statusText}`);
-      }
+      // Get current SOL price using our existing price feed service
+      const currentPrice = await this.priceFeedService.getPrice('SOL');
       
-      const data = await response.json();
-      const priceData = data.data?.[SOL_MINT];
-      
-      if (!priceData || !priceData.price) {
-        throw new Error('Invalid price data received from Jupiter API');
-      }
-      
-      const currentPrice = parseFloat(priceData.price);
-      if (isNaN(currentPrice) || currentPrice <= 0) {
-        throw new Error(`Invalid SOL price: ${currentPrice}`);
+      if (!currentPrice || currentPrice <= 0) {
+        throw new Error(`Invalid SOL price received: ${currentPrice}`);
       }
 
       console.log(`[Levels] Current SOL price: $${currentPrice} (Previous: $${this.lastPrice})`);

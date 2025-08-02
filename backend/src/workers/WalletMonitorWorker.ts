@@ -278,14 +278,16 @@ export class WalletMonitorWorker extends BaseWorker {
         });
         
         // Only count significant SOL balance changes (not just transaction fees)
-        if (Math.abs(postSOLBalance - preSOLBalance) > 0.0001) { // 0.0001 SOL threshold to capture very small trades
-          console.log('[Mirror] SOL balance change above threshold, adding to tokenChanges');
+        // Use a smaller threshold to capture micro-swaps but ignore pure fee transactions
+        const SOL_THRESHOLD = 0.0001; // 0.0001 SOL threshold to capture very small trades
+        if (Math.abs(postSOLBalance - preSOLBalance) > SOL_THRESHOLD) {
+          console.log(`[Mirror] SOL balance change above threshold (${SOL_THRESHOLD}), adding to tokenChanges`);
           tokenChanges.set('So11111111111111111111111111111111111111112', { // SOL mint address
             pre: preSOLBalance,
             post: postSOLBalance
           });
         } else {
-          console.log('[Mirror] SOL balance change below threshold (0.002), ignoring');
+          console.log(`[Mirror] SOL balance change below threshold (${SOL_THRESHOLD}), ignoring (likely just fees)`);
         }
       } else {
         console.log('[Mirror] Monitored wallet not found in account keys or balance arrays');
@@ -361,7 +363,39 @@ export class WalletMonitorWorker extends BaseWorker {
         }
       });
 
+      // Special case: If we only found one token change, check if it's a SOL -> SPL token swap
+      // In this case, SOL decrease might not be captured properly due to small amounts or fee confusion
+      if (!inputToken && outputToken && outputToken !== 'So11111111111111111111111111111111111111112') {
+        // Assume SOL was the input token for SOL -> SPL token swaps
+        inputToken = 'So11111111111111111111111111111111111111112';
+        inputAmount = outputAmount; // Use output amount as estimation
+        console.log(`[Mirror] Detected SOL -> SPL token swap. Assuming SOL input: ${inputAmount}`);
+      } else if (inputToken && !outputToken && inputToken !== 'So11111111111111111111111111111111111111112') {
+        // Assume SOL was the output token for SPL token -> SOL swaps
+        outputToken = 'So11111111111111111111111111111111111111112';
+        outputAmount = inputAmount; // Use input amount as estimation
+        console.log(`[Mirror] Detected SPL token -> SOL swap. Assuming SOL output: ${outputAmount}`);
+      }
+
       console.log(`[Mirror] Final detection - Input: ${inputToken}, Output: ${outputToken}`);
+
+      // Validate that we found valid tokens before proceeding
+      if (!inputToken || !outputToken) {
+        console.log(`[Mirror] Skipping transaction - missing valid tokens. Input: ${inputToken}, Output: ${outputToken}`);
+        return {
+          status: 'failed',
+          error: 'No valid token swap detected in transaction'
+        };
+      }
+
+      // Additional validation for public key format (skip for SOL native token)
+      if (!this.isValidTokenAddress(inputToken) || !this.isValidTokenAddress(outputToken)) {
+        console.log(`[Mirror] Skipping transaction - invalid token addresses. Input: ${inputToken}, Output: ${outputToken}`);
+        return {
+          status: 'failed',
+          error: 'Invalid token addresses detected'
+        };
+      }
 
       // Convert amounts to proper scale for Jupiter API
       let scaledInputAmount = inputAmount;
@@ -394,7 +428,8 @@ export class WalletMonitorWorker extends BaseWorker {
       console.log(`[Mirror] Token decimals - input: ${inputDecimals}, output: ${outputDecimals}`);
       console.log(`[Mirror] Scaled amounts - input: ${scaledInputAmount}, output: ${scaledOutputAmount}`);
       
-      await this.mirrorSwap(inputToken, outputToken, scaledOutputAmount);
+      // Use input amount for the swap (what we're selling), not output amount (what we expect to receive)
+      await this.mirrorSwap(inputToken, outputToken, scaledInputAmount);
       this.updateJobActivity();
 
       return {
@@ -706,6 +741,21 @@ export class WalletMonitorWorker extends BaseWorker {
     return this.monitorMirroringProcess(inputMint, outputMint, amount);
   }
 
+  private isValidTokenAddress(address: string): boolean {
+    try {
+      // SOL native token is always valid
+      if (address === 'So11111111111111111111111111111111111111112') {
+        return true;
+      }
+      
+      // Check if it's a valid public key format
+      new PublicKey(address);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async getTokenDecimals(mintAddress: string): Promise<number> {
     try {
       // SOL has 9 decimals
@@ -790,6 +840,25 @@ export class WalletMonitorWorker extends BaseWorker {
   private async mirrorSwap(inputMint: string, outputMint: string, amount: number): Promise<void> {
     try {
       console.log(`[Mirror] Mirroring swap: ${inputMint} -> ${outputMint}, amount: ${amount}`);
+      
+      // Validate amount before swapping
+      if (amount <= 0) {
+        throw new Error(`Invalid swap amount: ${amount}. Amount must be positive.`);
+      }
+      
+      // Add safety check for extremely large amounts (might indicate calculation error)
+      const MAX_REASONABLE_AMOUNT = 1e15; // 1 million tokens with 9 decimals
+      if (amount > MAX_REASONABLE_AMOUNT) {
+        console.warn(`[Mirror] WARNING: Very large swap amount detected: ${amount}. This might indicate a calculation error.`);
+      }
+
+      console.log(`[Mirror] Executing swap with validated parameters:`, {
+        inputMint,
+        outputMint,
+        amount,
+        amountFormatted: amount / 1e9, // Assuming 9 decimals for logging
+        tradingWallet: this.tradingWalletKeypair?.publicKey.toString()
+      });
       
       // Ensure token accounts exist for both input and output tokens
       if (this.tradingWalletKeypair) {

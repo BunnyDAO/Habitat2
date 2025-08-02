@@ -56,7 +56,11 @@ export class DriftService {
   private initialized: boolean = false;
 
   constructor(endpoint: string) {
-    this.connection = new Connection(endpoint);
+    this.connection = new Connection(endpoint, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000, // 60 seconds
+      wsEndpoint: endpoint.replace('https', 'wss')
+    });
   }
 
   /**
@@ -78,6 +82,7 @@ export class DriftService {
         programID: new PublicKey('dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH'), // Drift Program ID
         opts: {
           commitment: 'confirmed',
+          preflightCommitment: 'confirmed',
         },
         activeSubAccountId: 0,
         perpMarketIndexes: [0, 1, 2, 3, 4, 5], // SOL, BTC, ETH, AVAX, BNB, MATIC
@@ -88,12 +93,57 @@ export class DriftService {
       // Subscribe to Drift client
       await this.driftClient.subscribe();
       
-      // Initialize user account if needed
+      // Initialize user account if needed with retry logic
       try {
         await this.driftClient.getUser().getUserAccount();
       } catch (error) {
-        console.log('[DriftService] Creating new user account...');
-        await this.driftClient.initializeUserAccount();
+        console.log('[DriftService] User account not found, checking wallet balance...');
+        
+        // Check if wallet has enough SOL for account creation
+        const walletBalance = await this.connection.getBalance(wallet.publicKey);
+        const minBalance = 0.1 * 1e9; // 0.1 SOL minimum
+        
+        if (walletBalance < minBalance) {
+          throw new Error(`Insufficient SOL balance for Drift account creation. Need at least 0.1 SOL, have ${walletBalance / 1e9} SOL`);
+        }
+        
+        console.log(`[DriftService] Wallet balance: ${walletBalance / 1e9} SOL`);
+        
+        // Retry logic for blockhash issues
+        const maxRetries = 3;
+        let retryCount = 0;
+        let lastError: any = null;
+        
+        while (retryCount < maxRetries) {
+          try {
+            console.log(`[DriftService] Creating user account (attempt ${retryCount + 1}/${maxRetries})...`);
+            
+            // Get fresh blockhash before attempting
+            const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+            
+            await this.driftClient.initializeUserAccount();
+            console.log('[DriftService] User account created successfully');
+            break;
+          } catch (retryError: any) {
+            lastError = retryError;
+            retryCount++;
+            
+            if (retryError.message?.includes('Blockhash not found') || 
+                retryError.message?.includes('blockhash')) {
+              console.log(`[DriftService] Blockhash error, waiting ${retryCount * 2} seconds before retry...`);
+              await new Promise(resolve => setTimeout(resolve, retryCount * 2000));
+            } else {
+              // If it's not a blockhash error, don't retry
+              console.error('[DriftService] Non-blockhash error:', retryError);
+              throw retryError;
+            }
+          }
+        }
+        
+        if (retryCount >= maxRetries) {
+          console.error('[DriftService] Failed to create user account after retries');
+          throw lastError;
+        }
       }
 
       this.initialized = true;

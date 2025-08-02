@@ -36,7 +36,7 @@ export class DriftPerpWorker extends BaseWorker {
     // Initialize trading wallet keypair
     this.tradingWalletKeypair = Keypair.fromSecretKey(job.tradingWalletSecretKey);
     
-    // Initialize Drift service
+    // Initialize Drift service with the same endpoint
     this.driftService = new DriftService(endpoint);
     
     console.log(`DriftPerpWorker initialized for ${job.marketSymbol} market`);
@@ -46,10 +46,10 @@ export class DriftPerpWorker extends BaseWorker {
     if (this.isRunning) return;
 
     try {
-      // Create connection
-      this.connection = createRateLimitedConnection('https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a');
+      // Create connection using the endpoint from constructor
+      this.connection = createRateLimitedConnection(this.endpoint);
       
-      // Initialize Drift client
+      // Initialize Drift client with the same endpoint
       await this.driftService.initialize(this.tradingWalletKeypair);
       
       // Setup initial collateral if needed

@@ -93,13 +93,14 @@ export class SwapService {
 
     async executeSwap(request: SwapRequest): Promise<SwapResponse> {
         // Progressive slippage retry system
-        const maxSlippage = 500; // 5% hard limit
+        const maxSlippage = 1000; // 10% hard limit for extreme volatility
         const originalSlippage = request.slippageBps || 50;
         const slippageSteps = [
             originalSlippage,  // Original slippage (default 0.5%)
             150,               // 1.5%
             300,               // 3.0%
-            500                // 5.0% (maximum)
+            500,               // 5.0%
+            1000               // 10.0% (maximum for extreme volatility)
         ];
 
         let lastError: Error | null = null;
@@ -133,15 +134,22 @@ export class SwapService {
                 lastError = error as Error;
                 const currentSlippage = slippageSteps[attempt];
                 
+                // Enhanced error logging with error codes
+                console.log(`❌ Error on attempt ${attempt + 1} with ${currentSlippage/100}% slippage:`, {
+                    message: lastError.message,
+                    stack: lastError.stack?.split('\n')[0], // First line of stack trace
+                    errorString: lastError.toString(),
+                    isSlippageError: this.isSlippageError(lastError)
+                });
+                
                 // Check if it's a slippage-related error
                 if (this.isSlippageError(lastError) && attempt < slippageSteps.length - 1) {
-                    console.log(`❌ Slippage error on attempt ${attempt + 1} with ${currentSlippage/100}% slippage: ${lastError.message}`);
-                    console.log(`🔄 Retrying with higher slippage...`);
+                    console.log(`🔄 Detected slippage error (including 6001), retrying with higher slippage...`);
                     continue;
                 }
                 
                 // Non-slippage error or final attempt - break out
-                console.log(`❌ Final error on attempt ${attempt + 1}: ${lastError.message}`);
+                console.log(`❌ Final error on attempt ${attempt + 1} (no more retries):`, lastError.message);
                 break;
             }
         }
@@ -156,7 +164,12 @@ export class SwapService {
 
     private isSlippageError(error: Error): boolean {
         const errorMessage = error.message.toLowerCase();
-        return errorMessage.includes('slippage') ||
+        const errorStr = error.toString().toLowerCase();
+        
+        // Check for Jupiter error code 6001 (SlippageToleranceExceeded)
+        const isCode6001 = errorStr.includes('6001') || errorStr.includes('custom: 6001');
+        
+        const isSlippageMessage = errorMessage.includes('slippage') ||
                errorMessage.includes('price moved') ||
                errorMessage.includes('insufficient output amount') ||
                errorMessage.includes('would result in a loss') ||
@@ -164,6 +177,8 @@ export class SwapService {
                errorMessage.includes('exceeds desired slippage') ||
                errorMessage.includes('minimum received') ||
                errorMessage.includes('slippage tolerance');
+               
+        return isCode6001 || isSlippageMessage;
     }
 
     private async executeSwapAttempt(request: SwapRequest): Promise<SwapResponse> {
