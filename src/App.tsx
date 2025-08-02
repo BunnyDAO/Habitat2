@@ -850,7 +850,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     const secretKey = getWalletSecretKey(tradingWalletPublicKey);
     
     if (!secretKey || secretKey.length !== 64) {
-      console.warn(`Warning: No valid secret key found for trading wallet ${tradingWalletPublicKey}. Strategy will be loaded but workers may fail.`);
+      console.warn(`Warning: No valid secret key found for trading wallet ${tradingWalletPublicKey}. This strategy will run on the backend only.`);
+      // For wallet monitoring strategies, don't run workers in frontend - they should run on backend daemon
+      if (strategy.strategy_type === JobType.WALLET_MONITOR) {
+        console.log(`WalletMonitor strategy ${strategy.id} will be handled by backend daemon only.`);
+      }
     }
 
     const baseJob = {
@@ -4487,18 +4491,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {tradingWallets.map((tw) => {
-                      console.log(`🔍 WALLET DEBUG: Checking wallet ${tw.publicKey}`);
-                      console.log(`🔍 WALLET DEBUG: Available jobs count: ${jobs.length}`);
+                      //console.log(`🔍 WALLET DEBUG: Checking wallet ${tw.publicKey}`);
+                      //console.log(`🔍 WALLET DEBUG: Available jobs count: ${jobs.length}`);
                       
                       const walletJobs = jobs.filter(job => {
-                        console.log(`🔍 JOB DEBUG: Job ${job.id} has tradingWalletPublicKey: ${job.tradingWalletPublicKey}`);
-                        console.log(`🔍 JOB DEBUG: Comparing '${job.tradingWalletPublicKey}' === '${tw.publicKey}': ${job.tradingWalletPublicKey === tw.publicKey}`);
+                        //console.log(`🔍 JOB DEBUG: Job ${job.id} has tradingWalletPublicKey: ${job.tradingWalletPublicKey}`);
+                        //console.log(`🔍 JOB DEBUG: Comparing '${job.tradingWalletPublicKey}' === '${tw.publicKey}': ${job.tradingWalletPublicKey === tw.publicKey}`);
                         return job.tradingWalletPublicKey === tw.publicKey;
                       });
                       
-                      console.log(`🔍 WALLET DEBUG: Found ${walletJobs.length} jobs for wallet ${tw.publicKey}`);
+                      //console.log(`🔍 WALLET DEBUG: Found ${walletJobs.length} jobs for wallet ${tw.publicKey}`);
                       if (walletJobs.length === 0) {
-                        console.log(`🔍 WALLET DEBUG: Hiding wallet ${tw.publicKey} - no matching jobs found`);
+                        //console.log(`🔍 WALLET DEBUG: Hiding wallet ${tw.publicKey} - no matching jobs found`);
                         return null;
                       }
 

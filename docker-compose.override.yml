@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      no_cache: true
+  daemon:
+    build:
+      context: ./backend
+      no_cache: true

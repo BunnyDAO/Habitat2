@@ -166,8 +166,9 @@ export class SwapService {
         const errorMessage = error.message.toLowerCase();
         const errorStr = error.toString().toLowerCase();
         
-        // Check for Jupiter error code 6001 (SlippageToleranceExceeded)
-        const isCode6001 = errorStr.includes('6001') || errorStr.includes('custom: 6001');
+        // Check for Jupiter error codes that are retryable
+        const isCode6001 = errorStr.includes('6001') || errorStr.includes('custom: 6001'); // SlippageToleranceExceeded
+        const isCode1789 = errorStr.includes('1789') || errorStr.includes('0x1789'); // Jupiter routing error - retryable
         
         const isSlippageMessage = errorMessage.includes('slippage') ||
                errorMessage.includes('price moved') ||
@@ -178,7 +179,7 @@ export class SwapService {
                errorMessage.includes('minimum received') ||
                errorMessage.includes('slippage tolerance');
                
-        return isCode6001 || isSlippageMessage;
+        return isCode6001 || isCode1789 || isSlippageMessage;
     }
 
     private async executeSwapAttempt(request: SwapRequest): Promise<SwapResponse> {
@@ -204,6 +205,15 @@ export class SwapService {
             const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
             console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
         
+            // Get token decimals
+            const inputDecimals = await this.getTokenDecimals(inputMint);
+            const outputDecimals = await this.getTokenDecimals(outputMint);
+
+            // Convert amount to base units using correct decimals
+            const baseAmount = Number.isInteger(amount) ? 
+                amount : // If it's already in base units
+                Math.floor(amount * Math.pow(10, inputDecimals)); // If it's in token units
+
             // Check SOL balance for fees and rent
             const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
             console.log('Current SOL balance:', solBalance / 1e9, 'SOL');
@@ -211,7 +221,7 @@ export class SwapService {
             // Calculate required SOL for the transaction
             const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
             const REQUIRED_SOL = inputMint === WSOL_MINT ? 
-                Math.max(MIN_SOL_BALANCE, Math.ceil(amount * 1e9)) : // If swapping SOL, need amount + fees
+                Math.max(MIN_SOL_BALANCE, baseAmount) : // If swapping SOL, use base amount (already in lamports)
                 MIN_SOL_BALANCE; // If swapping tokens, just need fees
             
             if (solBalance < REQUIRED_SOL) {
@@ -224,23 +234,23 @@ export class SwapService {
                 );
             }
 
-            // Get token decimals
-            const inputDecimals = await this.getTokenDecimals(inputMint);
-            const outputDecimals = await this.getTokenDecimals(outputMint);
-
-            // Convert amount to base units using correct decimals
-            const baseAmount = Number.isInteger(amount) ? 
-                amount : // If it's already in base units
-                Math.floor(amount * Math.pow(10, inputDecimals)); // If it's in token units
-
             console.log('Converting amount:', {
                 originalAmount: amount,
                 inputDecimals,
                 baseAmount,
-                isInteger: Number.isInteger(amount)
+                isInteger: Number.isInteger(amount),
+                baseAmountFormatted: `${baseAmount} (${baseAmount / Math.pow(10, inputDecimals)} ${inputMint === WSOL_MINT ? 'SOL' : 'tokens'})`
             });
 
             // Get quote from Jupiter Lite API
+            console.log('Requesting Jupiter quote with:', {
+                inputMint,
+                outputMint,
+                baseAmount,
+                slippageBps,
+                platformFeeBps: feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
+            });
+            
             const jupiterQuote = await this.getJupiterLiteQuote(
                 inputMint,
                 outputMint,

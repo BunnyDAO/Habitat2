@@ -26,12 +26,18 @@ export class JobManager {
       return;
     }
 
-    let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker;
+    let worker: WalletMonitorWorker | PriceMonitorWorker | VaultWorker | LevelsWorker | PairTradeWorker;
 
     switch (job.type) {
       case JobType.WALLET_MONITOR:
+        // Check if we have a valid secret key for WalletMonitor
+        const walletMonitorJob = job as WalletMonitoringJob;
+        if (!walletMonitorJob.tradingWalletSecretKey || walletMonitorJob.tradingWalletSecretKey.length === 0) {
+          console.log(`Skipping frontend WalletMonitor worker for job ${job.id} - no secret key available. This strategy runs on backend only.`);
+          return; // Skip creating worker - backend daemon will handle this
+        }
         worker = new WalletMonitorWorker(
-          job as WalletMonitoringJob,
+          walletMonitorJob,
           this.endpoint,
           new PublicKey(job.tradingWalletPublicKey)
         );
