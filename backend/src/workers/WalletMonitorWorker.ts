@@ -10,7 +10,7 @@ const MAX_RECENT_TRANSACTIONS = 50;
 
 // Jupiter Lite API Configuration
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
-const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
+const JUPITER_FEE_ACCOUNT = '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV';
 
 export class WalletMonitorWorker extends BaseWorker {
   private subscription: number | undefined;

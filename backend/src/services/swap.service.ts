@@ -15,7 +15,7 @@ const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
 const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
-const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
+const JUPITER_FEE_ACCOUNT = '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV';
 
 interface SwapRequest {
     inputMint: string;
@@ -391,11 +391,29 @@ export class SwapService {
             priceImpactPct: jupiterQuote.priceImpactPct
         });
 
+        // Get the appropriate fee account for the input mint (if fee collection is enabled)
+        let feeAccount: string | undefined;
+        if (feeWalletPubkey) {
+            try {
+                feeAccount = await this.getFeeAccountForMint(inputMint, feeWalletPubkey, tradingKeypair);
+                console.log('✅ Fee account prepared:', {
+                    inputMint: inputMint === WSOL_MINT ? 'SOL (native)' : 'SPL Token',
+                    feeWalletPubkey,
+                    feeAccount
+                });
+            } catch (feeError) {
+                console.error('❌ Failed to prepare fee account:', feeError);
+                // Continue without fees rather than failing the entire swap
+                console.log('🔄 Continuing swap without platform fees due to fee account error');
+                feeAccount = undefined;
+            }
+        }
+
         // Get swap transaction from Jupiter Lite API
         const swapTransaction = await this.executeJupiterLiteSwap(
             jupiterQuote,
             tradingKeypair.publicKey.toString(),
-            feeWalletPubkey
+            feeAccount
         );
 
         console.log('Got swap transaction from Jupiter Lite API');
@@ -532,6 +550,59 @@ export class SwapService {
         } catch (error) {
             console.warn(`Failed to get decimals for token ${mint}, using default 6:`, error);
             return 6;
+        }
+    }
+
+    /**
+     * Gets or creates the appropriate fee account for the given input mint.
+     * For SOL (native): Returns the fee wallet directly
+     * For SPL tokens: Creates/gets the Associated Token Account for that mint
+     */
+    private async getFeeAccountForMint(
+        inputMint: string,
+        feeWalletPubkey: string,
+        payerKeypair: Keypair
+    ): Promise<string> {
+        console.log('🎯 Getting fee account for mint:', {
+            inputMint,
+            mintType: inputMint === WSOL_MINT ? 'SOL (native)' : 'SPL Token',
+            feeWalletPubkey
+        });
+
+        // For SOL (native token), use the fee wallet directly
+        if (inputMint === WSOL_MINT) {
+            console.log('✅ Using fee wallet directly for SOL fees');
+            return feeWalletPubkey;
+        }
+
+        // For SPL tokens, create/get the Associated Token Account
+        try {
+            console.log(`🔨 Creating/getting ATA for fee collection: ${inputMint} -> ${feeWalletPubkey}`);
+            
+            const feeTokenAccount = await getOrCreateAssociatedTokenAccount(
+                this.connection,
+                payerKeypair, // Trading wallet pays for account creation
+                new PublicKey(inputMint), // Token mint
+                new PublicKey(feeWalletPubkey), // Fee wallet owner
+                false // allowOwnerOffCurve
+            );
+
+            const feeAccountAddress = feeTokenAccount.address.toBase58();
+            console.log('✅ Fee token account ready:', {
+                mint: inputMint,
+                owner: feeWalletPubkey,
+                tokenAccount: feeAccountAddress,
+                existed: feeTokenAccount.address.equals(await getAssociatedTokenAddress(
+                    new PublicKey(inputMint),
+                    new PublicKey(feeWalletPubkey)
+                ))
+            });
+
+            return feeAccountAddress;
+        } catch (error) {
+            console.error('❌ Error creating fee token account:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            throw new Error(`Failed to create fee token account for ${inputMint}: ${errorMessage}`);
         }
     }
 } 
