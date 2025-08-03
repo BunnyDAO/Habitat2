@@ -170,7 +170,7 @@ export class LevelsWorker extends BaseWorker {
           publicKey: this.tradingWalletKeypair.publicKey.toString(),
           secretKey: Array.from(this.tradingWalletKeypair.secretKey)
         },
-        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+        feeWalletPubkey: '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV' // Jupiter fee account
       });
 
       console.log(`[Levels] ✅ Level trade completed successfully: ${swapResult.signature}`);

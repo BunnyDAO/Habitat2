@@ -4398,8 +4398,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     };
 
     fetchAllBackendBalances();
-    // Keep at 10 seconds for responsiveness to token changes, but smart filtering prevents unnecessary updates
-    const interval = setInterval(fetchAllBackendBalances, 10000);
+    // Keep at 3 seconds for faster responsiveness to token changes, smart filtering prevents unnecessary updates
+    const interval = setInterval(fetchAllBackendBalances, 3000);
 
     return () => {
       isCancelled = true;
@@ -7719,7 +7719,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       const swapParams = {
           inputMint: tokenBalance.mint,
           outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
-          amount: tokenBalance.balance,
+          amount: tokenBalance.uiBalance, // Use UI amount, not raw amount
           slippageBps: 50, // 0.5% slippage
           tradingWalletPublicKey: tradingWallet.publicKey,
           feeWalletPubkey: wallet.publicKey?.toString(),
@@ -7732,6 +7732,17 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       const result = await executeSecureSwap(swapParams);
 
       console.log('Secure swap executed successfully:', result);
+      
+      // Force backend database refresh from blockchain
+      try {
+        await fetch(`${API_CONFIG.WALLET.BALANCES}/${tradingWallet.publicKey}/populate`, {
+          method: 'POST'
+        });
+        console.log('Triggered backend balance refresh');
+      } catch (error) {
+        console.error('Error triggering backend balance refresh:', error);
+      }
+      
       // Update balances after successful swap
       window.dispatchEvent(new Event('update-balances'));
     } catch (error) {

@@ -97,11 +97,16 @@ export class SwapController {
 
             // Get encrypted private key securely
             const encryptionService = EncryptionService.getInstance();
-            const privateKeyHex = await encryptionService.getWalletPrivateKey(tradingWallet.id);
+            const privateKeyString = await encryptionService.getWalletPrivateKey(tradingWallet.id);
             
-            // Convert hex to Uint8Array and create Keypair
-            const privateKeyBuffer = Buffer.from(privateKeyHex, 'hex');
-            const keypair = Keypair.fromSecretKey(privateKeyBuffer);
+            // Convert base64 to Uint8Array and create Keypair (same as strategy daemon)
+            const secretKey = Uint8Array.from(Buffer.from(privateKeyString, 'base64'));
+            
+            if (!secretKey || secretKey.length !== 64) {
+                throw new Error(`Invalid secret key size: expected 64 bytes, got ${secretKey ? secretKey.length : 0}`);
+            }
+            
+            const keypair = Keypair.fromSecretKey(secretKey);
 
             // Verify the public key matches
             if (keypair.publicKey.toString() !== tradingWalletPublicKey) {
