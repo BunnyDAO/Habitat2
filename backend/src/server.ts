@@ -95,6 +95,7 @@ export function createApp() {
   app.use('/api/v1/trading-wallets', createTradingWalletsRouter());
   app.use('/api/v1/wallet-balances', createWalletBalancesRouter(pool));
   app.use('/api/v1/tokens', createTokenRouter(tokenService));
+  app.use('/api/v1/swap', createSwapRouter(pool, connection));
   app.use('/api/v1/jupiter', createJupiterRouter(pool, redisClient));
   app.use('/api/v1', healthRoutes);
   app.use('/api/v1', createPriceFeedRouter(redisClient, heliusService));
