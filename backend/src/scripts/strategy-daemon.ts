@@ -172,16 +172,36 @@ class StrategyDaemon {
 
       for (const strategy of strategies) {
         const existingWorker = this.workers.get(strategy.id);
+        console.log(`Checking strategy ${strategy.id} (${strategy.strategy_type}): is_active=${strategy.is_active}, hasWorker=${!!existingWorker}`);
 
         if (strategy.is_active) {
           if (!existingWorker) {
             // New active strategy, start worker
-            console.log(`Found new active strategy ${strategy.id}, starting worker...`);
+            console.log(`Found new active strategy ${strategy.id} (${strategy.strategy_type}), starting worker...`);
             try {
               await this.startWorkerForStrategy(strategy as Record<string, any>);
+              console.log(`✅ Successfully started worker for strategy ${strategy.id}`);
             } catch (error) {
-              console.error(`Failed to start worker for new strategy ${strategy.id}:`, error);
+              console.error(`❌ Failed to start worker for new strategy ${strategy.id}:`, error);
               // Continue with other strategies
+            }
+          } else {
+            // For Price Monitor strategies, restart the worker if it exists
+            // This handles cases where the strategy auto-paused but worker is still in memory
+            if (strategy.strategy_type === 'price-monitor') {
+              console.log(`Price Monitor strategy ${strategy.id} already has a worker - restarting for fresh state...`);
+              try {
+                await existingWorker.stop();
+                this.workers.delete(strategy.id);
+                console.log(`Stopped existing worker for Price Monitor ${strategy.id}`);
+                
+                await this.startWorkerForStrategy(strategy as Record<string, any>);
+                console.log(`✅ Successfully restarted Price Monitor worker for strategy ${strategy.id}`);
+              } catch (error) {
+                console.error(`❌ Failed to restart Price Monitor worker for strategy ${strategy.id}:`, error);
+              }
+            } else {
+              console.log(`Strategy ${strategy.id} already has a worker running`);
             }
           }
           // Note: We don't update existing workers as they should be stateless
@@ -192,6 +212,8 @@ class StrategyDaemon {
           await existingWorker.stop();
           this.workers.delete(strategy.id);
           console.log(`Stopped worker for strategy ${strategy.id}`);
+        } else {
+          console.log(`Strategy ${strategy.id} is inactive and has no worker (correct state)`);
         }
       }
 
@@ -265,6 +287,12 @@ class StrategyDaemon {
         }
         case 'price-monitor': {
           console.log(`Creating PriceMonitorWorker for strategy ${strategy.id}`);
+          console.log(`Price Monitor config:`, {
+            targetPrice: strategy.config?.targetPrice,
+            direction: strategy.config?.direction,
+            percentageToSell: strategy.config?.percentageToSell,
+            tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey
+          });
           const job = {
             id: strategy.id,
             type: 'price-monitor',
@@ -285,6 +313,7 @@ class StrategyDaemon {
             percentageToSell: strategy.config?.percentageToSell
           } as import('../types/jobs').PriceMonitoringJob;
           worker = new PriceMonitorWorker(job, HELIUS_ENDPOINT, this.swapService);
+          console.log(`PriceMonitorWorker created for strategy ${strategy.id}, starting...`);
           break;
         }
         case 'vault': {
@@ -407,12 +436,14 @@ class StrategyDaemon {
       }
 
       // Start the worker
+      console.log(`Attempting to start worker for strategy ${strategy.id}...`);
       await worker.start();
       this.workers.set(strategy.id, worker);
       console.log(`✅ Successfully started ${strategy.strategy_type} worker for strategy ${strategy.id}`);
 
     } catch (error) {
       console.error(`❌ Failed to start worker for strategy ${strategy.id}:`, error);
+      console.error(`Error details:`, error instanceof Error ? (error.stack || error.message) : String(error));
     }
   }
 }
