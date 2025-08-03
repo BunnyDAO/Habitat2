@@ -10,10 +10,11 @@ const TOKEN_DECIMALS: { [key: string]: number } = {
     'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6,  // USDT
 };
 
+// Constants
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
-
-// Jupiter Lite API Configuration
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
+const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
 const JUPITER_FEE_ACCOUNT = '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6';
 
 interface SwapRequest {
@@ -164,77 +165,43 @@ export class SwapService {
     }
 
     private isSlippageError(error: Error): boolean {
-        const errorMessage = error.message.toLowerCase();
-        const errorStr = error.toString().toLowerCase();
+        const errorStr = error.message.toLowerCase();
         
-        // Check for Jupiter error codes that are retryable
+        // Check for Jupiter error codes that should trigger retry
         const isCode6001 = errorStr.includes('6001') || errorStr.includes('custom: 6001'); // SlippageToleranceExceeded
         const isCode1789 = errorStr.includes('1789') || errorStr.includes('0x1789'); // Jupiter routing error - retryable
         
-        const isSlippageMessage = errorMessage.includes('slippage') ||
-               errorMessage.includes('price moved') ||
-               errorMessage.includes('insufficient output amount') ||
-               errorMessage.includes('would result in a loss') ||
-               errorMessage.includes('price impact too high') ||
-               errorMessage.includes('exceeds desired slippage') ||
-               errorMessage.includes('minimum received') ||
-               errorMessage.includes('slippage tolerance');
-               
-        return isCode6001 || isCode1789 || isSlippageMessage;
+        // Check for slippage-related message patterns
+        const isSlippageMessage = errorStr.includes('slippage') || 
+                                 errorStr.includes('price impact') || 
+                                 errorStr.includes('tolerance exceeded');
+
+        const shouldRetry = isCode6001 || isCode1789 || isSlippageMessage;
+        
+        console.log('🔍 Error analysis:', {
+            errorMessage: error.message,
+            isCode6001,
+            isCode1789,
+            isSlippageMessage,
+            shouldRetry
+        });
+
+        return shouldRetry;
     }
 
     private async executeSwapAttempt(request: SwapRequest): Promise<SwapResponse> {
-        try {
-            const {
-                inputMint,
-                outputMint,
-                amount,
-                slippageBps = 50,
-                walletKeypair,
-                feeWalletPubkey,
-                feeBps = 100
-            } = request;
-
-            console.log('Starting swap execution with request:', {
-                inputMint,
-                outputMint,
-                amount,
-                slippageBps
-            });
-
-            // Create keypair from provided secret key
-            const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
-            console.log('Trading wallet public key:', tradingKeypair.publicKey.toBase58());
+        const { inputMint, outputMint, amount, slippageBps = 50, walletKeypair, feeWalletPubkey } = request;
         
-            // Get token decimals
+        try {
+            // Get trading wallet keypair
+            const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
+            
+            // Get token decimals for amount conversion
             const inputDecimals = await this.getTokenDecimals(inputMint);
-            const outputDecimals = await this.getTokenDecimals(outputMint);
-
-            // Convert amount to base units using correct decimals
-            const baseAmount = Number.isInteger(amount) ? 
-                amount : // If it's already in base units
-                Math.floor(amount * Math.pow(10, inputDecimals)); // If it's in token units
-
-            // Check SOL balance for fees and rent
-            const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
-            console.log('Current SOL balance:', solBalance / 1e9, 'SOL');
             
-            // Calculate required SOL for the transaction
-            const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
-            const REQUIRED_SOL = inputMint === WSOL_MINT ? 
-                Math.max(MIN_SOL_BALANCE, baseAmount) : // If swapping SOL, use base amount (already in lamports)
-                MIN_SOL_BALANCE; // If swapping tokens, just need fees
+            // Convert amount to base units (with decimals) for Jupiter API
+            const baseAmount = Math.floor(amount * Math.pow(10, inputDecimals));
             
-            if (solBalance < REQUIRED_SOL) {
-                const requiredSol = REQUIRED_SOL / 1e9;
-                const currentSol = solBalance / 1e9;
-                throw new Error(
-                    `Insufficient SOL balance for transaction. ` +
-                    `Need at least ${requiredSol} SOL (${inputMint === WSOL_MINT ? 'amount + fees' : 'fees'}), ` +
-                    `have ${currentSol} SOL`
-                );
-            }
-
             console.log('Converting amount:', {
                 originalAmount: amount,
                 inputDecimals,
@@ -242,6 +209,20 @@ export class SwapService {
                 isInteger: Number.isInteger(amount),
                 baseAmountFormatted: `${baseAmount} (${baseAmount / Math.pow(10, inputDecimals)} ${inputMint === WSOL_MINT ? 'SOL' : 'tokens'})`
             });
+
+            // Check SOL balance requirements
+            const solBalance = await this.connection.getBalance(tradingKeypair.publicKey);
+            const solBalanceFormatted = solBalance / 1e9;
+            
+            console.log(`Current SOL balance: ${solBalanceFormatted} SOL`);
+            
+            const REQUIRED_SOL = inputMint === WSOL_MINT ?
+                Math.max(MIN_SOL_BALANCE, baseAmount) : // If swapping SOL, need baseAmount + fees
+                MIN_SOL_BALANCE; // If swapping tokens, just need fees
+            
+            if (solBalance < REQUIRED_SOL) {
+                throw new Error(`Insufficient SOL balance for transaction. Need at least ${REQUIRED_SOL / 1e9} SOL (amount + fees), have ${solBalanceFormatted} SOL`);
+            }
 
             // Ensure Associated Token Accounts exist for both input and output tokens
             try {
@@ -256,7 +237,7 @@ export class SwapService {
                         false // allowOwnerOffCurve
                     );
                 }
-                
+
                 // For output token (if not SOL)
                 if (outputMint !== WSOL_MINT) {
                     console.log(`Creating/getting ATA for output token ${outputMint}`);
@@ -268,7 +249,7 @@ export class SwapService {
                         false // allowOwnerOffCurve
                     );
                 }
-                
+
                 // For wrapped SOL (always needed when dealing with SOL)
                 if (inputMint === WSOL_MINT || outputMint === WSOL_MINT) {
                     console.log('Creating/getting ATA for wrapped SOL');
@@ -280,7 +261,7 @@ export class SwapService {
                         false // allowOwnerOffCurve
                     );
                 }
-                
+
                 console.log('All required token accounts are ready');
             } catch (ataError) {
                 console.error('Error creating/getting token accounts:', ataError);
@@ -288,77 +269,167 @@ export class SwapService {
                 throw new Error(`Failed to prepare token accounts: ${errorMessage}`);
             }
 
-            // Get quote from Jupiter Lite API
-            console.log('Requesting Jupiter quote with:', {
+            // Try swap with fallback approaches for 0x1789 errors
+            return await this.trySwapWithFallbacks(
                 inputMint,
                 outputMint,
                 baseAmount,
                 slippageBps,
-                platformFeeBps: feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
-            });
-            
-            const jupiterQuote = await this.getJupiterLiteQuote(
-                inputMint,
-                outputMint,
-                baseAmount,
-                slippageBps,
-                feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
-            );
-
-            console.log('Got quote from Jupiter Lite API:', {
-                inAmount: jupiterQuote.inAmount,
-                outAmount: jupiterQuote.outAmount,
-                priceImpactPct: jupiterQuote.priceImpactPct
-            });
-
-            // Get swap transaction from Jupiter Lite API
-            const swapTransaction = await this.executeJupiterLiteSwap(
-                jupiterQuote,
-                tradingKeypair.publicKey.toString(),
+                tradingKeypair,
                 feeWalletPubkey
             );
 
-            console.log('Got swap transaction from Jupiter Lite API');
-
-            // Deserialize and sign the transaction
-            const transactionBuf = Buffer.from(swapTransaction.swapTransaction, 'base64');
-            const transaction = VersionedTransaction.deserialize(transactionBuf);
-            
-            // Sign the transaction
-            transaction.sign([tradingKeypair]);
-
-            // Send and confirm the transaction
-            const signature = await this.connection.sendTransaction(transaction, {
-                maxRetries: 3,
-                skipPreflight: false,
-            });
-
-            console.log('Transaction sent:', signature);
-
-            // Wait for confirmation
-            const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-            
-            if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-            }
-
-            console.log('Transaction confirmed:', signature);
-
-            // TODO: Log the swap to database (requires swaps table)
-
-            // Return formatted response
-            return {
-                signature,
-                inputAmount: jupiterQuote.inAmount,
-                outputAmount: jupiterQuote.outAmount,
-                routePlan: jupiterQuote.routePlan,
-                message: 'Swap completed successfully'
-            };
-
         } catch (error) {
             console.error('Error in executeSwapAttempt:', error);
+            
+            // Check if this is a serialization error and retry
+            if (error instanceof Error && error.message.includes('Compilation failed')) {
+                console.log('🔄 Detected compilation error, retrying...');
+                // Add a small delay and retry
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                throw error; // Let the retry mechanism handle this
+            }
+            
             throw error;
         }
+    }
+
+    private async trySwapWithFallbacks(
+        inputMint: string,
+        outputMint: string,
+        baseAmount: number,
+        slippageBps: number,
+        tradingKeypair: Keypair,
+        feeWalletPubkey?: string
+    ): Promise<SwapResponse> {
+        
+        // Approach 1: Try with platform fees (original approach)
+        try {
+            console.log('🎯 Attempting swap with platform fees...');
+            return await this.executeSwapWithJupiter(
+                inputMint,
+                outputMint,
+                baseAmount,
+                slippageBps,
+                tradingKeypair,
+                feeWalletPubkey
+            );
+        } catch (error1) {
+            console.log('❌ Swap with platform fees failed:', error1 instanceof Error ? error1.message : String(error1));
+            
+            if (error1 instanceof Error && error1.message.includes('0x1789')) {
+                // Approach 2: Try without platform fees
+                try {
+                    console.log('🎯 Attempting swap without platform fees...');
+                    return await this.executeSwapWithJupiter(
+                        inputMint,
+                        outputMint,
+                        baseAmount,
+                        slippageBps,
+                        tradingKeypair,
+                        undefined // No fee wallet
+                    );
+                } catch (error2) {
+                    console.log('❌ Swap without platform fees failed:', error2 instanceof Error ? error2.message : String(error2));
+                    
+                    if (error2 instanceof Error && error2.message.includes('0x1789')) {
+                        // Approach 3: Try with slightly adjusted amount (sometimes fixes routing issues)
+                        try {
+                            console.log('🎯 Attempting swap with adjusted amount...');
+                            const adjustedAmount = Math.floor(baseAmount * 0.999); // Reduce by 0.1%
+                            console.log(`Adjusted amount: ${baseAmount} -> ${adjustedAmount}`);
+                            return await this.executeSwapWithJupiter(
+                                inputMint,
+                                outputMint,
+                                adjustedAmount,
+                                slippageBps,
+                                tradingKeypair,
+                                undefined // No fee wallet for this fallback
+                            );
+                        } catch (error3) {
+                            console.log('❌ Swap with adjusted amount failed:', error3 instanceof Error ? error3.message : String(error3));
+                            throw error1; // Throw the original error
+                        }
+                    } else {
+                        throw error2;
+                    }
+                }
+            } else {
+                throw error1;
+            }
+        }
+    }
+
+    private async executeSwapWithJupiter(
+        inputMint: string,
+        outputMint: string,
+        baseAmount: number,
+        slippageBps: number,
+        tradingKeypair: Keypair,
+        feeWalletPubkey?: string
+    ): Promise<SwapResponse> {
+        // Get quote from Jupiter Lite API
+        console.log('Requesting Jupiter quote with:', {
+            inputMint,
+            outputMint,
+            baseAmount,
+            slippageBps,
+            platformFeeBps: feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
+        });
+        
+        const jupiterQuote = await this.getJupiterLiteQuote(
+            inputMint,
+            outputMint,
+            baseAmount,
+            slippageBps,
+            feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
+        );
+
+        console.log('Got quote from Jupiter Lite API:', {
+            inAmount: jupiterQuote.inAmount,
+            outAmount: jupiterQuote.outAmount,
+            priceImpactPct: jupiterQuote.priceImpactPct
+        });
+
+        // Get swap transaction from Jupiter Lite API
+        const swapTransaction = await this.executeJupiterLiteSwap(
+            jupiterQuote,
+            tradingKeypair.publicKey.toString(),
+            feeWalletPubkey
+        );
+
+        console.log('Got swap transaction from Jupiter Lite API');
+
+        // Deserialize and sign the transaction
+        const transactionBuf = Buffer.from(swapTransaction.swapTransaction, 'base64');
+        const transaction = VersionedTransaction.deserialize(transactionBuf);
+        
+        // Sign the transaction
+        transaction.sign([tradingKeypair]);
+
+        // Send and confirm the transaction
+        const signature = await this.connection.sendTransaction(transaction, {
+            maxRetries: 3,
+            skipPreflight: false,
+        });
+
+        console.log('Transaction sent:', signature);
+
+        // Wait for confirmation
+        const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+        
+        if (confirmation.value.err) {
+            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+        }
+
+        console.log('✅ Swap transaction confirmed:', signature);
+
+        return {
+            signature,
+            inputAmount: baseAmount.toString(),
+            outputAmount: jupiterQuote.outAmount,
+            message: 'Swap completed successfully'
+        };
     }
 
     private async getJupiterLiteQuote(
@@ -375,16 +446,25 @@ export class SwapService {
                 url += `&platformFeeBps=${platformFeeBps}`;
             }
 
+            console.log('🔍 Jupiter Lite API quote URL:', url);
+
             const response = await fetch(url);
 
             if (!response.ok) {
                 const errorText = await response.text();
+                console.error('❌ Jupiter Lite quote API error:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    errorText
+                });
                 throw new Error(`Failed to get Jupiter Lite quote: ${response.statusText} - ${errorText}`);
             }
 
-            return await response.json();
+            const quote = await response.json();
+            console.log('✅ Jupiter Lite quote response:', JSON.stringify(quote, null, 2));
+            return quote;
         } catch (error) {
-            console.error('Error getting Jupiter Lite quote:', error);
+            console.error('❌ Error in getJupiterLiteQuote:', error);
             throw error;
         }
     }
@@ -405,6 +485,8 @@ export class SwapService {
                 body.feeAccount = feeAccount;
             }
 
+            console.log('🔍 Jupiter Lite swap request body:', JSON.stringify(body, null, 2));
+
             const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
                 method: 'POST',
                 headers: {
@@ -415,12 +497,19 @@ export class SwapService {
 
             if (!response.ok) {
                 const errorData = await response.json();
+                console.error('❌ Jupiter Lite swap API error:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    errorData
+                });
                 throw new Error(`Jupiter Lite swap failed: ${JSON.stringify(errorData)}`);
             }
 
-            return await response.json();
+            const swapResponse = await response.json();
+            console.log('✅ Jupiter Lite swap response received (transaction length:', swapResponse.swapTransaction?.length || 'unknown', 'bytes)');
+            return swapResponse;
         } catch (error) {
-            console.error('Error executing Jupiter Lite swap:', error);
+            console.error('❌ Error executing Jupiter Lite swap:', error);
             throw error;
         }
     }
