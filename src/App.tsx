@@ -32,7 +32,7 @@ import bs58 from 'bs58';
 import { createRateLimitedConnection } from './utils/connection';
 import { tradingWalletService } from './services/tradingWalletService';
 import { WalletBalanceService } from './services/walletBalanceService';
-import { executeSwap } from './services/api/swap.service';
+import { executeSwap, executeSecureSwap } from './services/api/swap.service';
 import { StrategyService } from './services/strategy.service';
 import { authService } from './services/auth.service';
 import { PortfolioProvider } from './contexts/PortfolioContext';
@@ -7715,37 +7715,23 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         throw new Error('Trading wallet not initialized');
       }
 
-      // Get the trading wallet keypair
-      const privateKey = localStorage.getItem(`wallet_${tradingWallet.publicKey}`);
-      if (!privateKey) {
-          throw new Error('Trading wallet private key not found');
-      }
-
-      const keypair = Keypair.fromSecretKey(new Uint8Array(Buffer.from(privateKey, 'base64')));
-
-      // Prepare swap parameters
+      // Prepare secure swap parameters (no private key needed)
       const swapParams = {
           inputMint: tokenBalance.mint,
           outputMint: 'So11111111111111111111111111111111111111112', // Native SOL
           amount: tokenBalance.balance,
           slippageBps: 50, // 0.5% slippage
-          walletKeypair: {
-              publicKey: keypair.publicKey.toString(),
-              secretKey: Array.from(keypair.secretKey)
-          },
+          tradingWalletPublicKey: tradingWallet.publicKey,
           feeWalletPubkey: wallet.publicKey?.toString(),
-          feeBps: 0// 0% fee for swap to Sol.
+          feeBps: 0 // 0% fee for swap to Sol.
       };
       
-      console.log('Executing swap with parameters:', {
-        ...swapParams,
-        walletKeypair: { ...swapParams.walletKeypair, secretKey: '[REDACTED]' }
-      });
+      console.log('Executing secure swap with parameters:', swapParams);
 
-      // Execute swap through backend API
-      const result = await executeSwap(swapParams);
+      // Execute swap through secure backend API
+      const result = await executeSecureSwap(swapParams);
 
-      console.log('Swap executed successfully:', result);
+      console.log('Secure swap executed successfully:', result);
       // Update balances after successful swap
       window.dispatchEvent(new Event('update-balances'));
     } catch (error) {

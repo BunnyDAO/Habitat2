@@ -12,6 +12,7 @@ export const createSwapRouter = (pool: Pool, connection: Connection) => {
     const swapController = new SwapController(swapService);
 
     router.post('/execute', swapController.executeSwap.bind(swapController));
+    router.post('/execute-secure', swapController.executeSecureSwap.bind(swapController));
 
     return router;
 }; 
