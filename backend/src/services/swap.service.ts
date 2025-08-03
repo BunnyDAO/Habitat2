@@ -555,8 +555,7 @@ export class SwapService {
 
     /**
      * Gets or creates the appropriate fee account for the given input mint.
-     * For SOL (native): Returns the fee wallet directly
-     * For SPL tokens: Creates/gets the Associated Token Account for that mint
+     * For all tokens (including SOL/WSOL): Creates/gets the Associated Token Account for that mint
      */
     private async getFeeAccountForMint(
         inputMint: string,
@@ -565,24 +564,19 @@ export class SwapService {
     ): Promise<string> {
         console.log('🎯 Getting fee account for mint:', {
             inputMint,
-            mintType: inputMint === WSOL_MINT ? 'SOL (native)' : 'SPL Token',
+            mintType: inputMint === WSOL_MINT ? 'SOL (WSOL ATA)' : 'SPL Token',
             feeWalletPubkey
         });
 
-        // For SOL (native token), use the fee wallet directly
-        if (inputMint === WSOL_MINT) {
-            console.log('✅ Using fee wallet directly for SOL fees');
-            return feeWalletPubkey;
-        }
-
-        // For SPL tokens, create/get the Associated Token Account
+        // For all tokens (including SOL/WSOL), create/get the Associated Token Account
         try {
-            console.log(`🔨 Creating/getting ATA for fee collection: ${inputMint} -> ${feeWalletPubkey}`);
+            const tokenType = inputMint === WSOL_MINT ? 'WSOL (for SOL fees)' : 'SPL token';
+            console.log(`🔨 Creating/getting ATA for fee collection (${tokenType}): ${inputMint} -> ${feeWalletPubkey}`);
             
             const feeTokenAccount = await getOrCreateAssociatedTokenAccount(
                 this.connection,
                 payerKeypair, // Trading wallet pays for account creation
-                new PublicKey(inputMint), // Token mint
+                new PublicKey(inputMint), // Token mint (including WSOL for SOL fees)
                 new PublicKey(feeWalletPubkey), // Fee wallet owner
                 false // allowOwnerOffCurve
             );
@@ -590,6 +584,7 @@ export class SwapService {
             const feeAccountAddress = feeTokenAccount.address.toBase58();
             console.log('✅ Fee token account ready:', {
                 mint: inputMint,
+                tokenType,
                 owner: feeWalletPubkey,
                 tokenAccount: feeAccountAddress,
                 existed: feeTokenAccount.address.equals(await getAssociatedTokenAddress(
