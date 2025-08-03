@@ -193,6 +193,38 @@ class StrategyApiService {
       throw error;
     }
   }
+
+  async pauseStrategy(id: string): Promise<{ success: boolean; message: string; strategy: any }> {
+    try {
+      // Ensure we have a valid auth token
+      const token = await authService.getSession();
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await apiClient.post(`/strategies/${id}/pause`);
+      return response.data;
+    } catch (error) {
+      console.error('Error pausing strategy:', error);
+      throw error;
+    }
+  }
+
+  async resumeStrategy(id: string): Promise<{ success: boolean; message: string; strategy: any }> {
+    try {
+      // Ensure we have a valid auth token
+      const token = await authService.getSession();
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await apiClient.post(`/strategies/${id}/resume`);
+      return response.data;
+    } catch (error) {
+      console.error('Error resuming strategy:', error);
+      throw error;
+    }
+  }
 }
 
 export const strategyApiService = StrategyApiService.getInstance(); 

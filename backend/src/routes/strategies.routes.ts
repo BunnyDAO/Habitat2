@@ -444,6 +444,114 @@ router.put('/:id',
   }
 );
 
+// Pause strategy
+router.post('/:id/pause',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('id, is_active, strategy_type')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Strategy not found or access denied' });
+      }
+
+      if (!strategy.is_active) {
+        return res.status(400).json({ error: 'Strategy is already paused or inactive' });
+      }
+
+      // Update strategy to paused state
+      const { data, error } = await supabase
+        .from('strategies')
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select('id, is_active, strategy_type, updated_at')
+        .single();
+
+      if (error) throw error;
+
+      console.log(`[Strategy] Strategy ${id} (${strategy.strategy_type}) paused by user`);
+      
+      res.json({
+        success: true,
+        message: 'Strategy paused successfully',
+        strategy: data
+      });
+    } catch (error) {
+      console.error('Error pausing strategy:', error);
+      res.status(500).json({ error: 'Failed to pause strategy' });
+    }
+  }
+);
+
+// Resume strategy
+router.post('/:id/resume',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+
+      // Verify strategy ownership
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('id, is_active, strategy_type')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Strategy not found or access denied' });
+      }
+
+      if (strategy.is_active) {
+        return res.status(400).json({ error: 'Strategy is already active' });
+      }
+
+      // Update strategy to active state
+      const { data, error } = await supabase
+        .from('strategies')
+        .update({ 
+          is_active: true,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select('id, is_active, strategy_type, updated_at')
+        .single();
+
+      if (error) throw error;
+
+      console.log(`[Strategy] Strategy ${id} (${strategy.strategy_type}) resumed by user`);
+      
+      res.json({
+        success: true,
+        message: 'Strategy resumed successfully',
+        strategy: data
+      });
+    } catch (error) {
+      console.error('Error resuming strategy:', error);
+      res.status(500).json({ error: 'Failed to resume strategy' });
+    }
+  }
+);
+
 // Get strategy versions
 router.get('/:id/versions',
   authMiddleware,

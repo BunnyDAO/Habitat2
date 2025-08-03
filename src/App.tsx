@@ -1049,6 +1049,15 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       setJobs(allJobs);
       
+      // Sync pausedJobs Set with is_active field from database
+      const inactiveJobIds = new Set(
+        allJobs
+          .filter(job => !job.isActive)  // Find jobs that are inactive in database
+          .map(job => job.id)
+      );
+      console.log('🔄 Syncing pause state with database. Inactive jobs:', inactiveJobIds.size);
+      setPausedJobs(inactiveJobIds);
+      
       // Fetch ALL trading wallets from backend database first (not just ones with strategies)
       console.log('🔍 IMPROVED: Fetching ALL trading wallets from backend database...');
       let allTradingWallets: any[] = [];
@@ -3259,7 +3268,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   }, [tradingWallets]);
 
   // Add job management functions
-  const toggleJobPause = (jobId: string) => {
+  const toggleJobPause = async (jobId: string) => {
+    const isPaused = pausedJobs.has(jobId);
+    
+    // Immediate UI feedback - update local state first
     setPausedJobs(prev => {
       const newPaused = new Set(prev);
       if (newPaused.has(jobId)) {
@@ -3269,6 +3281,61 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
       return newPaused;
     });
+
+    try {
+      // Call backend API to update database
+      if (isPaused) {
+        // Resume strategy
+        const result = await strategyApiService.resumeStrategy(jobId);
+        console.log(`Strategy ${jobId} resumed:`, result.message);
+        
+        // Update the job's isActive property in the jobs array
+        setJobs(prevJobs => 
+          prevJobs.map(job => 
+            job.id === jobId ? { ...job, isActive: true } : job
+          )
+        );
+        
+        setNotification({
+          message: `Strategy resumed successfully`,
+          type: 'success'
+        });
+      } else {
+        // Pause strategy
+        const result = await strategyApiService.pauseStrategy(jobId);
+        console.log(`Strategy ${jobId} paused:`, result.message);
+        
+        // Update the job's isActive property in the jobs array
+        setJobs(prevJobs => 
+          prevJobs.map(job => 
+            job.id === jobId ? { ...job, isActive: false } : job
+          )
+        );
+        
+        setNotification({
+          message: `Strategy paused successfully`,
+          type: 'success'
+        });
+      }
+    } catch (error) {
+      console.error('Error toggling strategy pause state:', error);
+      
+      // Revert UI state on error
+      setPausedJobs(prev => {
+        const newPaused = new Set(prev);
+        if (isPaused) {
+          newPaused.add(jobId); // Re-add if resume failed
+        } else {
+          newPaused.delete(jobId); // Remove if pause failed
+        }
+        return newPaused;
+      });
+      
+      setNotification({
+        message: `Failed to ${isPaused ? 'resume' : 'pause'} strategy. Please try again.`,
+        type: 'error'
+      });
+    }
   };
 
   // Update createLevelsStrategy to parse newLevelPercentage

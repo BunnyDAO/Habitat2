@@ -10,9 +10,17 @@ import {
 } from '@solana/web3.js';
 import { SwapService } from '../services/swap.service';
 import { tradeEventsService } from '../services/trade-events.service';
+import { createClient } from '@supabase/supabase-js';
 
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const JUPITER_FEE_ACCOUNT = '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV';
+
+// Initialize Supabase client for database updates
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+);
 
 export class PriceMonitorWorker extends BaseWorker {
   private lastTriggered: number = 0;
@@ -22,6 +30,7 @@ export class PriceMonitorWorker extends BaseWorker {
   private direction: 'above' | 'below';
   private percentageToSell: number;
   private swapService: SwapService;
+  private strategyCompleted: boolean = false;
   
   // Rate limiting
   private readonly MIN_TIME_BETWEEN_TRIGGERS = 300000; // 5 minutes
@@ -60,22 +69,20 @@ export class PriceMonitorWorker extends BaseWorker {
   }
 
   private async monitorPrice(): Promise<void> {
-    while (this.isRunning) {
+    while (this.isRunning && !this.strategyCompleted) {
       try {
-        // Get current SOL price from Jupiter API
-        const response = await fetch('https://price.jup.ag/v4/price?ids=So11111111111111111111111111111111111111112');
+        // Get current SOL price using the backend price service endpoint
+        const response = await fetch('http://habitat2-backend-1:3001/api/v1/price/SOL');
         if (!response.ok) {
-          throw new Error(`Failed to fetch SOL price: ${response.statusText}`);
+          throw new Error(`Failed to fetch SOL price from backend: ${response.statusText}`);
         }
 
         const data = await response.json();
-        const priceData = data.data?.['So11111111111111111111111111111111111111112'];
+        const currentPrice = parseFloat(data.price);
         
-        if (!priceData || !priceData.price) {
-          throw new Error('Invalid price data received');
+        if (!currentPrice || isNaN(currentPrice)) {
+          throw new Error('Invalid price data received from backend');
         }
-
-        const currentPrice = parseFloat(priceData.price);
         console.log(`[PriceMonitor] Current SOL price: $${currentPrice} (Target: ${this.direction} $${this.targetPrice})`);
 
         // Check if price condition is met
@@ -93,6 +100,12 @@ export class PriceMonitorWorker extends BaseWorker {
             console.log(`[PriceMonitor] 🎯 Price condition triggered: $${currentPrice} is ${this.direction} $${this.targetPrice}`);
             await this.executeTrade(currentPrice);
             this.lastTriggered = now;
+            // Auto-pause strategy after successful trade
+            this.strategyCompleted = true;
+            console.log(`[PriceMonitor] ✅ Strategy completed successfully. Auto-pausing to prevent spam trades.`);
+            
+            // Update database to deactivate strategy
+            await this.deactivateStrategy();
           }
         }
 
@@ -102,6 +115,35 @@ export class PriceMonitorWorker extends BaseWorker {
         console.error('[PriceMonitor] Error in price monitoring loop:', error);
         await new Promise(resolve => setTimeout(resolve, this.CHECK_INTERVAL * 2)); // Wait longer on error
       }
+    }
+
+    if (this.strategyCompleted) {
+      console.log(`[PriceMonitor] Strategy completed. Stopping worker.`);
+      await this.stop();
+    }
+  }
+
+  private async deactivateStrategy(): Promise<void> {
+    try {
+      console.log(`[PriceMonitor] 🗃️ Deactivating strategy ${this.job.id} in database...`);
+      
+      const { error } = await supabase
+        .from('strategies')
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString() 
+        })
+        .eq('id', this.job.id);
+
+      if (error) {
+        console.error('[PriceMonitor] ❌ Failed to deactivate strategy in database:', error);
+        throw error;
+      }
+
+      console.log(`[PriceMonitor] ✅ Strategy ${this.job.id} successfully deactivated in database`);
+    } catch (error) {
+      console.error('[PriceMonitor] ❌ Error deactivating strategy:', error);
+      // Don't throw - we want the worker to stop even if DB update fails
     }
   }
 
@@ -117,27 +159,26 @@ export class PriceMonitorWorker extends BaseWorker {
         throw new Error('Insufficient SOL balance for transaction fees');
       }
 
-      // Calculate amount to swap
+      // Calculate amount to swap (in UI format for SwapService)
       const amountToSwap = (solBalance * this.percentageToSell) / 100;
-      const amountInLamports = Math.floor(amountToSwap * 1e9);
 
-      if (amountInLamports <= 0 || amountInLamports >= balance - 10000) {
+      if (amountToSwap <= 0 || amountToSwap >= solBalance - 0.00001) {
         throw new Error('Invalid swap amount or insufficient balance');
       }
 
       console.log(`[PriceMonitor] 💰 Executing trade: ${amountToSwap} SOL → USDC at $${currentPrice}`);
 
-      // Execute swap using SwapService
+      // Execute swap using SwapService (pass UI amount, not lamports)
       const swapResult = await this.swapService.executeSwap({
         inputMint: SOL_MINT,
         outputMint: USDC_MINT,
-        amount: amountInLamports,
+        amount: amountToSwap, // UI amount (not lamports)
         slippageBps: 100, // 1% default slippage
         walletKeypair: {
           publicKey: this.tradingWalletKeypair.publicKey.toString(),
           secretKey: Array.from(this.tradingWalletKeypair.secretKey)
         },
-        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+        feeWalletPubkey: JUPITER_FEE_ACCOUNT // Updated fee account
       });
 
       console.log(`[PriceMonitor] ✅ Trade executed successfully: ${swapResult.signature}`);
