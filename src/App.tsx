@@ -4324,6 +4324,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }));
   };
 
+  // Add state to track last forced USD update
+  const [lastForcedUsdUpdate, setLastForcedUsdUpdate] = useState<Record<string, number>>({});
+
   // Add periodic polling to fetch backend balances for all trading wallets
   useEffect(() => {
     if (tradingWallets.length === 0) return;
@@ -4336,16 +4339,54 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${tw.publicKey}`);
           if (response.ok) {
             const data = await response.json();
-            const total = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
-            setTradingWalletBalances(prev => ({
-              ...prev,
-              [tw.publicKey]: total,
-            }));
-            // Also update backendBalancesByWallet for TokenBalancesList
-            setBackendBalancesByWallet(prev => ({
-              ...prev,
-              [tw.publicKey]: data.balances
-            }));
+            
+            // Check if token balances have actually changed before updating UI
+            const currentBackendBalances = backendBalancesByWallet[tw.publicKey] || [];
+            const now = Date.now();
+            const lastUsdUpdate = lastForcedUsdUpdate[tw.publicKey] || 0;
+            const timeSinceLastUsdUpdate = now - lastUsdUpdate;
+            
+            // Check for significant USD value changes (>5% change)
+            const currentTotal = currentBackendBalances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+            const newTotal = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+            const usdChangePercent = currentTotal > 0 ? Math.abs(newTotal - currentTotal) / currentTotal : 0;
+            const significantUsdChange = usdChangePercent > 0.05; // 5% change
+            
+            // Conditions for updating UI:
+            // 1. Token amounts changed (always update)
+            // 2. 12 minutes passed since last USD update (forced refresh)
+            // 3. Significant USD value change (>5%)
+            const tokenBalancesChanged = hasSignificantBalanceChange(currentBackendBalances, data.balances);
+            const forceUsdUpdate = timeSinceLastUsdUpdate > 12 * 60 * 1000; // 12 minutes
+            
+            if (tokenBalancesChanged || forceUsdUpdate || significantUsdChange) {
+              let updateReason = '';
+              if (tokenBalancesChanged) updateReason = 'token amounts changed';
+              else if (forceUsdUpdate) updateReason = 'periodic USD refresh (12min)';
+              else if (significantUsdChange) updateReason = `significant USD change (${(usdChangePercent * 100).toFixed(1)}%)`;
+              
+              console.log(`Updating UI for wallet ${tw.publicKey}: ${updateReason}`);
+              
+              const total = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
+              setTradingWalletBalances(prev => ({
+                ...prev,
+                [tw.publicKey]: total,
+              }));
+              
+              // Also update backendBalancesByWallet for TokenBalancesList
+              setBackendBalancesByWallet(prev => ({
+                ...prev,
+                [tw.publicKey]: data.balances
+              }));
+              
+              // Update last USD update timestamp
+              setLastForcedUsdUpdate(prev => ({
+                ...prev,
+                [tw.publicKey]: now
+              }));
+            } else {
+              console.log(`No update needed for wallet ${tw.publicKey} (USD change: ${(usdChangePercent * 100).toFixed(1)}%, time since last: ${Math.round(timeSinceLastUsdUpdate / 1000 / 60)}min)`);
+            }
           }
         } catch (e) {
           // Optionally handle error
@@ -4357,14 +4398,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     };
 
     fetchAllBackendBalances();
-    // Set interval to 2 seconds for real-time UI updates
-    const interval = setInterval(fetchAllBackendBalances, 2000); // <-- 2 seconds
+    // Keep at 10 seconds for responsiveness to token changes, but smart filtering prevents unnecessary updates
+    const interval = setInterval(fetchAllBackendBalances, 10000);
 
     return () => {
       isCancelled = true;
       clearInterval(interval);
     };
-  }, [tradingWallets]);
+  }, [tradingWallets, backendBalancesByWallet, lastForcedUsdUpdate]);
 
   // Add this useEffect near where notification state is managed
   useEffect(() => {
