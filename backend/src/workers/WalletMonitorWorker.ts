@@ -397,39 +397,26 @@ export class WalletMonitorWorker extends BaseWorker {
         };
       }
 
-      // Convert amounts to proper scale for Jupiter API
-      let scaledInputAmount = inputAmount;
-      let scaledOutputAmount = outputAmount;
-      
-      // Get proper decimal scaling for each token
-      const inputDecimals = await this.getTokenDecimals(inputToken);
-      const outputDecimals = await this.getTokenDecimals(outputToken);
-      
-      // Scale amounts based on actual token decimals
-      // For wrapped SOL: token balances are already in UI amount (SOL units), multiply by 10^9 to get lamports
-      // For SPL tokens: balance changes are in UI amount, so multiply by 10^decimals to get raw amount
-      if (inputToken === 'So11111111111111111111111111111111111111112') {
-        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // Wrapped SOL to lamports
-        console.log('[Mirror] Scaled wrapped SOL input amount:', scaledInputAmount);
-      } else {
-        scaledInputAmount = Math.floor(inputAmount * Math.pow(10, inputDecimals)); // UI to raw amount
+      // Check minimum amount - Jupiter typically requires meaningful amounts
+      const MIN_SOL_AMOUNT = 0.001; // 0.001 SOL minimum
+      const MIN_TOKEN_AMOUNT = 0.01; // 0.01 tokens minimum
+
+      const minAmount = inputToken === 'So11111111111111111111111111111111111111112' ? MIN_SOL_AMOUNT : MIN_TOKEN_AMOUNT;
+
+      if (inputAmount < minAmount) {
+        console.log(`[Mirror] Skipping swap - input amount ${inputAmount} ${inputToken} is below minimum ${minAmount}.`);
+        return {
+          status: 'failed',
+          error: `Amount below minimum threshold: ${inputAmount} < ${minAmount}`
+        };
       }
-      
-      if (outputToken === 'So11111111111111111111111111111111111111112') {
-        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // Wrapped SOL to lamports
-        console.log('[Mirror] Scaled wrapped SOL output amount:', scaledOutputAmount);
-      } else {
-        scaledOutputAmount = Math.floor(outputAmount * Math.pow(10, outputDecimals)); // UI to raw amount
-      }
-      
+
       // Before calling mirrorSwap, add a log
       console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}`);
-      console.log(`[Mirror] Original amounts - input: ${inputAmount}, output: ${outputAmount}`);
-      console.log(`[Mirror] Token decimals - input: ${inputDecimals}, output: ${outputDecimals}`);
-      console.log(`[Mirror] Scaled amounts - input: ${scaledInputAmount}, output: ${scaledOutputAmount}`);
+      console.log(`[Mirror] UI amounts - input: ${inputAmount}, output: ${outputAmount}`);
       
-      // Use input amount for the swap (what we're selling), not output amount (what we expect to receive)
-      await this.mirrorSwap(inputToken, outputToken, scaledInputAmount);
+      // Pass UI amounts directly to mirrorSwap - SwapService will handle the scaling
+      await this.mirrorSwap(inputToken, outputToken, inputAmount);
       this.updateJobActivity();
 
       return {
@@ -856,7 +843,7 @@ export class WalletMonitorWorker extends BaseWorker {
         inputMint,
         outputMint,
         amount,
-        amountFormatted: amount / 1e9, // Assuming 9 decimals for logging
+        amountUIFormat: amount, // This is now in UI format (SOL units, not lamports)
         tradingWallet: this.tradingWalletKeypair?.publicKey.toString()
       });
       

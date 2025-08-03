@@ -1,4 +1,5 @@
 import { Connection, PublicKey, Keypair, VersionedTransaction, ParsedAccountData } from '@solana/web3.js';
+import { getAssociatedTokenAddress, getOrCreateAssociatedTokenAccount, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Pool } from 'pg';
 import { createClient } from 'redis';
 
@@ -241,6 +242,51 @@ export class SwapService {
                 isInteger: Number.isInteger(amount),
                 baseAmountFormatted: `${baseAmount} (${baseAmount / Math.pow(10, inputDecimals)} ${inputMint === WSOL_MINT ? 'SOL' : 'tokens'})`
             });
+
+            // Ensure Associated Token Accounts exist for both input and output tokens
+            try {
+                // For input token (if not SOL)
+                if (inputMint !== WSOL_MINT) {
+                    console.log(`Creating/getting ATA for input token ${inputMint}`);
+                    await getOrCreateAssociatedTokenAccount(
+                        this.connection,
+                        tradingKeypair,
+                        new PublicKey(inputMint),
+                        tradingKeypair.publicKey,
+                        false // allowOwnerOffCurve
+                    );
+                }
+                
+                // For output token (if not SOL)
+                if (outputMint !== WSOL_MINT) {
+                    console.log(`Creating/getting ATA for output token ${outputMint}`);
+                    await getOrCreateAssociatedTokenAccount(
+                        this.connection,
+                        tradingKeypair,
+                        new PublicKey(outputMint),
+                        tradingKeypair.publicKey,
+                        false // allowOwnerOffCurve
+                    );
+                }
+                
+                // For wrapped SOL (always needed when dealing with SOL)
+                if (inputMint === WSOL_MINT || outputMint === WSOL_MINT) {
+                    console.log('Creating/getting ATA for wrapped SOL');
+                    await getOrCreateAssociatedTokenAccount(
+                        this.connection,
+                        tradingKeypair,
+                        new PublicKey(WSOL_MINT),
+                        tradingKeypair.publicKey,
+                        false // allowOwnerOffCurve
+                    );
+                }
+                
+                console.log('All required token accounts are ready');
+            } catch (ataError) {
+                console.error('Error creating/getting token accounts:', ataError);
+                const errorMessage = ataError instanceof Error ? ataError.message : String(ataError);
+                throw new Error(`Failed to prepare token accounts: ${errorMessage}`);
+            }
 
             // Get quote from Jupiter Lite API
             console.log('Requesting Jupiter quote with:', {
