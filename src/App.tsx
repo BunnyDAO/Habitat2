@@ -4356,6 +4356,47 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
+  // Add periodic strategy refresh to detect completed strategies
+  useEffect(() => {
+    if (!wallet.publicKey) return;
+
+    const refreshStrategies = async () => {
+      try {
+        console.log('🔄 Refreshing strategies to check for status changes...');
+        const backendStrategies = await strategyApiService.getStrategies();
+        const convertedStrategies = await Promise.all(backendStrategies.map(convertBackendStrategyToJob));
+        
+        // Update only the strategy jobs, keep saved wallet jobs intact
+        setJobs(prevJobs => {
+          const savedWalletJobs = prevJobs.filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive);
+          const newAllJobs = [...convertedStrategies, ...savedWalletJobs];
+          
+          // Sync pausedJobs Set with is_active field from database
+          const inactiveJobIds = new Set(
+            newAllJobs
+              .filter(job => !job.isActive)
+              .map(job => job.id)
+          );
+          setPausedJobs(inactiveJobIds);
+          
+          return newAllJobs;
+        });
+        
+        console.log('✅ Strategy refresh completed');
+      } catch (error) {
+        console.error('❌ Failed to refresh strategies:', error);
+      }
+    };
+
+    // Refresh immediately
+    refreshStrategies();
+
+    // Set up periodic refresh every 15 seconds (faster than daemon's 10s to catch changes quickly)
+    const interval = setInterval(refreshStrategies, 15000);
+
+    return () => clearInterval(interval);
+  }, [wallet.publicKey]);
+
   // Add state for delete saved wallet dialog
   const [showDeleteSavedWalletDialog, setShowDeleteSavedWalletDialog] = useState(false);
   const [savedWalletToDelete, setSavedWalletToDelete] = useState<{ id: string; name?: string } | null>(null);

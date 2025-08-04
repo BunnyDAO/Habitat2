@@ -16,7 +16,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const POLL_INTERVAL = 60000; // 1 minute
+const POLL_INTERVAL = 10000; // 10 seconds
 const HELIUS_ENDPOINT = process.env.HELIUS_RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=dd2b28a0-d00e-44f1-bbda-23c042d7476a';
 
 // Initialize Supabase client
