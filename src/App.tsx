@@ -1826,7 +1826,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 
                 {/* Strategy badges */}
                 <div className={walletStyles.strategyBadgesContainer}>
-                  {jobs.filter(job => job.tradingWalletPublicKey === tw.publicKey && job.isActive).map((job) => {
+                  {jobs.filter(job => job.tradingWalletPublicKey === tw.publicKey).map((job) => {
                     const isPaused = pausedJobs.has(job.id);
                     
                     // Get strategy details based on job type
