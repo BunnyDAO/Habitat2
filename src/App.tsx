@@ -1214,8 +1214,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const token = await authService.signIn(mainWalletAddress);
       if (!token) {
         setNotification({
-          message: 'Failed to authenticate with wallet',
-          type: 'error'
+          type: 'error',
+          message: 'Failed to authenticate with wallet'
         });
         return;
       }
@@ -1237,8 +1237,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
       if (!backendWallet) {
         setNotification({
-          message: 'Failed to create wallet on backend',
-          type: 'error'
+          type: 'error',
+          message: 'Failed to create wallet on backend'
         });
         return;
       }
@@ -1253,13 +1253,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
       setTradingWallets([...existingWallets, walletForStorage]);
       setNotification({
-        message: 'Trading wallet created successfully!',
-        type: 'success'
+        type: 'success',
+        message: 'Trading wallet created successfully!'
       });
     } catch (error) {
       setNotification({
-        message: error instanceof Error ? error.message : 'Error creating trading wallet',
-        type: 'error'
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to create trading wallet'
       });
       console.error('Error generating trading wallet:', error);
     }
@@ -1820,6 +1820,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       triggerBackendPolling={backendPollingWallet === tw.publicKey}
                       onBackendPollingComplete={() => handleBackendPollingComplete(tw.publicKey)}
                       onTotalValueChange={(value) => handleTotalValueChange(tw.publicKey, value)}
+                      setNotification={setNotification}
                     />
                   </div>
                 </div>
@@ -2312,6 +2313,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       triggerBackendPolling={backendPollingWallet === tw.publicKey}
                       onBackendPollingComplete={() => handleBackendPollingComplete(tw.publicKey)}
                       onTotalValueChange={(value) => handleTotalValueChange(tw.publicKey, value)}
+                      setNotification={setNotification}
                     />
                   </div>
                 </div>
@@ -4206,7 +4208,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           setJobs(savedWallets);
         } catch (error) {
           console.error('Failed to fetch saved wallets:', error);
-          setNotification({ message: 'Failed to load saved wallets', type: 'error' });
+          setNotification({ type: 'error', message: 'Failed to load saved wallets' });
         }
       })();
     } else {
@@ -4236,9 +4238,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
         ...savedWalletJobs
       ]);
-      setNotification({ message: 'Wallet saved successfully', type: 'success' });
+      setNotification({ type: 'success', message: 'Wallet saved successfully!' });
     } catch {
-      setNotification({ message: 'Failed to save wallet', type: 'error' });
+      setNotification({ type: 'error', message: 'Failed to save wallet' });
     }
   };
 
@@ -4254,9 +4256,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
         ...savedWalletJobs
       ]);
-      setNotification({ message: 'Wallet removed successfully', type: 'success' });
+      setNotification({ type: 'success', message: 'Wallet removed successfully!' });
     } catch {
-      setNotification({ message: 'Failed to remove wallet', type: 'error' });
+      setNotification({ type: 'error', message: 'Failed to remove wallet' });
     }
   };
 
@@ -4274,10 +4276,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
         ...savedWalletJobs
       ]);
-      setNotification({ message: 'Wallet name updated successfully', type: 'success' });
+      setNotification({ type: 'success', message: 'Wallet name updated successfully!' });
     } catch (error) {
       console.error('❌ Failed to update wallet name:', error);
-      setNotification({ message: 'Failed to update wallet name', type: 'error' });
+      setNotification({ type: 'error', message: 'Failed to update wallet name' });
     }
   };
 
@@ -4343,7 +4345,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           ]);
         } catch (error) {
           console.error('Failed to fetch saved wallets:', error);
-          setNotification({ message: 'Failed to load saved wallets', type: 'error' });
+          setNotification({ type: 'error', message: 'Failed to load saved wallets' });
         }
       })();
     } else {
@@ -4866,14 +4868,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                               });
                                               
                                               if (response.ok) {
-                                                setNotification({ message: 'Position closed successfully', type: 'success' });
+                                                setNotification({ type: 'success', message: 'Position closed successfully!' });
                                                 await loadActiveJobs();
                                               } else {
                                                 const error = await response.text();
-                                                setNotification({ message: `Failed to close position: ${error}`, type: 'error' });
+                                                setNotification({ type: 'error', message: `Failed to close position: ${error}` });
                                               }
                                             } catch (error) {
-                                              setNotification({ message: `Error closing position: ${error}`, type: 'error' });
+                                              setNotification({ type: 'error', message: `Failed to close position: ${error}` });
                                             }
                                           }}
                                           style={{
@@ -4915,14 +4917,14 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                                 });
                                                 
                                                 if (response.ok) {
-                                                  setNotification({ message: `Position reduced by ${percentage}%`, type: 'success' });
+                                                  setNotification({ type: 'success', message: `Position reduced by ${percentage}%!` });
                                                   await loadActiveJobs();
                                                 } else {
                                                   const error = await response.text();
-                                                  setNotification({ message: `Failed to reduce position: ${error}`, type: 'error' });
+                                                  setNotification({ type: 'error', message: `Failed to reduce position: ${error}` });
                                                 }
                                               } catch (error) {
-                                                setNotification({ message: `Error reducing position: ${error}`, type: 'error' });
+                                                setNotification({ type: 'error', message: `Failed to reduce position: ${error}` });
                                               }
                                             }
                                           }}
@@ -7177,6 +7179,7 @@ interface TokenBalancesListProps {
   triggerBackendPolling?: string | null;
   onBackendPollingComplete?: () => void;
   onTotalValueChange?: (value: number) => void;
+  setNotification?: (notification: { type: 'success' | 'error' | 'info'; message: string } | null) => void;
 }
 
 // Add a cache for token balances
@@ -7255,6 +7258,7 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
   triggerBackendPolling,
   onBackendPollingComplete,
   onTotalValueChange,
+  setNotification,
 }): ReactElement => {
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -7823,6 +7827,12 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         throw new Error('Trading wallet not initialized');
       }
 
+      // Show initial swapping notification
+      setNotification?.({ 
+        type: 'info', 
+        message: `Swapping ${tokenBalance.uiBalance.toFixed(6)} ${tokenBalance.symbol} to SOL...` 
+      });
+
       // Prepare secure swap parameters (no private key needed)
       const swapParams = {
           inputMint: tokenBalance.mint,
@@ -7841,6 +7851,12 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
 
       console.log('Secure swap executed successfully:', result);
       
+      // Show success notification
+      setNotification?.({ 
+        type: 'success', 
+        message: `Successfully swapped ${tokenBalance.symbol} to SOL! Updating balances...` 
+      });
+      
       // Force backend database refresh from blockchain
       try {
         await fetch(`${API_CONFIG.WALLET.BALANCES}/${tradingWallet.publicKey}/populate`, {
@@ -7855,7 +7871,10 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       window.dispatchEvent(new Event('update-balances'));
     } catch (error) {
         console.error('Swap failed:', error);
-        setJupiterError(error instanceof Error ? error.message : 'Failed to execute swap');
+        setNotification?.({
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Failed to swap to SOL'
+        });
     }
 };
   // Add a manual refresh function
