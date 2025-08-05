@@ -191,17 +191,17 @@ export class SwapService {
 
     private async executeSwapAttempt(request: SwapRequest): Promise<SwapResponse> {
         const { inputMint, outputMint, amount, slippageBps = 50, walletKeypair, feeWalletPubkey } = request;
-        
+
         try {
             // Get trading wallet keypair
             const tradingKeypair = Keypair.fromSecretKey(new Uint8Array(walletKeypair.secretKey));
             
             // Get token decimals for amount conversion
             const inputDecimals = await this.getTokenDecimals(inputMint);
-            
+
             // Convert amount to base units (with decimals) for Jupiter API
             const baseAmount = Math.floor(amount * Math.pow(10, inputDecimals));
-            
+
             console.log('Converting amount:', {
                 originalAmount: amount,
                 inputDecimals,
@@ -383,13 +383,13 @@ export class SwapService {
             baseAmount,
             slippageBps,
             feeWalletPubkey ? JUPITER_PLATFORM_FEE_BPS : 0
-        );
+            );
 
-        console.log('Got quote from Jupiter Lite API:', {
-            inAmount: jupiterQuote.inAmount,
-            outAmount: jupiterQuote.outAmount,
-            priceImpactPct: jupiterQuote.priceImpactPct
-        });
+            console.log('Got quote from Jupiter Lite API:', {
+                inAmount: jupiterQuote.inAmount,
+                outAmount: jupiterQuote.outAmount,
+                priceImpactPct: jupiterQuote.priceImpactPct
+            });
 
         // Get the appropriate fee account for the input mint (if fee collection is enabled)
         let feeAccount: string | undefined;
@@ -409,45 +409,45 @@ export class SwapService {
             }
         }
 
-        // Get swap transaction from Jupiter Lite API
-        const swapTransaction = await this.executeJupiterLiteSwap(
-            jupiterQuote,
-            tradingKeypair.publicKey.toString(),
+            // Get swap transaction from Jupiter Lite API
+            const swapTransaction = await this.executeJupiterLiteSwap(
+                jupiterQuote,
+                tradingKeypair.publicKey.toString(),
             feeAccount
-        );
+            );
 
-        console.log('Got swap transaction from Jupiter Lite API');
+            console.log('Got swap transaction from Jupiter Lite API');
 
-        // Deserialize and sign the transaction
-        const transactionBuf = Buffer.from(swapTransaction.swapTransaction, 'base64');
-        const transaction = VersionedTransaction.deserialize(transactionBuf);
-        
-        // Sign the transaction
-        transaction.sign([tradingKeypair]);
+            // Deserialize and sign the transaction
+            const transactionBuf = Buffer.from(swapTransaction.swapTransaction, 'base64');
+            const transaction = VersionedTransaction.deserialize(transactionBuf);
+            
+            // Sign the transaction
+            transaction.sign([tradingKeypair]);
 
-        // Send and confirm the transaction
-        const signature = await this.connection.sendTransaction(transaction, {
-            maxRetries: 3,
-            skipPreflight: false,
-        });
+            // Send and confirm the transaction
+            const signature = await this.connection.sendTransaction(transaction, {
+                maxRetries: 3,
+                skipPreflight: false,
+            });
 
-        console.log('Transaction sent:', signature);
+            console.log('Transaction sent:', signature);
 
-        // Wait for confirmation
-        const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-        
-        if (confirmation.value.err) {
-            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-        }
+            // Wait for confirmation
+            const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+            
+            if (confirmation.value.err) {
+                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+            }
 
         console.log('✅ Swap transaction confirmed:', signature);
 
-        return {
-            signature,
+            return {
+                signature,
             inputAmount: baseAmount.toString(),
-            outputAmount: jupiterQuote.outAmount,
-            message: 'Swap completed successfully'
-        };
+                outputAmount: jupiterQuote.outAmount,
+                message: 'Swap completed successfully'
+            };
     }
 
     private async getJupiterLiteQuote(

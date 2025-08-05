@@ -599,7 +599,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         console.log('🔄 Found saved wallet:', savedWallet ? savedWallet.name : 'NOT FOUND');
         
         if (savedWallet) {
-          setSelectedTradingWallet(savedWallet);
           console.log('✅ Successfully restored wallet selection:', savedWallet.name);
           return savedWallet;
         } else {
@@ -817,16 +816,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         });
         
         setTradingWallets(processedWallets);
-        // Auto-select: first try to restore from localStorage, then select first wallet
-        if (!selectedTradingWallet && processedWallets.length > 0) {
-          const restoredWallet = restoreSelectedTradingWallet(processedWallets);
-          if (!restoredWallet) {
-            handleSetSelectedTradingWallet(processedWallets[0]);
-          }
-        }
       }
     }
   }, [wallet.publicKey]);
+
+  // Separate effect to restore selected trading wallet when wallets are loaded
+  useEffect(() => {
+    if (!selectedTradingWallet && tradingWallets.length > 0) {
+      const restoredWallet = restoreSelectedTradingWallet(tradingWallets);
+      if (restoredWallet) {
+        handleSetSelectedTradingWallet(restoredWallet);
+      } else {
+        handleSetSelectedTradingWallet(tradingWallets[0]);
+      }
+    }
+  }, [tradingWallets, selectedTradingWallet]);
 
   // Minimal converter for backend strategies
   const convertBackendStrategyToJob = async (strategy: any): Promise<AnyJob> => {
@@ -4205,7 +4209,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       (async () => {
         try {
           const savedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
-          setJobs(savedWallets);
+          const savedWalletJobs = mapSavedWalletsToJobs(savedWallets);
+          setJobs(prevJobs => [
+            ...prevJobs.filter(j => j.type !== JobType.SAVED_WALLET),
+            ...savedWalletJobs
+          ]);
         } catch (error) {
           console.error('Failed to fetch saved wallets:', error);
           setNotification({ type: 'error', message: 'Failed to load saved wallets' });
@@ -4370,7 +4378,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         
         // Update only the strategy jobs, keep saved wallet jobs intact
         setJobs(prevJobs => {
-          const savedWalletJobs = prevJobs.filter(job => job.type === JobType.WALLET_MONITOR && !job.isActive);
+          const savedWalletJobs = prevJobs.filter(job => job.type === JobType.SAVED_WALLET);
           const newAllJobs = [...convertedStrategies, ...savedWalletJobs];
           
           // Sync pausedJobs Set with is_active field from database

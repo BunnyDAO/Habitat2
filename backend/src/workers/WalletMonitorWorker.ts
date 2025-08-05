@@ -410,7 +410,7 @@ export class WalletMonitorWorker extends BaseWorker {
           error: `Amount below minimum threshold: ${inputAmount} < ${minAmount}`
         };
       }
-
+      
       // Before calling mirrorSwap, add a log
       console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}`);
       console.log(`[Mirror] UI amounts - input: ${inputAmount}, output: ${outputAmount}`);
