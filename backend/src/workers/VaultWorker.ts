@@ -15,7 +15,7 @@ export class VaultWorker extends BaseWorker {
   
   // Constants
   private readonly MAX_VAULT_PERCENTAGE = 50; // 50% maximum - increased from original 5%
-  private readonly MIN_TRANSFER_AMOUNT = 0.01; // 0.01 SOL minimum
+  private readonly MIN_TRANSFER_AMOUNT = 0.001; // 0.001 SOL minimum (200x transaction cost)
   private readonly WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
   constructor(job: VaultStrategy, endpoint: string, swapService?: SwapService) {
