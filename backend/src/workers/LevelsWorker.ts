@@ -4,10 +4,17 @@ import { PublicKey, Keypair } from '@solana/web3.js';
 import { SwapService } from '../services/swap.service';
 import { tradeEventsService } from '../services/trade-events.service';
 import { PriceFeedService } from '../api/v1/services/price-feed.service';
+import { createClient } from '@supabase/supabase-js';
 
 const MIN_TRADE_AMOUNT = 0.01; // Minimum 0.01 SOL for trades
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+// Initialize Supabase client for database queries
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+);
 
 export class LevelsWorker extends BaseWorker {
   private tradingWalletPublicKey: string;
@@ -33,6 +40,32 @@ export class LevelsWorker extends BaseWorker {
     this.levels.forEach(level => {
       console.log(`[Levels] Level: $${level.price} USD → Sell ${level.percentage}% of SOL`);
     });
+  }
+
+  /**
+   * Check if strategy is currently active in the database
+   * This ensures we always have the most up-to-date status
+   */
+  private async isStrategyActive(): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('strategies')
+        .select('is_active')
+        .eq('id', this.job.id)
+        .single();
+
+      if (error) {
+        console.error(`[Levels] Error checking strategy ${this.job.id} active status:`, error);
+        // If we can't check the database, be conservative and return false
+        return false;
+      }
+
+      return data?.is_active === true;
+    } catch (error) {
+      console.error(`[Levels] Exception checking strategy ${this.job.id} active status:`, error);
+      // If we can't check the database, be conservative and return false
+      return false;
+    }
   }
 
   private validateAndSortLevels(levels: Level[]): Level[] {
@@ -117,6 +150,14 @@ export class LevelsWorker extends BaseWorker {
       });
 
       if (triggeredLevels.length > 0) {
+        // Check if strategy is active before executing any level sells
+        // Query the database to get the current status (not the stale in-memory value)
+        const isActive = await this.isStrategyActive();
+        if (!isActive) {
+          console.log(`[Levels] Found ${triggeredLevels.length} triggered levels but strategy is not active (database is_active=false). Skipping trades.`);
+          return;
+        }
+
         console.log(`[Levels] 🎯 Found ${triggeredLevels.length} triggered levels at price $${currentPrice}`);
         
         for (const level of triggeredLevels) {

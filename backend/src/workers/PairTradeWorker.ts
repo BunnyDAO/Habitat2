@@ -55,6 +55,30 @@ export class PairTradeWorker extends BaseWorker {
     console.log(`[PairTrade] Current token: ${job.currentToken}`);
   }
 
+  /**
+   * Check if strategy is currently active in the database
+   * This ensures we always have the most up-to-date status
+   */
+  private async isStrategyActive(): Promise<boolean> {
+    try {
+      const result = await this.pool.query(
+        'SELECT is_active FROM strategies WHERE id = $1',
+        [this.job.id]
+      );
+
+      if (result.rows.length === 0) {
+        console.error(`[PairTrade] Strategy ${this.job.id} not found in database`);
+        return false;
+      }
+
+      return result.rows[0].is_active === true;
+    } catch (error) {
+      console.error(`[PairTrade] Error checking strategy ${this.job.id} active status:`, error);
+      // If we can't check the database, be conservative and return false
+      return false;
+    }
+  }
+
   async start(): Promise<void> {
     if (this.isRunning) return;
 
@@ -131,7 +155,7 @@ export class PairTradeWorker extends BaseWorker {
           publicKey: this.tradingWalletKeypair.publicKey.toString(),
           secretKey: Array.from(this.tradingWalletKeypair.secretKey)
         },
-        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+        feeWalletPubkey: '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV' // Jupiter fee account
       });
       
       // Update job state
@@ -385,7 +409,7 @@ export class PairTradeWorker extends BaseWorker {
           publicKey: this.tradingWalletKeypair.publicKey.toString(),
           secretKey: Array.from(this.tradingWalletKeypair.secretKey)
         },
-        feeWalletPubkey: '2yrLVmLcMyZyKaV8cZKkk79zuvMPqhVjLMWkQFQtj4g6' // Jupiter fee account
+        feeWalletPubkey: '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV' // Jupiter fee account
       });
       
       // Update job state
@@ -521,6 +545,14 @@ export class PairTradeWorker extends BaseWorker {
 
   private async processTrigger(trigger: TriggerInfo): Promise<void> {
     const job = this.job as PairTradeJob;
+    
+    // Check if strategy is active before processing any triggers
+    // Query the database to get the current status (not the stale in-memory value)
+    const isActive = await this.isStrategyActive();
+    if (!isActive) {
+      console.log(`[PairTrade] Trigger found but strategy is not active (database is_active=false). Skipping trade.`);
+      return;
+    }
     
     // Check if swap is needed based on current position and desired direction
     const shouldSwap = 

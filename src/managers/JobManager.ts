@@ -30,30 +30,25 @@ export class JobManager {
 
     switch (job.type) {
       case JobType.WALLET_MONITOR:
-        // Check if we have a valid secret key for WalletMonitor
-        const walletMonitorJob = job as WalletMonitoringJob;
-        if (!walletMonitorJob.tradingWalletSecretKey || walletMonitorJob.tradingWalletSecretKey.length === 0) {
-          console.log(`Skipping frontend WalletMonitor worker for job ${job.id} - no secret key available. This strategy runs on backend only.`);
-          return; // Skip creating worker - backend daemon will handle this
-        }
-        worker = new WalletMonitorWorker(
-          walletMonitorJob,
-          this.endpoint,
-          new PublicKey(job.tradingWalletPublicKey)
-        );
-        break;
+        // Wallet Monitor strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend WalletMonitor worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       case JobType.PRICE_MONITOR:
-        worker = new PriceMonitorWorker(job as PriceMonitoringJob, this.endpoint);
-        break;
+        // Price Monitor strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend PriceMonitor worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       case JobType.VAULT:
-        worker = new VaultWorker(job as VaultStrategy, this.endpoint);
-        break;
+        // Vault strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend Vault worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       case JobType.LEVELS:
-        worker = new LevelsWorker(job as LevelsStrategy, this.endpoint);
-        break;
+        // Levels strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend Levels worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       case JobType.PAIR_TRADE:
-        worker = new PairTradeWorker(job as PairTradeJob, this.endpoint);
-        break;
+        // Pair Trade strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend PairTrade worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       default:
         throw new Error(`Unknown job type: ${job.type}`);
     }

@@ -5,12 +5,19 @@ import { WalletMonitoringJob } from '../types/jobs';
 import { createRateLimitedConnection } from '../utils/connection';
 import { API_CONFIG } from '../config/api';
 import { SwapService } from '../services/swap.service';
+import { createClient } from '@supabase/supabase-js';
 
 const MAX_RECENT_TRANSACTIONS = 50;
 
 // Jupiter Lite API Configuration
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
 const JUPITER_FEE_ACCOUNT = '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV';
+
+// Initialize Supabase client for database queries
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+);
 
 export class WalletMonitorWorker extends BaseWorker {
   private subscription: number | undefined;
@@ -76,6 +83,32 @@ export class WalletMonitorWorker extends BaseWorker {
       }
     }
     this.swapService = swapService;
+  }
+
+  /**
+   * Check if strategy is currently active in the database
+   * This ensures we always have the most up-to-date status
+   */
+  private async isStrategyActive(): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('strategies')
+        .select('is_active')
+        .eq('id', this.job.id)
+        .single();
+
+      if (error) {
+        console.error(`[Mirror] Error checking strategy ${this.job.id} active status:`, error);
+        // If we can't check the database, be conservative and return false
+        return false;
+      }
+
+      return data?.is_active === true;
+    } catch (error) {
+      console.error(`[Mirror] Exception checking strategy ${this.job.id} active status:`, error);
+      // If we can't check the database, be conservative and return false
+      return false;
+    }
   }
 
   async start(): Promise<void> {
@@ -150,6 +183,17 @@ export class WalletMonitorWorker extends BaseWorker {
       timestamp: number;
     };
   }> {
+    // Check if strategy is active before processing any transactions
+    // Query the database to get the current status (not the stale in-memory value)
+    const isActive = await this.isStrategyActive();
+    if (!isActive) {
+      console.log(`[Mirror] Skipping transaction ${signature}: strategy is not active (database is_active=false)`);
+      return {
+        status: 'failed',
+        error: 'Strategy is not active'
+      };
+    }
+
     if (
       this.recentTransactions.has(signature) ||
       this.processingTransactions.has(signature) ||

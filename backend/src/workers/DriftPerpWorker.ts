@@ -42,6 +42,30 @@ export class DriftPerpWorker extends BaseWorker {
     console.log(`DriftPerpWorker initialized for ${job.marketSymbol} market`);
   }
 
+  /**
+   * Check if strategy is currently active in the database
+   * This ensures we always have the most up-to-date status
+   */
+  private async isStrategyActive(): Promise<boolean> {
+    try {
+      const result = await this.pool.query(
+        'SELECT is_active FROM strategies WHERE id = $1',
+        [this.job.id]
+      );
+
+      if (result.rows.length === 0) {
+        console.error(`[DriftPerp] Strategy ${this.job.id} not found in database`);
+        return false;
+      }
+
+      return result.rows[0].is_active === true;
+    } catch (error) {
+      console.error(`[DriftPerp] Error checking strategy ${this.job.id} active status:`, error);
+      // If we can't check the database, be conservative and return false
+      return false;
+    }
+  }
+
   async start(): Promise<void> {
     if (this.isRunning) return;
 
@@ -93,6 +117,14 @@ export class DriftPerpWorker extends BaseWorker {
   }> {
     if (this.isProcessingOrder) {
       return { success: false, error: 'Order already in progress' };
+    }
+
+    // Check if strategy is active before executing any trades
+    // Query the database to get the current status (not the stale in-memory value)
+    const isActive = await this.isStrategyActive();
+    if (!isActive) {
+      console.log(`[DriftPerp] Strategy execution requested but not active (database is_active=false). Skipping trade.`);
+      return { success: false, error: 'Strategy is not active' };
     }
 
     this.isProcessingOrder = true;

@@ -50,6 +50,32 @@ export class PriceMonitorWorker extends BaseWorker {
     console.log(`[PriceMonitor] Target: ${this.direction} $${this.targetPrice}, sell ${this.percentageToSell}% SOL`);
   }
 
+  /**
+   * Check if strategy is currently active in the database
+   * This ensures we always have the most up-to-date status
+   */
+  private async isStrategyActive(): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('strategies')
+        .select('is_active')
+        .eq('id', this.job.id)
+        .single();
+
+      if (error) {
+        console.error(`[PriceMonitor] Error checking strategy ${this.job.id} active status:`, error);
+        // If we can't check the database, be conservative and return false
+        return false;
+      }
+
+      return data?.is_active === true;
+    } catch (error) {
+      console.error(`[PriceMonitor] Exception checking strategy ${this.job.id} active status:`, error);
+      // If we can't check the database, be conservative and return false
+      return false;
+    }
+  }
+
   async start(): Promise<void> {
     if (this.isRunning) return;
 
@@ -91,6 +117,14 @@ export class PriceMonitorWorker extends BaseWorker {
           (this.direction === 'below' && currentPrice <= this.targetPrice);
 
         if (priceConditionMet) {
+          // Check if strategy is active before executing trades
+          // Query the database to get the current status (not the stale in-memory value)
+          const isActive = await this.isStrategyActive();
+          if (!isActive) {
+            console.log(`[PriceMonitor] Price condition triggered but strategy is not active (database is_active=false). Skipping trade.`);
+            return;
+          }
+
           // Check rate limiting
           const now = Date.now();
           if (now - this.lastTriggered < this.MIN_TIME_BETWEEN_TRIGGERS) {

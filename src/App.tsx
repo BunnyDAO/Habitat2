@@ -557,6 +557,65 @@ const registerServiceWorker = async (): Promise<ServiceWorkerRegistration | unde
   return undefined;
 };
 
+// Helper function to determine if balance changes are significant
+function hasSignificantBalanceChange(oldBalances: any[], newBalances: any[]): boolean {
+  console.log('Checking balance changes:', { oldBalances, newBalances });
+  
+  if (!oldBalances || !newBalances) {
+    console.log('Missing balances, treating as significant change');
+    return true;
+  }
+  if (oldBalances.length !== newBalances.length) {
+    console.log('Balance array lengths differ, treating as significant change');
+    return true;
+  }
+
+  for (const newBalance of newBalances) {
+    const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
+    if (!oldBalance) {
+      console.log(`New balance for mint ${newBalance.mint} not found in old balances, treating as significant change`);
+      return true;
+    }
+    
+    // For SOL, consider changes greater than 0.0001 SOL significant
+    if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
+      const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
+      const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
+      const difference = Math.abs(newAmount - oldAmount);
+      console.log(`SOL balance comparison:`, { 
+        oldAmount, 
+        newAmount, 
+        difference, 
+        threshold: 0.0001,
+        isSignificant: difference > 0.0001 
+      });
+      if (difference > 0.0001) {
+        console.log('SOL balance change is significant');
+        return true;
+      }
+    } else {
+      // For other tokens, consider changes greater than 0.1% significant
+      const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
+      const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
+      if (oldAmount === 0 && newAmount === 0) continue;
+      const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
+      console.log(`Token ${newBalance.symbol || newBalance.mint} balance comparison:`, { 
+        oldAmount, 
+        newAmount, 
+        change, 
+        threshold: 0.001,
+        isSignificant: change > 0.001 
+      });
+      if (change > 0.001) {
+        console.log(`Token balance change is significant for ${newBalance.symbol || newBalance.mint}`);
+        return true;
+      }
+    }
+  }
+  console.log('No significant balance changes detected');
+  return false;
+}
+
 const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> = ({ onRpcError, currentEndpoint }) => {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
@@ -1280,65 +1339,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
              balance1.decimals === balance2.decimals;
     });
   };
-
-  // Add this function near the top of the file, after imports
-  function hasSignificantBalanceChange(oldBalances: any[], newBalances: any[]): boolean {
-    console.log('Checking balance changes:', { oldBalances, newBalances });
-    
-    if (!oldBalances || !newBalances) {
-      console.log('Missing balances, treating as significant change');
-      return true;
-    }
-    if (oldBalances.length !== newBalances.length) {
-      console.log('Balance array lengths differ, treating as significant change');
-      return true;
-    }
-
-    for (const newBalance of newBalances) {
-      const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
-      if (!oldBalance) {
-        console.log(`New balance for mint ${newBalance.mint} not found in old balances, treating as significant change`);
-        return true;
-      }
-      
-      // For SOL, consider changes greater than 0.0001 SOL significant
-      if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
-        const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
-        const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
-        const difference = Math.abs(newAmount - oldAmount);
-        console.log(`SOL balance comparison:`, { 
-          oldAmount, 
-          newAmount, 
-          difference, 
-          threshold: 0.0001,
-          isSignificant: difference > 0.0001 
-        });
-        if (difference > 0.0001) {
-          console.log('SOL balance change is significant');
-          return true;
-        }
-      } else {
-        // For other tokens, consider changes greater than 0.1% significant
-        const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
-        const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
-        if (oldAmount === 0 && newAmount === 0) continue;
-        const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
-        console.log(`Token ${newBalance.symbol || newBalance.mint} balance comparison:`, { 
-          oldAmount, 
-          newAmount, 
-          change, 
-          threshold: 0.001,
-          isSignificant: change > 0.001 
-        });
-        if (change > 0.001) {
-          console.log(`Token balance change is significant for ${newBalance.symbol || newBalance.mint}`);
-          return true;
-        }
-      }
-    }
-    console.log('No significant balance changes detected');
-    return false;
-  }
 
   // Add these near the top of the file with other state declarations
   const [walletBalances, setWalletBalances] = useState<Map<string, any[]>>(new Map());
