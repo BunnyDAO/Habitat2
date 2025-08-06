@@ -6,6 +6,7 @@ import { createRateLimitedConnection } from '../utils/connection';
 import { API_CONFIG } from '../config/api';
 import { SwapService } from '../services/swap.service';
 import { createClient } from '@supabase/supabase-js';
+import { tradeEventsService } from '../services/trade-events.service';
 
 const MAX_RECENT_TRANSACTIONS = 50;
 
@@ -911,6 +912,17 @@ export class WalletMonitorWorker extends BaseWorker {
       });
 
       console.log('[Mirror] Mirror swap completed successfully:', swapResult.signature);
+      
+      // Emit trade success event for vault strategies to monitor
+      tradeEventsService.emitTradeSuccess({
+        strategyId: this.job.id,
+        tradingWalletAddress: this.tradingWalletKeypair?.publicKey.toString() || '',
+        strategyType: 'wallet-monitor',
+        signature: swapResult.signature,
+        timestamp: new Date().toISOString(),
+        amount: amount
+      });
+      
     } catch (error) {
       console.error('[Mirror] Error mirroring swap:', error);
       throw error;
