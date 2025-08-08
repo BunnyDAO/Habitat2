@@ -84,7 +84,8 @@ export class PairTradeWorker extends BaseWorker {
 
     try {
       this.isRunning = true;
-      await this.monitorTriggers();
+      // Start monitoring in background without blocking daemon
+      this.monitorTriggers();
     } catch (error) {
       console.error('[PairTrade] Error starting pair trade monitor:', error);
       throw error;
@@ -132,13 +133,17 @@ export class PairTradeWorker extends BaseWorker {
       console.log(`[PairTrade] Executing swap: ${fromSymbol} -> ${toSymbol}`);
       
       // Get current balance of the token we're swapping from
-      const currentBalance = await this.getTokenBalance(fromMint);
-      if (currentBalance <= 0) {
+      const currentBalanceRaw = await this.getTokenBalance(fromMint);
+      if (currentBalanceRaw <= 0) {
         return { success: false, error: `No ${fromSymbol} balance to swap` };
       }
       
-      // Calculate amount to swap based on allocation percentage
-      const amountToSwap = Math.floor(currentBalance * (job.allocationPercentage / 100));
+      // Convert balance to UI format (getTokenBalance returns base units/lamports)
+      const fromDecimals = await this.getTokenDecimals(fromMint);
+      const currentBalance = currentBalanceRaw / Math.pow(10, fromDecimals);
+      
+      // Calculate amount to swap based on allocation percentage (in UI format for SwapService)
+      const amountToSwap = (currentBalance * job.allocationPercentage) / 100;
       if (amountToSwap <= 0) {
         return { success: false, error: 'Calculated swap amount is zero' };
       }
@@ -163,8 +168,8 @@ export class PairTradeWorker extends BaseWorker {
       job.lastSwapTimestamp = new Date().toISOString();
       
       // Calculate swap details from swap result
-      const fromAmountUI = parseFloat(swapResult.inputAmount);
-      const toAmountUI = parseFloat(swapResult.outputAmount);
+      const fromAmountUI = swapResult.inputAmount;
+      const toAmountUI = swapResult.outputAmount;
       const price = fromAmountUI / toAmountUI;
       
       const swapDetails = {
@@ -417,8 +422,8 @@ export class PairTradeWorker extends BaseWorker {
       job.lastSwapTimestamp = new Date().toISOString();
       
       // Calculate amounts for history
-      const fromAmountUI = parseFloat(swapResult.inputAmount);
-      const toAmountUI = parseFloat(swapResult.outputAmount);
+      const fromAmountUI = swapResult.inputAmount;
+      const toAmountUI = swapResult.outputAmount;
       
       // Add to swap history
       job.swapHistory.push({

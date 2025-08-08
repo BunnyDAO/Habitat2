@@ -15,8 +15,8 @@ export const rateLimitMiddleware = async (
   next: NextFunction
 ) => {
   const key = `rate-limit:${req.ip}:${req.path}`;
-  const limit = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100');
-  const window = parseInt(process.env.RATE_LIMIT_WINDOW || '3600');
+  const limit = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000');
+  const window = parseInt(process.env.RATE_LIMIT_WINDOW || '900');
 
   try {
     const current = await redisClient.incr(key);

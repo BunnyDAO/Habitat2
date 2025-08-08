@@ -81,7 +81,8 @@ export class PriceMonitorWorker extends BaseWorker {
 
     try {
       this.isRunning = true;
-      await this.monitorPrice();
+      // Start monitoring in background without blocking daemon
+      this.monitorPrice();
     } catch (error) {
       console.error('[PriceMonitor] Error starting price monitor:', error);
       throw error;

@@ -14,7 +14,7 @@ const TOKEN_DECIMALS: { [key: string]: number } = {
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const JUPITER_PLATFORM_FEE_BPS = 20; // 0.2% platform fee
-const MIN_SOL_BALANCE = 10000000; // 0.01 SOL for fees and rent
+const MIN_SOL_BALANCE = 5000000; // 0.005 SOL for fees and rent
 const JUPITER_FEE_ACCOUNT = '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV';
 
 interface SwapRequest {
@@ -30,10 +30,10 @@ interface SwapRequest {
     feeBps?: number;
 }
 
-interface SwapResponse {
+export interface SwapResponse {
     signature: string;
-    inputAmount: string;
-    outputAmount: string;
+    inputAmount: number;
+    outputAmount: number;
     routePlan?: Array<{
         swapInfo: {
             label: string;
@@ -171,17 +171,23 @@ export class SwapService {
         const isCode6001 = errorStr.includes('6001') || errorStr.includes('custom: 6001'); // SlippageToleranceExceeded
         const isCode1789 = errorStr.includes('1789') || errorStr.includes('0x1789'); // Jupiter routing error - retryable
         
+        // Check for DEX program errors (Whirlpool, SolFi, etc.) - typically codes 0-100 are slippage/liquidity related
+        const customErrorMatch = errorStr.match(/custom[:]\s?(\d+)/);
+        const isLowCustomError = customErrorMatch && parseInt(customErrorMatch[1]) <= 100;
+        
         // Check for slippage-related message patterns
         const isSlippageMessage = errorStr.includes('slippage') || 
                                  errorStr.includes('price impact') || 
-                                 errorStr.includes('tolerance exceeded');
+                                 errorStr.includes('tolerance exceeded') ||
+                                 errorStr.includes('insufficient liquidity');
 
-        const shouldRetry = isCode6001 || isCode1789 || isSlippageMessage;
+        const shouldRetry = isCode6001 || isCode1789 || isLowCustomError || isSlippageMessage;
         
         console.log('🔍 Error analysis:', {
             errorMessage: error.message,
             isCode6001,
             isCode1789,
+            isLowCustomError: isLowCustomError ? `Custom:${customErrorMatch?.[1]}` : false,
             isSlippageMessage,
             shouldRetry
         });
@@ -444,8 +450,8 @@ export class SwapService {
 
             return {
                 signature,
-            inputAmount: baseAmount.toString(),
-                outputAmount: jupiterQuote.outAmount,
+                inputAmount: parseFloat(baseAmount.toString()),
+                outputAmount: parseFloat(jupiterQuote.outAmount),
                 message: 'Swap completed successfully'
             };
     }

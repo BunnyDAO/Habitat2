@@ -88,16 +88,82 @@ export interface VaultStrategy extends BaseJob {
   vaultPercentage: number;
 }
 
+export interface LevelExecution {
+  timestamp: string;
+  triggerPrice: number;
+  amountTraded: number;       // SOL amount (positive = bought, negative = sold)
+  usdcValue: number;          // USDC value of the trade
+  signature: string;
+  success: boolean;
+  errorMessage?: string;
+}
+
 export interface Level {
+  id: string;
+  type: 'limit_buy' | 'stop_loss' | 'take_profit';
   price: number;
-  percentage: number;
+  
+  // Buy mode specific
+  usdcAmount?: number;        // Fixed USDC amount to spend
+  
+  // Sell mode specific  
+  solPercentage?: number;     // Percentage of current SOL holdings to sell
+  
+  // Execution state
+  executed: boolean;
+  executedCount: number;      // How many times this level has triggered
+  executedAt?: string;        // Last execution timestamp
+  cooldownUntil?: string;     // Timestamp when level can retrigger
+  permanentlyDisabled: boolean;
+  
+  // Execution results
+  executionHistory: LevelExecution[];
+}
+
+export interface ProfitEntry {
+  timestamp: string;
+  balanceChange: number;
+  totalBalance: number;
+  triggerLevel?: string;      // Which level caused this change
+}
+
+export interface TradeEntry {
+  timestamp: string;
+  type: 'buy' | 'sell';
+  amount: number;             // SOL amount
+  price: number;              // SOL price at execution
+  usdcValue: number;
+  levelId: string;
+  profit: number;             // Realized profit/loss
 }
 
 export interface LevelsStrategy extends BaseJob {
   type: JobType.LEVELS;
+  mode: 'buy' | 'sell';
+  
+  // Strategy settings
+  autoRestartAfterComplete: boolean;
+  cooldownHours: number; // Per-level cooldown to prevent spam
+  maxRetriggers: number; // Max times a level can execute before permanent disable
+  
+  // Level management
   levels: Level[];
+  
+  // Execution tracking
+  completedLevels: number;
+  totalLevels: number;
+  lastExecutionTime?: string;
+  strategyStartTime: string;
   lastActivity?: string;
   lastTriggerPrice?: number;
+  
+  // Performance tracking (extends base with additional fields)
+  profitTracking: ProfitTracking & {
+    initialUsdcBalance?: number; // For BUY mode
+    initialSolBalance?: number;  // For SELL mode
+    profitHistory: ProfitEntry[];
+    trades: TradeEntry[];
+  };
 }
 
 export interface PairTradeJob extends BaseJob {

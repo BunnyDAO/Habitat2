@@ -1,6 +1,6 @@
 {
-  "apiBaseUrl": "https://api.yourdomain.com",
-  "wsUrl": "wss://api.yourdomain.com",
+  "apiBaseUrl": "http://localhost:3001",
+  "wsUrl": "ws://localhost:3001",
   "apiVersion": "v1",
-  "isDevelopment": false
+  "isDevelopment": true
 }

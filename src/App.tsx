@@ -707,10 +707,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const successMessageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Add pausedJobs state
   const [pausedJobs, setPausedJobs] = useState<Set<string>>(new Set());
-  // Add state for levels
+  // Add state for levels (multi-level support)
   const [levels, setLevels] = useState<Level[]>([]);
-  const [newLevelPrice, setNewLevelPrice] = useState(0);
-  const [newLevelPercentage, setNewLevelPercentage] = useState<string | number>('');
+  const [levelsOrderType, setLevelsOrderType] = useState<'limit_buy' | 'stop_loss' | 'take_profit'>('stop_loss');
+  const [levelsPrice, setLevelsPrice] = useState(0);
+  const [levelsPercentage, setLevelsPercentage] = useState<string | number>('25');
   
   // Add state for pair trade
   const [pairTokenA, setPairTokenA] = useState('');
@@ -1866,10 +1867,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         case JobType.LEVELS:
                           const levelsJob = job as LevelsStrategy;
                           return {
-                            title: 'Levels',
+                            title: `Levels Strategy (${levelsJob.mode?.toUpperCase() || 'MIXED'})`,
                             details: [
                               levelsJob.levels && levelsJob.levels.length > 0 ? `${levelsJob.levels.length} Level${levelsJob.levels.length !== 1 ? 's' : ''} Set` : 'No Levels Set',
-                              levelsJob.levels && levelsJob.levels.length > 0 ? levelsJob.levels.map(level => `$${level.price}: ${level.percentage}%`).join(', ') : null,
+                              levelsJob.levels && levelsJob.levels.length > 0 ? levelsJob.levels.map(level => {
+                                const typeLabel = level.type === 'limit_buy' ? 'Buy' : level.type === 'stop_loss' ? 'Stop Loss' : 'Take Profit';
+                                const amountInfo = level.type === 'limit_buy' 
+                                  ? `$${level.usdcAmount || 0}` 
+                                  : `${level.solPercentage || 0}%`;
+                                return `${typeLabel}: $${level.price} (${amountInfo})`;
+                              }).join(' | ') : null,
                               levelsJob.lastActivity ? `Last Activity: ${new Date(levelsJob.lastActivity).toLocaleString()}` : null,
                               levelsJob.lastTriggerPrice ? `Last Trigger: $${levelsJob.lastTriggerPrice}` : null
                             ].filter(Boolean)
@@ -3344,7 +3351,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   };
 
-  // Update createLevelsStrategy to parse newLevelPercentage
+  // Multi-level createLevelsStrategy function
   const createLevelsStrategy = async () => {
     if (!selectedTradingWallet) {
       setNotification({
@@ -3365,44 +3372,39 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     try {
       const initialBalance = await connection.getBalance(new PublicKey(selectedTradingWallet.publicKey)) / LAMPORTS_PER_SOL;
 
-      const strategyInstance = StrategyService.getInstance(connection);
-      // Check if a levels strategy already exists for this trading wallet
-      const existingJob = jobs.find(
-        job => 
-          job.tradingWalletPublicKey === selectedTradingWallet.publicKey && 
-          job.type === JobType.LEVELS
-      );
+      // Determine strategy mode based on the levels added
+      const hasLimitBuy = levels.some(level => level.type === 'limit_buy');
+      const hasSellOrders = levels.some(level => level.type === 'stop_loss' || level.type === 'take_profit');
+      
+      // For mixed strategies, default to 'sell' mode (most common)
+      const strategyMode = hasLimitBuy && !hasSellOrders ? 'buy' : 'sell';
 
+      const strategyInstance = StrategyService.getInstance(connection);
       const newJob = await strategyInstance.createLevelsStrategy({
         tradingWallet: selectedTradingWallet,
         initialBalance,
         solPrice,
-        levels: levels
+        mode: strategyMode,
+        levels: levels,
+        autoRestartAfterComplete: false,
+        cooldownHours: 24,
+        maxRetriggers: 3
       });
 
       // Add job to manager
       jobManagerRef.current?.addJob(newJob);
 
       // Update local state
-      if (existingJob) {
-        setJobs(prevJobs => prevJobs.map(job => 
-          job.id === existingJob.id ? newJob : job
-        ));
-        setNotification({
-          message: 'Updated existing levels strategy',
-          type: 'success'
-        });
-      } else {
         setJobs(prevJobs => [...prevJobs, newJob]);
         setNotification({
-          message: 'Created new levels strategy',
+        message: `Created levels strategy with ${levels.length} level${levels.length > 1 ? 's' : ''}`,
           type: 'success'
         });
-      }
 
-      // Reset levels
+      // Reset form
       setLevels([]);
-      setNewLevelPercentage('');
+      setLevelsPrice(0);
+      setLevelsPercentage('25');
     } catch (error) {
       console.error('Error creating levels strategy:', error);
       setNotification({
@@ -4786,7 +4788,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                           : job.type === JobType.VAULT
                                             ? `${(job as VaultStrategy).vaultPercentage}%`
                                           : job.type === JobType.LEVELS
-                                            ? (job as LevelsStrategy).levels.map(level => `$${level.price}: ${level.percentage}%`).join(' | ')
+                                            ? (() => {
+                                                const levelsJob = job as LevelsStrategy;
+                                                return levelsJob.levels?.map(level => {
+                                                  const typeLabel = level.type === 'limit_buy' ? 'Buy' : level.type === 'stop_loss' ? 'Stop' : 'Take';
+                                                  const amountInfo = level.type === 'limit_buy' 
+                                                    ? `$${level.usdcAmount || 0}` 
+                                                    : `${level.solPercentage || 0}%`;
+                                                  return `${typeLabel}: $${level.price} (${amountInfo})`;
+                                                }).join(' | ') || 'No levels';
+                                              })()
                                           : job.type === JobType.PAIR_TRADE
                                             ? `${(job as PairTradeJob).tokenASymbol} ↔ ${(job as PairTradeJob).tokenBSymbol} (${(job as PairTradeJob).allocationPercentage}%)`
                                           : job.type === JobType.DRIFT_PERP
@@ -5963,137 +5974,326 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       margin: '0 0 1.125rem 0',
                       fontSize: '0.75rem'
                     }}>
-                      Set up price levels for automated trading strategies
+                      Simple buy or sell orders at specific price levels
                     </p>
+
                     <div style={{ marginBottom: '1rem' }}>
-                      {levels.map((level, index) => (
-                        <div key={index} style={{ 
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
+                      <label style={{ 
+                        display: 'block',
                           marginBottom: '0.5rem',
-                          backgroundColor: '#2d3748',
-                          padding: '0.5rem',
-                          borderRadius: '0.375rem'
-                        }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ color: '#e2e8f0', fontSize: '0.875rem' }}>
-                              ${level.price}
-                            </div>
-                            <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                              {level.percentage}%
-                            </div>
-                          </div>
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Order Type
+                      </label>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                           <button
-                            onClick={() => setLevels(levels.filter((_, i) => i !== index))}
+                          onClick={() => setLevelsOrderType('limit_buy')}
                             style={{
-                              backgroundColor: 'transparent',
-                              border: 'none',
-                              color: '#94a3b8',
+                            flex: 1,
+                            minWidth: '100px',
+                            padding: '0.5rem',
+                            backgroundColor: levelsOrderType === 'limit_buy' ? '#10b981' : '#1e293b',
+                            border: '1px solid ' + (levelsOrderType === 'limit_buy' ? '#34d399' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
                               cursor: 'pointer',
-                              padding: '0.25rem'
-                            }}
-                          >
-                            ✕
+                            transition: 'all 0.2s',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          Limit Buy
+                        </button>
+                        <button
+                          onClick={() => setLevelsOrderType('stop_loss')}
+                          style={{
+                            flex: 1,
+                            minWidth: '100px',
+                            padding: '0.5rem',
+                            backgroundColor: levelsOrderType === 'stop_loss' ? '#ef4444' : '#1e293b',
+                            border: '1px solid ' + (levelsOrderType === 'stop_loss' ? '#f87171' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          Stop Loss
+                        </button>
+                        <button
+                          onClick={() => setLevelsOrderType('take_profit')}
+                          style={{
+                            flex: 1,
+                            minWidth: '100px',
+                            padding: '0.5rem',
+                            backgroundColor: levelsOrderType === 'take_profit' ? '#3b82f6' : '#1e293b',
+                            border: '1px solid ' + (levelsOrderType === 'take_profit' ? '#60a5fa' : '#4b5563'),
+                            borderRadius: '0.375rem',
+                            color: '#e2e8f0',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          Take Profit
                           </button>
                         </div>
-                      ))}
+                      <p style={{ 
+                        color: '#6b7280',
+                        fontSize: '0.75rem',
+                        margin: '0.5rem 0 0 0',
+                        lineHeight: '1.4'
+                      }}>
+                        {levelsOrderType === 'limit_buy' 
+                          ? '🟢 Buy SOL when price drops to or below the specified level'
+                          : levelsOrderType === 'stop_loss'
+                          ? '🔴 Sell SOL when price drops to or below the specified level (protect against losses)'
+                          : '💰 Sell SOL when price rises to or above the specified level (capture gains)'
+                        }
+                      </p>
                     </div>
 
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ 
-                        display: 'block',
-                        marginBottom: '0.5rem',
-                        color: '#e2e8f0',
-                        fontSize: '0.875rem'
-                      }}>
-                        Price Level (USD)
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <input
-                          type="number"
-                          value={newLevelPrice || ''}
-                          onChange={(e) => setNewLevelPrice(parseFloat(e.target.value) || 0)}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '0.875rem',
-                            marginBottom: '0.5rem'
-                          }}
-                          placeholder="Enter price level"
-                          step="0.01"
-                        />
+                    {/* Compact Price and Amount Row */}
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: '1fr 1fr', 
+                      gap: '1rem', 
+                      marginBottom: '1rem',
+                      width: '100%',
+                      maxWidth: '100%'
+                    }}>
+                      {/* SOL Price */}
+                      <div style={{ minWidth: 0, maxWidth: '100%' }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem',
+                          fontWeight: '500'
+                        }}>
+                          SOL Price
+                        </label>
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          padding: '0.75rem',
+                          gap: '0.5rem'
+                        }}>
+                          <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>$</span>
+                          <input
+                            type="number"
+                            value={levelsPrice || ''}
+                            onChange={(e) => setLevelsPrice(parseFloat(e.target.value) || 0)}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'transparent',
+                              border: 'none',
+                              outline: 'none',
+                              color: '#e2e8f0',
+                              fontSize: '0.875rem'
+                            }}
+                            placeholder="200"
+                            step="0.01"
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    <div style={{ marginBottom: '1rem' }}>
-                      <label style={{ 
-                        display: 'block',
-                        marginBottom: '0.5rem',
-                        color: '#e2e8f0',
-                        fontSize: '0.875rem'
-                      }}>
-                        Percentage to Sell
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <input
-                          type="number"
-                          value={newLevelPercentage}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            if (value === '') {
-                              setNewLevelPercentage('');
-                            } else {
-                              const num = parseFloat(value);
-                              if (!isNaN(num)) {
-                                setNewLevelPercentage(Math.min(100, Math.max(0, num)));
+                      {/* Amount/Percentage */}
+                      <div style={{ minWidth: 0, maxWidth: '100%' }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem',
+                          fontWeight: '500'
+                        }}>
+                          {levelsOrderType === 'limit_buy' ? 'USDC Amount' : 'SOL Amount'}
+                        </label>
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
+                          padding: '0.75rem',
+                          gap: '0.25rem'
+                        }}>
+                          <input
+                            type="number"
+                            value={levelsPercentage}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (value === '') {
+                                setLevelsPercentage('');
+                              } else {
+                                const num = parseFloat(value);
+                                if (!isNaN(num)) {
+                                  if (levelsOrderType === 'limit_buy') {
+                                    setLevelsPercentage(Math.max(0, num));
+                                  } else {
+                                    setLevelsPercentage(Math.min(100, Math.max(0, num)));
+                                  }
+                                }
                               }
-                            }
-                          }}
-                          style={{
-                            width: '60px',
-                            padding: '0.75rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '0.875rem'
-                          }}
-                          min="1"
-                          max="100"
-                        />
-                        <span style={{ color: '#e2e8f0' }}>%</span>
+                            }}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'transparent',
+                              border: 'none',
+                              outline: 'none',
+                              color: '#e2e8f0',
+                              fontSize: '0.875rem'
+                            }}
+                            min={levelsOrderType === 'limit_buy' ? '1' : '1'}
+                            max={levelsOrderType === 'limit_buy' ? undefined : '100'}
+                            placeholder={levelsOrderType === 'limit_buy' ? '100' : '25'}
+                          />
+                          <span style={{ 
+                            color: '#94a3b8', 
+                            fontSize: '0.875rem',
+                            minWidth: '12px',
+                            textAlign: 'center',
+                            display: 'inline-block'
+                          }}>
+                            {levelsOrderType === 'limit_buy' ? '$' : '%'}
+                          </span>
+                        </div>
                       </div>
                     </div>
+                    
+                    {/* Helper Text */}
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <p style={{ 
+                        color: '#6b7280',
+                        fontSize: '0.75rem',
+                        margin: '0',
+                        lineHeight: '1.4',
+                        textAlign: 'center'
+                      }}>
+                        {levelsOrderType === 'limit_buy' 
+                          ? 'Enter the USD amount to spend when SOL reaches your target price'
+                          : 'Enter the percentage of your SOL holdings to sell'
+                        }
+                      </p>
+                    </div>
 
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                    {/* Add Level Button */}
+                    <div style={{ marginBottom: '1rem' }}>
                       <button
                         onClick={() => {
-                          if (newLevelPrice && newLevelPercentage) {
-                            setLevels([...levels, { price: newLevelPrice, percentage: newLevelPercentage }]);
-                            setNewLevelPrice(0);
-                            setNewLevelPercentage(0);
+                          if (levelsPrice && levelsPercentage) {
+                            const newLevel: Level = {
+                              id: `level-${Date.now()}`,
+                              type: levelsOrderType,
+                              price: levelsPrice,
+                              executed: false,
+                              executedCount: 0,
+                              permanentlyDisabled: false,
+                              executionHistory: []
+                            };
+
+                            // Set amount/percentage based on order type
+                            if (levelsOrderType === 'limit_buy') {
+                              newLevel.usdcAmount = typeof levelsPercentage === 'string' ? parseFloat(levelsPercentage) : levelsPercentage;
+                            } else {
+                              newLevel.solPercentage = typeof levelsPercentage === 'string' ? parseFloat(levelsPercentage) : levelsPercentage;
+                            }
+
+                            setLevels([...levels, newLevel]);
+                            setLevelsPrice(0);
+                            setLevelsPercentage(levelsOrderType === 'limit_buy' ? '100' : '25');
                           }
                         }}
-                        disabled={!newLevelPrice || !newLevelPercentage}
+                        disabled={!levelsPrice || !levelsPercentage}
                         style={{
-                          flex: 1,
+                          width: '100%',
                           padding: '0.75rem',
-                          backgroundColor: newLevelPrice && newLevelPercentage ? '#3b82f6' : '#1e293b',
-                          border: '1px solid ' + (newLevelPrice && newLevelPercentage ? '#60a5fa' : '#4b5563'),
+                          backgroundColor: levelsPrice && levelsPercentage ? '#10b981' : '#1e293b',
+                          border: '1px solid ' + (levelsPrice && levelsPercentage ? '#34d399' : '#4b5563'),
                           borderRadius: '0.375rem',
                           color: '#e2e8f0',
-                          cursor: newLevelPrice && newLevelPercentage ? 'pointer' : 'not-allowed',
-                          transition: 'all 0.2s'
+                          cursor: levelsPrice && levelsPercentage ? 'pointer' : 'not-allowed',
+                          transition: 'all 0.2s',
+                          fontSize: '0.875rem'
                         }}
                       >
-                        Add Level
+                        + Add Level
                       </button>
                     </div>
+
+                    {/* Levels List */}
+                    {levels.length > 0 && (
+                      <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Added Levels ({levels.length})
+                        </label>
+                        <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                          {levels.map((level, index) => (
+                            <div key={level.id} style={{ 
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              marginBottom: '0.5rem',
+                              backgroundColor: '#2d3748',
+                              padding: '0.75rem',
+                              borderRadius: '0.375rem',
+                              border: `1px solid ${
+                                level.type === 'limit_buy' ? '#34d399' : 
+                                level.type === 'stop_loss' ? '#f87171' : '#60a5fa'
+                              }`
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ 
+                                  color: '#e2e8f0', 
+                                  fontSize: '0.875rem',
+                                  fontWeight: '500'
+                                }}>
+                                  {level.type === 'limit_buy' ? '🟢 Limit Buy' : 
+                                   level.type === 'stop_loss' ? '🔴 Stop Loss' : '💰 Take Profit'}
+                                </div>
+                                <div style={{ 
+                                  color: '#94a3b8', 
+                                  fontSize: '0.75rem',
+                                  marginTop: '0.25rem'
+                                }}>
+                                  ${level.price} • {
+                                    level.type === 'limit_buy' 
+                                      ? `$${level.usdcAmount} USDC`
+                                      : `${level.solPercentage}% SOL`
+                                  }
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setLevels(levels.filter((_, i) => i !== index))}
+                                style={{
+                                  backgroundColor: 'transparent',
+                                  border: 'none',
+                                  color: '#94a3b8',
+                                  cursor: 'pointer',
+                                  padding: '0.25rem',
+                                  borderRadius: '0.25rem',
+                                  fontSize: '0.875rem',
+                                  transition: 'color 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.target.style.color = '#ef4444'}
+                                onMouseLeave={(e) => e.target.style.color = '#94a3b8'}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <button
                       onClick={createLevelsStrategy}

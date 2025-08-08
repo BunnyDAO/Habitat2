@@ -10,10 +10,14 @@ export interface StrategyConfig {
   direction?: 'above' | 'below';
   percentageToSell?: number;
   vaultPercentage?: number;
-  levels?: Array<{
-    price: number;
-    percentage: number;
-  }>;
+  
+  // Enhanced levels fields
+  mode?: 'buy' | 'sell';
+  levels?: any[]; // Using any[] for now to handle complex Level interface
+  autoRestartAfterComplete?: boolean;
+  cooldownHours?: number;
+  maxRetriggers?: number;
+  
   // Pair trade specific fields
   tokenAMint?: string;
   tokenBMint?: string;

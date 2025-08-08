@@ -1,6 +1,6 @@
 import { Connection } from '@solana/web3.js';
 import { strategyApiService } from './api/strategy.service';
-import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, DriftPerpJob, ensureUint8Array } from '../types/jobs';
+import { JobType, WalletMonitoringJob, PriceMonitoringJob, VaultStrategy, LevelsStrategy, PairTradeJob, DriftPerpJob, Level, ensureUint8Array } from '../types/jobs';
 import { TradingWallet } from '../types/wallet';
 import type { ProfitTracking } from '../types/profit';
 
@@ -30,7 +30,11 @@ interface VaultParams extends BaseStrategyParams {
 }
 
 interface LevelsParams extends BaseStrategyParams {
-  levels: Array<{ price: number; percentage: number }>;
+  mode: 'buy' | 'sell';
+  levels: Level[];
+  autoRestartAfterComplete?: boolean;
+  cooldownHours?: number;
+  maxRetriggers?: number;
 }
 
 interface PairTradeParams extends BaseStrategyParams {
@@ -258,7 +262,11 @@ export class StrategyService {
     if (existingJob && existingJob.type === JobType.LEVELS) {
       // Update existing job
       const updatedJob = this.updateExistingJob<LevelsStrategy>(existingJob, {
+        mode: params.mode,
         levels: params.levels,
+        autoRestartAfterComplete: params.autoRestartAfterComplete || false,
+        cooldownHours: params.cooldownHours || 24,
+        maxRetriggers: params.maxRetriggers || 3,
         isActive: true
       });
 
@@ -267,7 +275,11 @@ export class StrategyService {
         tradingWalletPublicKey: params.tradingWallet.publicKey,
         strategy_type: JobType.LEVELS,
         config: {
-          levels: params.levels
+          mode: params.mode,
+          levels: params.levels,
+          autoRestartAfterComplete: params.autoRestartAfterComplete || false,
+          cooldownHours: params.cooldownHours || 24,
+          maxRetriggers: params.maxRetriggers || 3
         }
       });
 
@@ -279,19 +291,41 @@ export class StrategyService {
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       strategy_type: JobType.LEVELS,
       config: {
-        levels: params.levels
+        mode: params.mode,
+        levels: params.levels,
+        autoRestartAfterComplete: params.autoRestartAfterComplete || false,
+        cooldownHours: params.cooldownHours || 24,
+        maxRetriggers: params.maxRetriggers || 3
       }
     });
 
     const newJob: LevelsStrategy = {
       id: backendStrategy.id.toString(),
       type: JobType.LEVELS,
+      mode: params.mode,
       tradingWalletPublicKey: params.tradingWallet.publicKey,
       tradingWalletSecretKey: ensureUint8Array(params.tradingWallet.secretKey ?? []),
+      
+      // Strategy settings
+      autoRestartAfterComplete: params.autoRestartAfterComplete || false,
+      cooldownHours: params.cooldownHours || 24,
+      maxRetriggers: params.maxRetriggers || 3,
+      
+      // Level management
       levels: params.levels,
+      
+      // Execution tracking
+      completedLevels: 0,
+      totalLevels: params.levels.length,
+      strategyStartTime: new Date().toISOString(),
+      
       isActive: true,
       createdAt: new Date().toISOString(),
-      profitTracking: this.createInitialProfitTracking(params.initialBalance, params.solPrice)
+      profitTracking: {
+        ...this.createInitialProfitTracking(params.initialBalance, params.solPrice),
+        profitHistory: [],
+        trades: []
+      }
     };
 
     this.jobs.set(newJob.id, newJob);

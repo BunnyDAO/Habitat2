@@ -344,18 +344,36 @@ class StrategyDaemon {
           const job = {
             id: strategy.id,
             type: 'levels',
+            mode: strategy.strategy_mode || strategy.config?.mode || 'sell', // Default to sell mode for backward compatibility
             tradingWalletPublicKey: strategy.trading_wallets?.wallet_pubkey || strategy.current_wallet_pubkey,
             tradingWalletSecretKey: secretKey,
             isActive: true,
             createdAt: strategy.created_at,
             lastActivity: strategy.last_activity,
+            
+            // Strategy settings
+            autoRestartAfterComplete: strategy.auto_restart_after_complete || strategy.config?.autoRestartAfterComplete || false,
+            cooldownHours: strategy.cooldown_hours || strategy.config?.cooldownHours || 24,
+            maxRetriggers: strategy.max_retriggers || strategy.config?.maxRetriggers || 3,
+            
+            // Level management  
             levels: strategy.config?.levels || [],
+            
+            // Execution tracking
+            completedLevels: strategy.config?.completedLevels || 0,
+            totalLevels: strategy.config?.totalLevels || (strategy.config?.levels || []).length,
+            lastExecutionTime: strategy.config?.lastExecutionTime,
+            strategyStartTime: strategy.created_at,
+            
+            // Performance tracking (enhanced)
             profitTracking: {
               initialBalance: strategy.initial_balance || 0,
               currentBalance: strategy.current_balance || 0,
               totalProfit: strategy.total_profit || 0,
-              profitHistory: strategy.profit_history || [],
-              trades: strategy.trades || []
+              profitHistory: strategy.profit_history || strategy.config?.profitTracking?.profitHistory || [],
+              trades: strategy.trades || strategy.config?.profitTracking?.trades || [],
+              initialUsdcBalance: strategy.config?.profitTracking?.initialUsdcBalance,
+              initialSolBalance: strategy.config?.profitTracking?.initialSolBalance
             }
           } as import('../types/jobs').LevelsStrategy;
           worker = new LevelsWorker(job, HELIUS_ENDPOINT, this.swapService, this.priceFeedService);

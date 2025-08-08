@@ -739,7 +739,7 @@ export class WalletMonitorWorker extends BaseWorker {
         tradeDetails: {
           signature: swapResult.signature,
           inputAmount: amount,
-          outputAmount: parseFloat(swapResult.outputAmount),
+          outputAmount: swapResult.outputAmount,
           timestamp: Date.now()
         }
       };
