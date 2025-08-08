@@ -750,6 +750,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   } | null>(null);
   const [fundingWallet, setFundingWallet] = useState<TradingWallet | null>(null);
   const [fundingAmount, setFundingAmount] = useState('');
+  const [mainWalletSolBalance, setMainWalletSolBalance] = useState<number | null>(null);
   // Add state for success message
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const successMessageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -2129,8 +2130,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setFundingWallet(tw);
-                        setFundingAmount('');
+                        openFundingModal(tw);
                       }}
                       className={`${walletStyles.button} ${walletStyles.primary}`}
                     >
@@ -2178,8 +2178,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                   <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.75rem' }}>
                     <button
                       onClick={() => {
-                        setFundingWallet(tw);
-                        setFundingAmount('');
+                        openFundingModal(tw);
                       }}
                       className={walletStyles.button}
                     >
@@ -4169,6 +4168,30 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [walletErrorCounts, setWalletErrorCounts] = useState<Record<string, number>>({});
   const balanceUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Function to fetch main wallet SOL balance
+  const fetchMainWalletBalance = async (): Promise<number | null> => {
+    if (!wallet.publicKey || !connection) return null;
+    
+    try {
+      const balance = await withRetryGlobal(() => connection.getBalance(wallet.publicKey!), 3);
+      const solBalance = balance / LAMPORTS_PER_SOL;
+      setMainWalletSolBalance(solBalance);
+      return solBalance;
+    } catch (error) {
+      console.warn('⚠️ Failed to fetch main wallet balance:', error);
+      setMainWalletSolBalance(null);
+      return null;
+    }
+  };
+
+  // Function to open funding modal and fetch main wallet balance
+  const openFundingModal = async (tradingWallet: TradingWallet) => {
+    setFundingWallet(tradingWallet);
+    setFundingAmount('');
+    // Fetch main wallet balance when modal opens
+    await fetchMainWalletBalance();
+  };
+
   const fundWallet = async (tradingWallet: TradingWallet, amount: number) => {
     if (!wallet.publicKey || !connection) return;
     
@@ -4202,6 +4225,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       setShowFundingModal(false);
       setFundingWallet(null);
       setFundingAmount('');
+      setMainWalletSolBalance(null);
 
       // Wait for confirmation using getSignatureStatus instead of confirmTransaction
       let retryCount = 0;
@@ -7285,6 +7309,120 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
             }}>
               Fund Trading Wallet
             </h3>
+
+            {/* Main Wallet Balance Display */}
+            <div style={{
+              backgroundColor: '#374151',
+              border: '1px solid #4b5563',
+              borderRadius: '0.5rem',
+              padding: '0.75rem',
+              marginBottom: '1rem'
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+                  Available in Main Wallet:
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {mainWalletSolBalance !== null ? (
+                    <span style={{ 
+                      color: '#10b981', 
+                      fontWeight: '600',
+                      fontSize: '1rem'
+                    }}>
+                      {mainWalletSolBalance.toFixed(4)} SOL
+                    </span>
+                  ) : (
+                    <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+                      Loading...
+                    </span>
+                  )}
+                  <button
+                    onClick={fetchMainWalletBalance}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#60a5fa',
+                      cursor: 'pointer',
+                      fontSize: '0.75rem',
+                      padding: '0.25rem',
+                      borderRadius: '0.25rem'
+                    }}
+                    title="Refresh balance"
+                  >
+                    🔄
+                  </button>
+                </div>
+              </div>
+              {mainWalletSolBalance !== null && mainWalletSolBalance > 0 && (
+                <div style={{ 
+                  marginTop: '0.5rem',
+                  display: 'flex',
+                  gap: '0.5rem'
+                }}>
+                  <button
+                    onClick={() => setFundingAmount((mainWalletSolBalance * 0.25).toFixed(4))}
+                    style={{
+                      background: '#4b5563',
+                      border: '1px solid #6b7280',
+                      color: '#e5e7eb',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    25%
+                  </button>
+                  <button
+                    onClick={() => setFundingAmount((mainWalletSolBalance * 0.5).toFixed(4))}
+                    style={{
+                      background: '#4b5563',
+                      border: '1px solid #6b7280',
+                      color: '#e5e7eb',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    50%
+                  </button>
+                  <button
+                    onClick={() => setFundingAmount((mainWalletSolBalance * 0.75).toFixed(4))}
+                    style={{
+                      background: '#4b5563',
+                      border: '1px solid #6b7280',
+                      color: '#e5e7eb',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    75%
+                  </button>
+                  <button
+                    onClick={() => setFundingAmount((mainWalletSolBalance - 0.01).toFixed(4))}
+                    style={{
+                      background: '#4b5563',
+                      border: '1px solid #6b7280',
+                      color: '#e5e7eb',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                    title="Max (leave 0.01 SOL for fees)"
+                  >
+                    Max
+                  </button>
+                </div>
+              )}
+            </div>
             
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ 
@@ -7321,6 +7459,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 onClick={() => {
                   setFundingWallet(null);
                   setFundingAmount('');
+                  setMainWalletSolBalance(null);
                 }}
                 className={`${walletStyles.button} ${walletStyles.secondary}`}
               >
