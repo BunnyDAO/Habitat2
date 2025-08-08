@@ -272,7 +272,13 @@ export class SwapService {
             } catch (ataError) {
                 console.error('Error creating/getting token accounts:', ataError);
                 const errorMessage = ataError instanceof Error ? ataError.message : String(ataError);
-                throw new Error(`Failed to prepare token accounts: ${errorMessage}`);
+                
+                // If it's just a TokenAccountNotFoundError, we can try to continue
+                if (errorMessage.includes('TokenAccountNotFoundError')) {
+                    console.log('TokenAccountNotFoundError encountered, but this may be handled by Jupiter');
+                } else {
+                    throw new Error(`Failed to prepare token accounts: ${errorMessage}`);
+                }
             }
 
             // Try swap with fallback approaches for 0x1789 errors

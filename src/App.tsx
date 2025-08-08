@@ -557,62 +557,110 @@ const registerServiceWorker = async (): Promise<ServiceWorkerRegistration | unde
   return undefined;
 };
 
-// Helper function to determine if balance changes are significant
+// Utility function for retrying failed RPC calls
+const withRetryGlobal = async <T,>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
+  let lastError: Error | null = null;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`⚠️ Retry attempt ${i + 1}/${maxRetries} failed:`, error);
+      if (i < maxRetries - 1) {
+        // Exponential backoff: 1s, 2s, 4s
+        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+      }
+    }
+  }
+  throw lastError;
+};
+
+// Enhanced balance change detection with USD value thresholds
 function hasSignificantBalanceChange(oldBalances: any[], newBalances: any[]): boolean {
-  console.log('Checking balance changes:', { oldBalances, newBalances });
+  console.log('🔍 Checking balance changes:', { oldBalances, newBalances });
   
   if (!oldBalances || !newBalances) {
-    console.log('Missing balances, treating as significant change');
+    console.log('✅ Missing balances, treating as significant change');
     return true;
   }
   if (oldBalances.length !== newBalances.length) {
-    console.log('Balance array lengths differ, treating as significant change');
+    console.log('✅ Balance array lengths differ, treating as significant change');
     return true;
   }
 
+  // Calculate total USD values for overall portfolio comparison
+  const oldTotalUsd = oldBalances.reduce((sum, b) => sum + (b.usdValue || 0), 0);
+  const newTotalUsd = newBalances.reduce((sum, b) => sum + (b.usdValue || 0), 0);
+  const totalUsdChange = Math.abs(newTotalUsd - oldTotalUsd);
+  const totalUsdChangePercent = oldTotalUsd > 0 ? totalUsdChange / oldTotalUsd : 0;
+
+  console.log('💰 Portfolio USD comparison:', {
+    oldTotal: oldTotalUsd.toFixed(2),
+    newTotal: newTotalUsd.toFixed(2),
+    change: totalUsdChange.toFixed(2),
+    changePercent: (totalUsdChangePercent * 100).toFixed(2) + '%'
+  });
+
+  // Significant portfolio change thresholds:
+  // 1. Absolute change > $1.00 (catches meaningful dollar changes)
+  // 2. Percentage change > 2% (catches meaningful relative changes)
+  if (totalUsdChange > 1.00 || totalUsdChangePercent > 0.02) {
+    console.log('✅ Portfolio USD value change is significant');
+    return true;
+  }
+
+  // Check individual token changes for precision
   for (const newBalance of newBalances) {
     const oldBalance = oldBalances.find(b => b.mint === newBalance.mint);
     if (!oldBalance) {
-      console.log(`New balance for mint ${newBalance.mint} not found in old balances, treating as significant change`);
+      console.log(`✅ New token ${newBalance.symbol || newBalance.mint} detected`);
       return true;
     }
     
-    // For SOL, consider changes greater than 0.0001 SOL significant
-    if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
-      const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
-      const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
-      const difference = Math.abs(newAmount - oldAmount);
-      console.log(`SOL balance comparison:`, { 
-        oldAmount, 
-        newAmount, 
-        difference, 
-        threshold: 0.0001,
-        isSignificant: difference > 0.0001 
+    // USD value comparison (most reliable)
+    if (newBalance.usdValue !== undefined && oldBalance.usdValue !== undefined) {
+      const usdDifference = Math.abs(newBalance.usdValue - oldBalance.usdValue);
+      const usdChangePercent = oldBalance.usdValue > 0 ? usdDifference / oldBalance.usdValue : 0;
+      
+      console.log(`💲 ${newBalance.symbol || newBalance.mint} USD comparison:`, {
+        oldUsd: oldBalance.usdValue.toFixed(4),
+        newUsd: newBalance.usdValue.toFixed(4),
+        difference: usdDifference.toFixed(4),
+        changePercent: (usdChangePercent * 100).toFixed(2) + '%'
       });
-      if (difference > 0.0001) {
-        console.log('SOL balance change is significant');
+
+      // Token-level thresholds:
+      // 1. Absolute USD change > $0.50 (meaningful dollar change)
+      // 2. Percentage change > 5% (meaningful relative change)
+      if (usdDifference > 0.50 || usdChangePercent > 0.05) {
+        console.log(`✅ ${newBalance.symbol || newBalance.mint} USD change is significant`);
         return true;
       }
     } else {
-      // For other tokens, consider changes greater than 0.1% significant
+      // Fallback to token amount comparison if USD values unavailable
       const oldAmount = oldBalance.balance / Math.pow(10, oldBalance.decimals);
       const newAmount = newBalance.balance / Math.pow(10, newBalance.decimals);
-      if (oldAmount === 0 && newAmount === 0) continue;
-      const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
-      console.log(`Token ${newBalance.symbol || newBalance.mint} balance comparison:`, { 
-        oldAmount, 
-        newAmount, 
-        change, 
-        threshold: 0.001,
-        isSignificant: change > 0.001 
-      });
-      if (change > 0.001) {
-        console.log(`Token balance change is significant for ${newBalance.symbol || newBalance.mint}`);
-        return true;
+      
+      if (newBalance.mint === 'So11111111111111111111111111111111111111112') {
+        // SOL: significant if > 0.001 SOL change (~ $0.17 at $170/SOL)
+        const difference = Math.abs(newAmount - oldAmount);
+        if (difference > 0.001) {
+          console.log(`✅ SOL amount change is significant: ${difference.toFixed(6)} SOL`);
+          return true;
+        }
+      } else {
+        // Other tokens: significant if > 1% change
+        if (oldAmount === 0 && newAmount === 0) continue;
+        const change = Math.abs(newAmount - oldAmount) / (oldAmount || 1);
+        if (change > 0.01) {
+          console.log(`✅ ${newBalance.symbol || newBalance.mint} amount change is significant: ${(change * 100).toFixed(2)}%`);
+          return true;
+        }
       }
     }
   }
-  console.log('No significant balance changes detected');
+  
+  console.log('⚪ No significant balance changes detected');
   return false;
 }
 
@@ -1383,15 +1431,55 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       
       const balancePromises = tradingWallets.map(async (tw) => {
         try {
-          // Get SOL balance from chain
-          const balance = await connection.getBalance(new PublicKey(tw.publicKey));
+          // Circuit breaker: Skip wallets with too many consecutive errors
+          const errorCount = walletErrorCounts[tw.publicKey] || 0;
+          if (errorCount >= 5) {
+            console.warn(`🚫 Skipping wallet ${tw.publicKey} due to repeated errors (${errorCount} failures)`);
+            return 0;
+          }
+
+          // Validate wallet address format first
+          let publicKey;
+          try {
+            publicKey = new PublicKey(tw.publicKey);
+          } catch (error) {
+            console.warn(`⚠️ Invalid wallet address format: ${tw.publicKey}`, error);
+            // Increment error count for invalid addresses
+            setWalletErrorCounts(prev => ({ ...prev, [tw.publicKey]: (prev[tw.publicKey] || 0) + 1 }));
+            return 0; // Return 0 balance for invalid addresses
+          }
+
+          // Get SOL balance from chain with retry logic
+          let balance;
+          try {
+            balance = await withRetryGlobal(() => connection.getBalance(publicKey), 3);
+          } catch (error) {
+            console.warn(`⚠️ SOL balance fetch failed for ${tw.publicKey}:`, error);
+            // Increment error count for this wallet
+            setWalletErrorCounts(prev => ({ ...prev, [tw.publicKey]: (prev[tw.publicKey] || 0) + 1 }));
+            balance = 0; // Fallback to 0 balance
+          }
           const solBalance = balance / LAMPORTS_PER_SOL;
           
-          // Get token accounts
-          const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-            new PublicKey(tw.publicKey),
-            { programId: TOKEN_PROGRAM_ID }
-          );
+          // Get token accounts with error handling
+          let tokenAccounts;
+          try {
+            tokenAccounts = await withRetryGlobal(() => connection.getParsedTokenAccountsByOwner(
+              publicKey,
+              { programId: TOKEN_PROGRAM_ID }
+            ), 3);
+          } catch (error) {
+            console.warn(`⚠️ Token account fetch failed for ${tw.publicKey}:`, error);
+            // Increment error count for this wallet
+            setWalletErrorCounts(prev => ({ ...prev, [tw.publicKey]: (prev[tw.publicKey] || 0) + 1 }));
+            // Fallback to empty array to continue processing
+            tokenAccounts = { value: [] };
+          }
+
+          // If we reach here with no errors, reset the error count for this wallet
+          if (balance > 0 || tokenAccounts.value.length >= 0) {
+            setWalletErrorCounts(prev => ({ ...prev, [tw.publicKey]: 0 }));
+          }
 
           // Calculate total value in SOL
           let totalValue = solBalance;
@@ -4076,6 +4164,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [isUpdatingBalances, setIsUpdatingBalances] = useState(false);
   const [totalPortfolioValue, setTotalPortfolioValue] = useState(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Track problematic wallets to avoid infinite retries
+  const [walletErrorCounts, setWalletErrorCounts] = useState<Record<string, number>>({});
   const balanceUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const fundWallet = async (tradingWallet: TradingWallet, amount: number) => {
@@ -4466,26 +4557,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
             const lastUsdUpdate = lastForcedUsdUpdate[tw.publicKey] || 0;
             const timeSinceLastUsdUpdate = now - lastUsdUpdate;
             
-            // Check for significant USD value changes (>5% change)
-            const currentTotal = currentBackendBalances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
-            const newTotal = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
-            const usdChangePercent = currentTotal > 0 ? Math.abs(newTotal - currentTotal) / currentTotal : 0;
-            const significantUsdChange = usdChangePercent > 0.05; // 5% change
-            
-            // Conditions for updating UI:
-            // 1. Token amounts changed (always update)
-            // 2. 12 minutes passed since last USD update (forced refresh)
-            // 3. Significant USD value change (>5%)
+            // Enhanced balance change detection
             const tokenBalancesChanged = hasSignificantBalanceChange(currentBackendBalances, data.balances);
             const forceUsdUpdate = timeSinceLastUsdUpdate > 12 * 60 * 1000; // 12 minutes
             
-            if (tokenBalancesChanged || forceUsdUpdate || significantUsdChange) {
+            // If significant changes detected, trigger comprehensive UI refresh
+            if (tokenBalancesChanged || forceUsdUpdate) {
               let updateReason = '';
-              if (tokenBalancesChanged) updateReason = 'token amounts changed';
-              else if (forceUsdUpdate) updateReason = 'periodic USD refresh (12min)';
-              else if (significantUsdChange) updateReason = `significant USD change (${(usdChangePercent * 100).toFixed(1)}%)`;
+              if (tokenBalancesChanged) updateReason = 'significant balance changes detected';
+              else if (forceUsdUpdate) updateReason = 'periodic refresh (12min)';
               
-              console.log(`Updating UI for wallet ${tw.publicKey}: ${updateReason}`);
+              console.log(`📱 Updating UI for wallet ${tw.publicKey}: ${updateReason}`);
               
               const total = data.balances.reduce((sum, balance) => sum + (balance.usdValue || 0), 0);
               setTradingWalletBalances(prev => ({
@@ -4504,8 +4586,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                 ...prev,
                 [tw.publicKey]: now
               }));
+
+              // 🚀 TRIGGER AUTOMATIC UI REFRESH FOR SIGNIFICANT CHANGES
+              if (tokenBalancesChanged) {
+                console.log(`🔄 Triggering automatic UI refresh for ${tw.publicKey} due to balance changes`);
+                
+                // Dispatch the update-balances event to refresh all UI components
+                window.dispatchEvent(new Event('update-balances'));
+                
+                // Also trigger specific wallet balance update
+                window.dispatchEvent(new CustomEvent('balanceUpdate', {
+                  detail: { walletAddress: tw.publicKey }
+                }));
+              }
             } else {
-              console.log(`No update needed for wallet ${tw.publicKey} (USD change: ${(usdChangePercent * 100).toFixed(1)}%, time since last: ${Math.round(timeSinceLastUsdUpdate / 1000 / 60)}min)`);
+              console.log(`⚪ No update needed for wallet ${tw.publicKey} (time since last: ${Math.round(timeSinceLastUsdUpdate / 1000 / 60)}min)`);
             }
           }
         } catch (e) {
@@ -4518,8 +4613,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     };
 
     fetchAllBackendBalances();
-    // Keep at 3 seconds for faster responsiveness to token changes, smart filtering prevents unnecessary updates
-    const interval = setInterval(fetchAllBackendBalances, 3000);
+    // Ultra-fast 0.5 second polling for maximum responsiveness to balance changes
+    const interval = setInterval(fetchAllBackendBalances, 500);
 
     return () => {
       isCancelled = true;
@@ -7593,11 +7688,18 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       
       let newBalances: TokenBalance[] = [];
       
-      // Get token accounts
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        new PublicKey(walletAddress),
-        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-      );
+      // Get token accounts with error handling
+      let tokenAccounts;
+      try {
+        tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          new PublicKey(walletAddress),
+          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+        );
+      } catch (error) {
+        logError(`⚠️ Token account fetch failed for ${walletAddress}:`, error);
+        // Fallback to empty array to continue processing SOL balance
+        tokenAccounts = { value: [] };
+      }
 
       // Collect all mint addresses
       const mintAddresses = ['So11111111111111111111111111111111111111112', // Include SOL
@@ -7957,43 +8059,62 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
     fetchBalances();
   }, [fetchBalances]);
 
-  // Subscribe to balance updates with debouncing
+  // Enhanced WebSocket subscriptions for real-time balance detection
   useEffect(() => {
     if (!walletAddress) return;
 
     const connection = createRateLimitedConnection();
+    let subscriptionIds: number[] = [];
 
-    // Subscribe to account changes for SOL balance
-    const solSubscriptionId = connection.onAccountChange(
-      new PublicKey(walletAddress),
-      () => {
-        log('SOL balance changed, debouncing refresh...');
-        debouncedFetchBalances();
-      },
-      'confirmed'
-    );
+    try {
+      // Subscribe to account changes for SOL balance
+      const solSubscriptionId = connection.onAccountChange(
+        new PublicKey(walletAddress),
+        (accountInfo, context) => {
+          log(`🔄 SOL balance changed for ${walletAddress} (slot: ${context.slot})`);
+          debouncedFetchBalances();
+        },
+        'confirmed'
+      );
+      subscriptionIds.push(solSubscriptionId);
 
-    // Subscribe to program account changes for token balances
-    const tokenSubscriptionId = connection.onProgramAccountChange(
-      new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-      () => {
-        log('Token balance changed, debouncing refresh...');
-        debouncedFetchBalances();
-      },
-      'confirmed',
-      [
-        {
-          memcmp: {
-            offset: 32, // Owner offset in token account
-            bytes: walletAddress
+      // Subscribe to program account changes for token balances
+      const tokenSubscriptionId = connection.onProgramAccountChange(
+        new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+        (keyedAccountInfo, context) => {
+          log(`🪙 Token balance changed for ${walletAddress} (slot: ${context.slot})`);
+          debouncedFetchBalances();
+        },
+        'confirmed',
+        [
+          {
+            memcmp: {
+              offset: 32, // Owner offset in token account
+              bytes: walletAddress
+            }
           }
-        }
-      ]
-    );
+        ]
+      );
+      subscriptionIds.push(tokenSubscriptionId);
+
+      log(`✅ WebSocket subscriptions established for ${walletAddress} (SOL: ${solSubscriptionId}, Tokens: ${tokenSubscriptionId})`);
+    } catch (error) {
+      console.error(`❌ Failed to establish WebSocket subscriptions for ${walletAddress}:`, error);
+    }
 
     return () => {
-      connection.removeAccountChangeListener(solSubscriptionId);
-      connection.removeProgramAccountChangeListener(tokenSubscriptionId);
+      subscriptionIds.forEach(id => {
+        try {
+          if (id < 1000000) { // SOL subscription
+            connection.removeAccountChangeListener(id);
+          } else { // Token subscription
+            connection.removeProgramAccountChangeListener(id);
+          }
+        } catch (error) {
+          console.error(`Error removing subscription ${id}:`, error);
+        }
+      });
+      log(`🧹 Cleaned up WebSocket subscriptions for ${walletAddress}`);
     };
   }, [walletAddress, debouncedFetchBalances]);
 
@@ -8027,6 +8148,21 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       });
     }
   }, [triggerBackendPolling, walletAddress, fetchBalances, onBackendPollingComplete]);
+
+  // Listen for update-balances events (CRITICAL: this was missing!)
+  useEffect(() => {
+    const handleUpdateBalances = () => {
+      log(`Update-balances event received for wallet ${walletAddress}`);
+      setIsBackgroundUpdate(true);
+      fetchBalances();
+    };
+
+    window.addEventListener('update-balances', handleUpdateBalances);
+    
+    return () => {
+      window.removeEventListener('update-balances', handleUpdateBalances);
+    };
+  }, [walletAddress, fetchBalances]);
 
   // Add handleSwap, used just for swapToSol button.
   const handleSwapToSol = async (tokenBalance: TokenBalance) => {
@@ -8075,8 +8211,22 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
         console.error('Error triggering backend balance refresh:', error);
       }
       
-      // Update balances after successful swap
-      window.dispatchEvent(new Event('update-balances'));
+      // Wait a moment for backend to update, then trigger UI refresh
+      setTimeout(() => {
+        console.log('Triggering balance update events after swap');
+        window.dispatchEvent(new Event('update-balances'));
+        
+        // Also trigger the specific wallet balance update
+        window.dispatchEvent(new CustomEvent('balanceUpdate', {
+          detail: { walletAddress: tradingWallet.publicKey }
+        }));
+        
+        // Show final success notification
+        setNotification?.({ 
+          type: 'success', 
+          message: `Swap complete! ${tokenBalance.symbol} converted to SOL and balances updated.` 
+        });
+      }, 1500); // Wait 1.5 seconds for backend processing
     } catch (error) {
         console.error('Swap failed:', error);
         setNotification?.({
