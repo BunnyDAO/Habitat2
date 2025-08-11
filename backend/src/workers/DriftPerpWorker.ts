@@ -132,8 +132,16 @@ export class DriftPerpWorker extends BaseWorker {
     try {
       const job = this.job as DriftPerpJob;
       
-      // Get current market price
-      const currentPrice = await this.driftService.getMarketPrice(job.marketIndex);
+      // Get current market price with retry logic
+      let currentPrice: number;
+      try {
+        currentPrice = await this.driftService.getMarketPrice(job.marketIndex);
+      } catch (priceError) {
+        console.error(`[DriftPerp] Failed to get market price for index ${job.marketIndex}:`, priceError);
+        // If we can't get the price, we can't execute the strategy
+        this.isProcessingOrder = false;
+        return { success: false, error: `Failed to get market price: ${priceError instanceof Error ? priceError.message : String(priceError)}` };
+      }
       
       // Get current position
       const currentPosition = await this.driftService.getCurrentPosition(job.marketIndex);
@@ -142,9 +150,13 @@ export class DriftPerpWorker extends BaseWorker {
       if (currentPosition) {
         job.currentPosition = this.convertDriftPositionToJob(currentPosition, currentPrice);
         job.isPositionOpen = true;
+        // Persist position status to database
+        await this.updatePositionInDatabase(true, job.currentPosition);
       } else {
         job.currentPosition = undefined;
         job.isPositionOpen = false;
+        // Persist position status to database
+        await this.updatePositionInDatabase(false, null);
       }
 
       // Decision logic
@@ -273,30 +285,56 @@ export class DriftPerpWorker extends BaseWorker {
   private async setupInitialCollateral(): Promise<void> {
     const job = this.job as DriftPerpJob;
     
+    console.log(`[DriftPerp] Starting collateral setup for strategy ${job.id}`);
+    
     try {
       // Calculate SOL to convert to USDC for collateral
       const solBalance = await this.connection.getBalance(this.tradingWalletKeypair.publicKey);
       const solToUse = Math.floor(solBalance * (job.allocationPercentage / 100));
       
+      console.log(`[DriftPerp] SOL Balance: ${solBalance / LAMPORTS_PER_SOL} SOL, Allocation: ${job.allocationPercentage}%, SOL to use: ${solToUse / LAMPORTS_PER_SOL} SOL`);
+      
       if (solToUse <= 0.1 * LAMPORTS_PER_SOL) {
-        console.warn('[DriftPerp] Insufficient SOL balance for collateral setup');
+        console.warn(`[DriftPerp] Insufficient SOL balance for collateral setup. Need > 0.1 SOL, have ${solToUse / LAMPORTS_PER_SOL} SOL to allocate`);
         return;
       }
 
       // Check current account info
+      console.log(`[DriftPerp] Checking current Drift account info...`);
       const accountInfo = await this.driftService.getAccountInfo();
+      console.log(`[DriftPerp] Current Drift account:`, {
+        totalCollateral: accountInfo.totalCollateral,
+        freeCollateral: accountInfo.freeCollateral,
+        marginRatio: accountInfo.marginRatio,
+        leverage: accountInfo.leverage
+      });
+      
+      const requiredCollateral = (solToUse / LAMPORTS_PER_SOL) * 0.8;
+      console.log(`[DriftPerp] Required collateral: ${requiredCollateral}, Current total: ${accountInfo.totalCollateral}`);
       
       // If we already have sufficient collateral, skip setup
-      if (accountInfo.totalCollateral >= (solToUse / LAMPORTS_PER_SOL) * 0.8) {
-        console.log('[DriftPerp] Sufficient collateral already available');
+      if (accountInfo.totalCollateral >= requiredCollateral) {
+        console.log('[DriftPerp] Sufficient collateral already available, skipping deposit');
         return;
       }
 
       console.log(`[DriftPerp] Setting up collateral: ${solToUse / LAMPORTS_PER_SOL} SOL worth`);
       
-      // For simplicity, we'll assume the user manually provides USDC
-      // In a production system, you'd want to swap SOL -> USDC via Jupiter
-      console.log('[DriftPerp] Note: Manual USDC collateral deposit required');
+      // Deposit SOL as collateral directly
+      const solAmount = (solToUse / LAMPORTS_PER_SOL) * 0.8; // Keep 20% for fees
+      console.log(`[DriftPerp] Attempting to deposit ${solAmount} SOL as collateral`);
+      
+      const depositResult = await this.driftService.depositCollateral(solAmount, 'SOL');
+      
+      if (depositResult.success) {
+        console.log(`[DriftPerp] Successfully deposited ${solAmount} SOL as collateral: ${depositResult.signature}`);
+        
+        // Re-check account info after deposit
+        const newAccountInfo = await this.driftService.getAccountInfo();
+        console.log(`[DriftPerp] After deposit - Total collateral: ${newAccountInfo.totalCollateral}, Free: ${newAccountInfo.freeCollateral}`);
+      } else {
+        console.error(`[DriftPerp] Failed to deposit SOL collateral: ${depositResult.error}`);
+      }
       
     } catch (error) {
       console.error('[DriftPerp] Error setting up collateral:', error);
@@ -357,6 +395,13 @@ export class DriftPerpWorker extends BaseWorker {
     try {
       // Calculate position size based on allocation and leverage
       const accountInfo = await this.driftService.getAccountInfo();
+      console.log(`[DriftPerp] Account Info:`, {
+        totalCollateral: accountInfo.totalCollateral,
+        freeCollateral: accountInfo.freeCollateral,
+        leverage: job.leverage,
+        currentPrice: currentPrice
+      });
+      
       const maxPositionValue = accountInfo.freeCollateral * job.leverage;
       const positionSize = maxPositionValue / currentPrice;
       
@@ -437,6 +482,9 @@ export class DriftPerpWorker extends BaseWorker {
         job.currentPosition = undefined;
         job.lastActivityTimestamp = new Date().toISOString();
         this.updateJobActivity();
+        
+        // Persist position closure to database
+        await this.updatePositionInDatabase(false, null);
         
         console.log(`[DriftPerp] Position closed successfully: ${result.signature}`);
         
@@ -546,6 +594,33 @@ export class DriftPerpWorker extends BaseWorker {
   private updateJobActivity(): void {
     if (this.job) {
       this.job.lastActivity = new Date().toISOString();
+    }
+  }
+
+  /**
+   * Update position information in the database
+   */
+  private async updatePositionInDatabase(isPositionOpen: boolean, positionData: DriftPerpPosition | null): Promise<void> {
+    try {
+      const query = `
+        UPDATE strategies 
+        SET 
+          is_position_open = $1,
+          current_position = $2,
+          position_last_updated = CURRENT_TIMESTAMP
+        WHERE id = $3
+      `;
+      
+      await this.pool.query(query, [
+        isPositionOpen,
+        positionData ? JSON.stringify(positionData) : null,
+        this.job.id
+      ]);
+      
+      console.log(`[DriftPerp] Updated position status in database: isOpen=${isPositionOpen}`);
+    } catch (error) {
+      console.error('[DriftPerp] Error updating position in database:', error);
+      // Don't throw - this shouldn't stop strategy execution
     }
   }
 }

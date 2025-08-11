@@ -49,6 +49,10 @@ export class JobManager {
         // Pair Trade strategies run on backend daemon only - no frontend workers
         console.log(`Skipping frontend PairTrade worker for job ${job.id} - this strategy runs on backend only.`);
         return; // Skip creating worker - backend daemon will handle this
+      case JobType.DRIFT_PERP:
+        // Drift Perp strategies run on backend daemon only - no frontend workers
+        console.log(`Skipping frontend DriftPerp worker for job ${job.id} - this strategy runs on backend only.`);
+        return; // Skip creating worker - backend daemon will handle this
       default:
         throw new Error(`Unknown job type: ${job.type}`);
     }

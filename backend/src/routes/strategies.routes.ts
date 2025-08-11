@@ -5,6 +5,8 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middlew
 import { rateLimitMiddleware } from '../middleware/rate-limit.middleware';
 import { validateStrategyRequest } from '../middleware/validation.middleware';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { DriftService } from '../services/DriftService';
+import { Keypair } from '@solana/web3.js';
 
 export function createStrategiesRouter(pool: Pool, redisClient: ReturnType<typeof createClient> | null) {
   const router = Router();
@@ -12,6 +14,57 @@ export function createStrategiesRouter(pool: Pool, redisClient: ReturnType<typeo
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_ANON_KEY!
 );
+
+  /**
+   * Liquidate a Drift position when deleting a strategy
+   */
+  async function liquidateDriftPosition(strategy: any): Promise<void> {
+    console.log('Liquidating Drift position for strategy:', strategy.id);
+    
+    // Get trading wallet information
+    const { data: tradingWallet, error: walletError } = await supabase
+      .from('trading_wallets')
+      .select('*')
+      .eq('id', strategy.trading_wallet_id)
+      .single();
+    
+    if (walletError || !tradingWallet) {
+      throw new Error('Failed to get trading wallet information');
+    }
+    
+    // Get the encrypted private key
+    const { data: savedWallet, error: savedWalletError } = await supabase
+      .from('saved_wallets')
+      .select('*')
+      .eq('id', tradingWallet.wallet_pubkey)
+      .single();
+    
+    if (savedWalletError || !savedWallet) {
+      throw new Error('Failed to get wallet private key');
+    }
+    
+    // Decrypt and create keypair
+    const walletKeypair = Keypair.fromSecretKey(new Uint8Array(savedWallet.private_key));
+    
+    // Initialize Drift service
+    const driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+    await driftService.initialize(walletKeypair);
+    
+    // Get strategy config to find market index
+    const config = strategy.config;
+    if (!config.marketIndex) {
+      throw new Error('No market index found in strategy config');
+    }
+    
+    // Close the position (market order for immediate execution)
+    const result = await driftService.closePosition(config.marketIndex);
+    
+    if (!result.success) {
+      throw new Error(`Failed to close position: ${result.error}`);
+    }
+    
+    console.log('Position liquidated with signature:', result.signature);
+  }
 
 // Apply rate limiting to all strategy routes
 router.use(rateLimitMiddleware);
@@ -370,6 +423,101 @@ router.get('/',
   }
 );
 
+// Get current Drift positions for all strategies
+router.get('/drift/positions',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      // Get all Drift strategies with open positions
+      const { data: strategies, error } = await supabase
+        .from('strategies')
+        .select(`
+          *,
+          trading_wallets!inner(
+            id,
+            wallet_pubkey,
+            name
+          )
+        `)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'drift-perp')
+        .eq('is_position_open', true);
+
+      if (error) throw error;
+
+      const positions = strategies.map(strategy => ({
+        strategyId: strategy.id,
+        strategyName: strategy.name,
+        tradingWalletName: strategy.trading_wallets.name,
+        position: strategy.current_position,
+        lastUpdated: strategy.position_last_updated
+      }));
+
+      res.json(positions);
+    } catch (error) {
+      console.error('Error fetching Drift positions:', error);
+      res.status(500).json({ error: 'Failed to fetch Drift positions' });
+    }
+  }
+);
+
+// Manually close a Drift position
+router.post('/:id/drift/close-position',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'User not authenticated' });
+      }
+
+      const { id } = req.params;
+
+      // Get strategy details
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*')
+        .eq('id', id)
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .eq('strategy_type', 'drift-perp')
+        .single();
+
+      if (strategyError || !strategy) {
+        return res.status(404).json({ error: 'Strategy not found or not a Drift strategy' });
+      }
+
+      if (!strategy.is_position_open) {
+        return res.status(400).json({ error: 'No open position to close' });
+      }
+
+      // Liquidate the position
+      await liquidateDriftPosition(strategy);
+
+      // Update the database to reflect closed position
+      const { error: updateError } = await supabase
+        .from('strategies')
+        .update({
+          is_position_open: false,
+          current_position: null,
+          position_last_updated: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (updateError) {
+        console.error('Error updating position status:', updateError);
+      }
+
+      res.json({ success: true, message: 'Position closed successfully' });
+    } catch (error) {
+      console.error('Error closing position:', error);
+      res.status(500).json({ error: 'Failed to close position' });
+    }
+  }
+);
+
 // Update strategy
 router.put('/:id',
   authMiddleware,
@@ -705,6 +853,20 @@ router.delete('/:id',
         type: strategy.strategy_type,
         trading_wallet_id: strategy.trading_wallet_id
       });
+
+      // Check if this is a Drift Perp strategy with an open position
+      if (strategy.strategy_type === 'drift-perp' && strategy.is_position_open) {
+        console.log('Strategy has open Drift position - attempting to liquidate...');
+        try {
+          await liquidateDriftPosition(strategy);
+          console.log('Successfully liquidated Drift position');
+        } catch (liquidationError) {
+          console.error('Failed to liquidate Drift position:', liquidationError);
+          return res.status(400).json({ 
+            error: 'Cannot delete strategy with open position. Failed to liquidate position automatically. Please manually close the position first.' 
+          });
+        }
+      }
 
       // Delete strategy versions first
       console.log('Deleting strategy versions for strategy ID:', id);

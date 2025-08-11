@@ -10,12 +10,18 @@ import {
   UserAccount,
   PerpMarketAccount,
   ZERO,
-  convertToNumber,
   getMarketOrderParams,
   PostOnlyParams
 } from '@drift-labs/sdk';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import { BN } from '@drift-labs/sdk';
+import { 
+  getAssociatedTokenAddress, 
+  createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
+  createSyncNativeInstruction
+} from '@solana/spl-token';
 
 export interface DriftMarket {
   marketIndex: number;
@@ -54,6 +60,7 @@ export class DriftService {
   private driftClient: DriftClient | null = null;
   private connection: Connection;
   private initialized: boolean = false;
+  private wallet: Keypair | null = null;
 
   constructor(endpoint: string) {
     this.connection = new Connection(endpoint, {
@@ -70,6 +77,9 @@ export class DriftService {
     if (this.initialized && this.driftClient) {
       return;
     }
+    
+    // Store wallet for later use
+    this.wallet = wallet;
 
     try {
       // Create wallet adapter for Drift SDK
@@ -175,12 +185,12 @@ export class DriftService {
           baseAssetSymbol: this.getBaseAssetSymbol(market.marketIndex),
           status: this.getMarketStatus(marketAccount.status),
           contractTier: marketAccount.contractTier.toString(),
-          marginRatioInitial: convertToNumber(marketAccount.marginRatioInitial, 4),
-          marginRatioMaintenance: convertToNumber(marketAccount.marginRatioMaintenance, 4),
+          marginRatioInitial: this.safeConvertToNumber(marketAccount.marginRatioInitial, 4),
+          marginRatioMaintenance: this.safeConvertToNumber(marketAccount.marginRatioMaintenance, 4),
           maxLeverage: this.calculateMaxLeverage(marketAccount.marginRatioInitial),
           baseAssetAmountStepSize: marketAccount.amm.baseAssetAmountWithAmm || marketAccount.amm.baseAssetAmountShort,
-          minOrderSize: convertToNumber(marketAccount.amm.minOrderSize, 6),
-          tickSize: convertToNumber(marketAccount.amm.orderTickSize || marketAccount.amm.orderStepSize, 6)
+          minOrderSize: this.safeConvertToNumber(marketAccount.amm.minOrderSize, 6),
+          tickSize: this.safeConvertToNumber(marketAccount.amm.orderTickSize || marketAccount.amm.orderStepSize, 6)
         });
       }
 
@@ -223,8 +233,8 @@ export class DriftService {
         entryPrice: position.quoteEntryAmount.abs().div(position.baseAssetAmount.abs()),
         unrealizedPnl,
         liquidationPrice: liquidationPrice || ZERO,
-        marginRatio: convertToNumber(marginRatio, 4),
-        leverage: convertToNumber(leverage, 2)
+        marginRatio: this.safeConvertToNumber(marginRatio, 4),
+        leverage: this.safeConvertToNumber(leverage, 2)
       };
     } catch (error) {
       console.error('[DriftService] Error getting current position:', error);
@@ -242,9 +252,28 @@ export class DriftService {
 
     try {
       const oracleData = this.driftClient.getOracleDataForPerpMarket(marketIndex);
-      return convertToNumber(oracleData.price, 6);
+      
+      // Check if oracleData and price exist
+      if (!oracleData) {
+        throw new Error(`No oracle data available for market index ${marketIndex}`);
+      }
+      
+      console.log(`[DriftService] Oracle data for market ${marketIndex}:`, {
+        hasPrice: !!oracleData.price,
+        priceType: typeof oracleData.price,
+        priceValue: oracleData.price?.toString?.() || String(oracleData.price),
+        hasIsZero: typeof oracleData.price?.isZero === 'function'
+      });
+      
+      if (!oracleData.price && oracleData.price !== 0) {
+        throw new Error(`No price data available in oracle for market index ${marketIndex}`);
+      }
+
+      // Use safe conversion helper
+      return this.safeConvertToNumber(oracleData.price, 6);
     } catch (error) {
       console.error('[DriftService] Error getting market price:', error);
+      console.error('[DriftService] Market index:', marketIndex);
       throw error;
     }
   }
@@ -419,11 +448,11 @@ export class DriftService {
       const unrealizedPnl = user.getUnrealizedPNL(true);
 
       return {
-        totalCollateral: convertToNumber(totalCollateral, 6),
-        freeCollateral: convertToNumber(freeCollateral, 6),
-        marginRatio: convertToNumber(marginRatio, 4),
-        leverage: convertToNumber(leverage, 2),
-        unrealizedPnl: convertToNumber(unrealizedPnl, 6)
+        totalCollateral: this.safeConvertToNumber(totalCollateral, 6),
+        freeCollateral: this.safeConvertToNumber(freeCollateral, 6),
+        marginRatio: this.safeConvertToNumber(marginRatio, 4),
+        leverage: this.safeConvertToNumber(leverage, 2),
+        unrealizedPnl: this.safeConvertToNumber(unrealizedPnl, 6)
       };
     } catch (error) {
       console.error('[DriftService] Error getting account info:', error);
@@ -432,26 +461,128 @@ export class DriftService {
   }
 
   /**
-   * Deposit USDC collateral
+   * Deposit collateral (USDC or SOL)
    */
-  async depositCollateral(amount: number): Promise<DriftOrderResult> {
+  async depositCollateral(amount: number, assetType: 'USDC' | 'SOL' = 'USDC'): Promise<DriftOrderResult> {
     if (!this.driftClient) {
       throw new Error('Drift client not initialized');
     }
 
     try {
-      const amountBN = new BN(amount * 1e6); // USDC has 6 decimals
-      const spotMarketIndex = 0; // USDC spot market index
+      let amountBN: BN;
+      let spotMarketIndex: number;
       
-      console.log(`[DriftService] Depositing ${amount} USDC as collateral`);
-      const txSig = await this.driftClient.deposit(amountBN, spotMarketIndex, this.driftClient.getUser().getUserAccountPublicKey());
-
-      return {
-        success: true,
-        signature: txSig
-      };
+      if (assetType === 'SOL') {
+        amountBN = new BN(amount * 1e9); // SOL has 9 decimals
+        spotMarketIndex = 1; // SOL spot market index (wSOL)
+        console.log(`[DriftService] Depositing ${amount} SOL as collateral`);
+        
+        // For SOL deposits, we need to handle wSOL account creation and wrapping
+        const result = await this.depositSOLAsCollateral(amount);
+        return result;
+      } else {
+        amountBN = new BN(amount * 1e6); // USDC has 6 decimals
+        spotMarketIndex = 0; // USDC spot market index
+        console.log(`[DriftService] Depositing ${amount} USDC as collateral`);
+        
+        const txSig = await this.driftClient.deposit(amountBN, spotMarketIndex, this.driftClient.getUser().getUserAccountPublicKey());
+        
+        return {
+          success: true,
+          signature: txSig
+        };
+      }
     } catch (error) {
       console.error('[DriftService] Error depositing collateral:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Deposit SOL as collateral by handling wSOL wrapping
+   */
+  private async depositSOLAsCollateral(amount: number): Promise<DriftOrderResult> {
+    if (!this.driftClient || !this.wallet) {
+      throw new Error('Drift client or wallet not initialized');
+    }
+
+    try {
+      const amountLamports = Math.floor(amount * 1e9);
+      const userPublicKey = this.wallet.publicKey;
+      
+      // Get the wSOL associated token account
+      const wsolAccount = await getAssociatedTokenAddress(
+        NATIVE_MINT,
+        userPublicKey
+      );
+      
+      console.log(`[DriftService] Creating/using wSOL account: ${wsolAccount.toString()}`);
+      
+      // Create transaction with wSOL account creation and deposit
+      const transaction = new Transaction();
+      
+      // Check if wSOL account exists, if not create it
+      const accountInfo = await this.connection.getAccountInfo(wsolAccount);
+      if (!accountInfo) {
+        console.log(`[DriftService] Creating wSOL associated token account`);
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            userPublicKey,     // payer
+            wsolAccount,       // associatedToken
+            userPublicKey,     // owner
+            NATIVE_MINT        // mint
+          )
+        );
+      }
+      
+      // Transfer SOL to wSOL account
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: userPublicKey,
+          toPubkey: wsolAccount,
+          lamports: amountLamports,
+        })
+      );
+      
+      // Sync native (convert SOL to wSOL)
+      transaction.add(createSyncNativeInstruction(wsolAccount));
+      
+      // Send the transaction to create/fund wSOL account
+      const { blockhash } = await this.connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = userPublicKey;
+      
+      // Sign the transaction using the keypair
+      transaction.sign(this.wallet);
+      const wsolTxSig = await this.connection.sendRawTransaction(transaction.serialize());
+      
+      console.log(`[DriftService] wSOL wrap transaction: ${wsolTxSig}`);
+      
+      // Wait for confirmation
+      await this.connection.confirmTransaction(wsolTxSig);
+      
+      // Now deposit the wSOL to Drift
+      const amountBN = new BN(amountLamports);
+      const spotMarketIndex = 1; // wSOL market index
+      
+      console.log(`[DriftService] Depositing ${amount} wSOL to Drift`);
+      const driftTxSig = await this.driftClient.deposit(
+        amountBN, 
+        spotMarketIndex, 
+        this.driftClient.getUser().getUserAccountPublicKey()
+      );
+      
+      console.log(`[DriftService] Drift deposit transaction: ${driftTxSig}`);
+      
+      return {
+        success: true,
+        signature: driftTxSig
+      };
+    } catch (error) {
+      console.error('[DriftService] Error depositing SOL as collateral:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -525,7 +656,47 @@ export class DriftService {
   }
 
   private calculateMaxLeverage(marginRatioInitial: BN): number {
-    const marginRatio = convertToNumber(marginRatioInitial, 4);
+    const marginRatio = this.safeConvertToNumber(marginRatioInitial, 4);
     return Math.floor(1 / marginRatio);
+  }
+
+  /**
+   * Safely convert a value to a number using manual conversion
+   * Bypasses Drift's convertToNumber function to avoid BN issues
+   */
+  private safeConvertToNumber(value: any, decimals: number): number {
+    if (!value && value !== 0) {
+      return 0;
+    }
+
+    try {
+      // Manual conversion without using Drift's convertToNumber
+      let numValue: number;
+      
+      if (typeof value === 'number') {
+        numValue = value;
+      } else if (typeof value === 'string') {
+        numValue = parseFloat(value);
+      } else if (typeof value === 'object' && value !== null) {
+        // Handle BN or BN-like objects
+        if (typeof value.toString === 'function') {
+          numValue = parseFloat(value.toString());
+        } else {
+          console.warn(`Cannot convert object to number: ${value}, returning 0`);
+          return 0;
+        }
+      } else {
+        console.warn(`Unknown value type: ${typeof value}, value: ${value}, returning 0`);
+        return 0;
+      }
+      
+      // Apply decimals scaling
+      const result = numValue / Math.pow(10, decimals);
+      
+      return isNaN(result) ? 0 : result;
+    } catch (error) {
+      console.warn(`Failed to convert value: ${value}, error: ${error}, returning 0`);
+      return 0;
+    }
   }
 }
