@@ -6650,7 +6650,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         fontSize: '0.75rem',
                         lineHeight: '1.4'
                       }}>
-                        The system will automatically allocate 50% to the undervalued token based on external market analysis. 
+                        The system will automatically allocate the 'Allocation Percentage' to the undervalued token based on external market analysis. 
                         Allocation will adjust automatically via external trading signals.
                       </div>
                     </div>

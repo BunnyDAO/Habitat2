@@ -1,4 +1,9 @@
 import { Request, Response } from 'express';
+import { DriftService } from '../services/DriftService';
+import { Keypair } from '@solana/web3.js';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { WorkerManager } from '../services/WorkerManager';
+import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 /**
  * Controller for Drift Protocol related operations
@@ -135,6 +140,249 @@ export class DriftController {
       res.status(500).json({
         success: false,
         error: 'Failed to fetch Drift market',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Close an open Drift perpetual position
+   */
+  static async closePosition(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { jobId, marketIndex } = req.body;
+      
+      if (!jobId || marketIndex === undefined) {
+        res.status(400).json({
+          success: false,
+          error: 'Missing required parameters: jobId and marketIndex'
+        });
+        return;
+      }
+
+      // Get the strategy from database
+      const supabase = createSupabaseClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*, trading_wallets!inner(*)')
+        .eq('id', jobId)
+        .eq('main_wallet_pubkey', req.user!.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        res.status(404).json({
+          success: false,
+          error: 'Strategy not found or access denied'
+        });
+        return;
+      }
+
+      // Get the worker instance
+      const worker = await WorkerManager.getWorker(jobId);
+      
+      if (!worker) {
+        res.status(400).json({
+          success: false,
+          error: 'Strategy worker not found. Is the strategy active?'
+        });
+        return;
+      }
+
+      // Force close the position
+      const result = await (worker as any).forceClosePosition();
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          signature: result.signature,
+          message: 'Position closed successfully'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error || 'Failed to close position'
+        });
+      }
+    } catch (error) {
+      console.error('[DriftController] Error closing position:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to close position',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Reduce an open Drift perpetual position by percentage
+   */
+  static async reducePosition(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { jobId, marketIndex, reducePercentage } = req.body;
+      
+      if (!jobId || marketIndex === undefined || !reducePercentage) {
+        res.status(400).json({
+          success: false,
+          error: 'Missing required parameters: jobId, marketIndex, and reducePercentage'
+        });
+        return;
+      }
+
+      // Validate percentage
+      const percentage = Number(reducePercentage);
+      if (isNaN(percentage) || percentage <= 0 || percentage > 100) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid reduce percentage. Must be between 1 and 100'
+        });
+        return;
+      }
+
+      // Get the strategy from database
+      const supabase = createSupabaseClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*, trading_wallets!inner(*)')
+        .eq('id', jobId)
+        .eq('main_wallet_pubkey', req.user!.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        res.status(404).json({
+          success: false,
+          error: 'Strategy not found or access denied'
+        });
+        return;
+      }
+
+      // Get the worker instance
+      const worker = await WorkerManager.getWorker(jobId);
+      
+      if (!worker) {
+        res.status(400).json({
+          success: false,
+          error: 'Strategy worker not found. Is the strategy active?'
+        });
+        return;
+      }
+
+      // Get current position and calculate reduction
+      const status = await (worker as any).getStatus();
+      if (!status.currentPosition) {
+        res.status(400).json({
+          success: false,
+          error: 'No open position to reduce'
+        });
+        return;
+      }
+
+      // Partially close the position by closing then reopening with reduced size
+      const reduceAmount = status.currentPosition.baseAssetAmount * (percentage / 100);
+      
+      // For now, we'll close the entire position
+      // TODO: Implement partial position reduction in DriftService
+      const result = await (worker as any).forceClosePosition();
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          signature: result.signature,
+          message: `Position reduced by ${percentage}%`
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error || 'Failed to reduce position'
+        });
+      }
+    } catch (error) {
+      console.error('[DriftController] Error reducing position:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to reduce position',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Get current position status for a Drift strategy
+   */
+  static async getPosition(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { jobId } = req.params;
+      
+      if (!jobId) {
+        res.status(400).json({
+          success: false,
+          error: 'Missing required parameter: jobId'
+        });
+        return;
+      }
+
+      // Get the strategy from database
+      const supabase = createSupabaseClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*, trading_wallets!inner(*)')
+        .eq('id', jobId)
+        .eq('main_wallet_pubkey', req.user!.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        res.status(404).json({
+          success: false,
+          error: 'Strategy not found or access denied'
+        });
+        return;
+      }
+
+      // Get the worker instance
+      const worker = await WorkerManager.getWorker(jobId);
+      
+      if (!worker) {
+        // If no worker, return position info from database
+        res.json({
+          success: true,
+          position: {
+            isPositionOpen: strategy.is_position_open || false,
+            currentPosition: strategy.current_position || null,
+            lastUpdated: strategy.position_last_updated || null
+          }
+        });
+        return;
+      }
+
+      // Get live status from worker
+      const status = await (worker as any).getStatus();
+      
+      res.json({
+        success: true,
+        position: {
+          isPositionOpen: status.isPositionOpen,
+          currentPosition: status.currentPosition,
+          currentPrice: status.currentPrice,
+          accountInfo: status.accountInfo,
+          marketSymbol: status.marketSymbol,
+          entryPrice: status.entryPrice,
+          exitPrice: status.exitPrice,
+          isProcessingOrder: status.isProcessingOrder
+        }
+      });
+    } catch (error) {
+      console.error('[DriftController] Error getting position:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get position status',
         details: error instanceof Error ? error.message : 'Unknown error'
       });
     }

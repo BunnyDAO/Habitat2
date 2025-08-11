@@ -488,7 +488,16 @@ export class DriftService {
         spotMarketIndex = 0; // USDC spot market index
         console.log(`[DriftService] Depositing ${amount} USDC as collateral`);
         
-        const txSig = await this.driftClient.deposit(amountBN, spotMarketIndex, this.driftClient.getUser().getUserAccountPublicKey());
+        // Get USDC mint address (mainnet)
+        const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+        
+        // Get the user's USDC token account
+        const userUSDCAccount = await getAssociatedTokenAddress(
+          USDC_MINT,
+          this.wallet!.publicKey
+        );
+        
+        const txSig = await this.driftClient.deposit(amountBN, spotMarketIndex, userUSDCAccount);
         
         return {
           success: true,
@@ -630,7 +639,7 @@ export class DriftService {
       const driftTxSig = await this.driftClient.deposit(
         amountBN, 
         spotMarketIndex, 
-        this.driftClient.getUser().getUserAccountPublicKey()
+        wsolAccount
       );
       
       console.log(`[DriftService] Drift deposit transaction: ${driftTxSig}`);
@@ -652,16 +661,25 @@ export class DriftService {
    * Withdraw USDC collateral
    */
   async withdrawCollateral(amount: number): Promise<DriftOrderResult> {
-    if (!this.driftClient) {
-      throw new Error('Drift client not initialized');
+    if (!this.driftClient || !this.wallet) {
+      throw new Error('Drift client or wallet not initialized');
     }
 
     try {
       const amountBN = new BN(amount * 1e6); // USDC has 6 decimals
       const spotMarketIndex = 0; // USDC spot market index
       
+      // Get USDC mint address (mainnet)
+      const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+      
+      // Get the user's USDC token account
+      const userUSDCAccount = await getAssociatedTokenAddress(
+        USDC_MINT,
+        this.wallet.publicKey
+      );
+      
       console.log(`[DriftService] Withdrawing ${amount} USDC collateral`);
-      const txSig = await this.driftClient.withdraw(amountBN, spotMarketIndex, this.driftClient.getUser().getUserAccountPublicKey());
+      const txSig = await this.driftClient.withdraw(amountBN, spotMarketIndex, userUSDCAccount);
 
       return {
         success: true,
