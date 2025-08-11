@@ -4349,7 +4349,24 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // When saving a wallet
   const handleSaveWallet = async (walletAddress: string, name?: string) => {
     if (!wallet.publicKey) return;
+    
     try {
+      // Check if wallet is already saved in the database
+      const existingSavedWallets = await savedWalletsApi.getAll(wallet.publicKey.toString());
+      const isAlreadySaved = existingSavedWallets.some(savedWallet => 
+        savedWallet.wallet_address === walletAddress
+      );
+      
+      if (isAlreadySaved) {
+        setNotification({ 
+          type: 'warning', 
+          message: 'This wallet is already saved in your Saved Wallets list!' 
+        });
+        // Clear the input field since it's a duplicate
+        setMonitoredWallet('');
+        return;
+      }
+      
       // Always pass a name, default to 'Unnamed Wallet' if not provided
       await savedWalletsApi.create({
         owner_id: wallet.publicKey.toString(),
@@ -4364,6 +4381,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         ...savedWalletJobs
       ]);
       setNotification({ type: 'success', message: 'Wallet saved successfully!' });
+      // Clear the input field after successful save
+      setMonitoredWallet('');
     } catch {
       setNotification({ type: 'error', message: 'Failed to save wallet' });
     }
@@ -5262,22 +5281,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       onClick={() => {
                         if (!isValidAddress || !monitoredWallet) return;
                         
-                        // Check if wallet is already saved
-                        const isAlreadySaved = jobs.some(job => 
-                          job.type === JobType.WALLET_MONITOR && 
-                          job.walletAddress === monitoredWallet &&
-                          !job.isActive
-                        );
-                        
-                        if (isAlreadySaved) {
-                          setNotification({
-                            message: 'This wallet is already saved',
-                            type: 'info'
-                          });
-                          return;
-                        }
-                        
-                        // Use backend API to save wallet
+                        // Use backend API to save wallet (duplicate checking handled in handleSaveWallet)
                         handleSaveWallet(monitoredWallet);
                       }}
                       disabled={!isValidAddress}
