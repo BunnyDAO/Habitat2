@@ -148,11 +148,13 @@ export const TokenDropdown: React.FC<TokenDropdownProps> = ({
           maxHeight: '400px',
           zIndex: 10,
           boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-          overflow: 'hidden' // Hide scrollbar
+          // Prevent layout shift by ensuring consistent width
+          minWidth: '100%',
+          boxSizing: 'border-box'
         }}>
           {/* Search Input */}
           <div style={{
-            padding: '0.75rem',
+            padding: '0.75rem 0.75rem 0.75rem 0.75rem',
             borderBottom: '1px solid #4b5563',
             backgroundColor: '#374151'
           }}>
@@ -170,7 +172,8 @@ export const TokenDropdown: React.FC<TokenDropdownProps> = ({
                 borderRadius: '0.25rem',
                 color: '#e2e8f0',
                 fontSize: '0.875rem',
-                outline: 'none'
+                outline: 'none',
+                boxSizing: 'border-box'
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') {
@@ -185,22 +188,26 @@ export const TokenDropdown: React.FC<TokenDropdownProps> = ({
           <div style={{
             maxHeight: '300px',
             overflowY: 'auto',
-            scrollbarWidth: 'none', // Firefox
+            overflowX: 'hidden',
+            // Subtle scrollbar styling
+            scrollbarWidth: 'thin', // Firefox - thin scrollbar
+            scrollbarColor: '#4b5563 transparent', // Firefox - subtle color
             msOverflowStyle: 'none', // IE/Edge
-            // Custom scrollbar styling for webkit browsers
+            // Webkit scrollbar styling for Chrome/Safari
             ...(typeof document !== 'undefined' && 'webkitScrollbar' in document.createElement('div').style ? {
               '&::-webkit-scrollbar': {
-                width: '8px'
+                width: '6px'
               },
               '&::-webkit-scrollbar-track': {
                 backgroundColor: 'transparent'
               },
               '&::-webkit-scrollbar-thumb': {
                 backgroundColor: '#4b5563',
-                borderRadius: '4px',
-                '&:hover': {
-                  backgroundColor: '#6b7280'
-                }
+                borderRadius: '3px',
+                opacity: '0.6'
+              },
+              '&::-webkit-scrollbar-thumb:hover': {
+                backgroundColor: '#6b7280'
               }
             } : {})
           }}>

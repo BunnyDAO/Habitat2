@@ -457,6 +457,37 @@
   }
 }
 
+.savedWalletsContainer {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Subtle scrollbar styling */
+  scrollbar-width: thin; /* Firefox - thin scrollbar */
+  scrollbar-color: #4b5563 transparent; /* Firefox - subtle color */
+  -ms-overflow-style: none; /* IE/Edge */
+  /* Add right padding to prevent content from overlapping scrollbar */
+  padding-right: 8px;
+}
+
+/* Webkit scrollbar styling for Chrome/Safari */
+.savedWalletsContainer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.savedWalletsContainer::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+.savedWalletsContainer::-webkit-scrollbar-thumb {
+  background-color: #4b5563;
+  border-radius: 3px;
+  opacity: 0.6;
+}
+
+.savedWalletsContainer::-webkit-scrollbar-thumb:hover {
+  background-color: #6b7280;
+}
+
 @media (max-width: 630px) {
   .walletItem {
     padding: 0.5rem;
