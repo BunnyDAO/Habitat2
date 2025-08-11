@@ -7907,10 +7907,25 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       
       // Early exit if balances haven't changed significantly
       const cachedBalances = getWalletBalanceCache(walletAddress);
-      if (!isInitialLoad && cachedBalances.length > 0 && !hasSignificantBalanceChange(cachedBalances, newBalances)) {
-        console.log('Balance data unchanged for wallet:', walletAddress);
-        setIsFetching(false);
-        return;
+      if (!isInitialLoad && cachedBalances.length > 0) {
+        // Check if balances have changed significantly BEFORE setting USD values
+        // This prevents false positives from undefined USD values
+        const hasChanged = newBalances.some((newBalance, index) => {
+          const oldBalance = cachedBalances[index];
+          if (!oldBalance || oldBalance.mint !== newBalance.mint) return true;
+          
+          // Compare actual token amounts, not USD values
+          if (newBalance.balance !== oldBalance.balance) return true;
+          if (newBalance.decimals !== oldBalance.decimals) return true;
+          
+          return false;
+        });
+        
+        if (!hasChanged) {
+          console.log('Balance data unchanged for wallet:', walletAddress);
+          setIsFetching(false);
+          return;
+        }
       }
       
       // Update balances with SOL first so UI shows something quickly
@@ -8160,6 +8175,16 @@ export const TokenBalancesList: React.FC<TokenBalancesListProps> = ({
       
       // Save to cache
       saveWalletBalanceCache(walletAddress, updatedBalances);
+      
+      // Now that USD values are set, we can do proper balance change detection
+      if (!isInitialLoad && cachedBalances.length > 0) {
+        const hasSignificantChange = hasSignificantBalanceChange(cachedBalances, updatedBalances);
+        if (!hasSignificantChange) {
+          console.log('⚪ No significant balance changes detected after USD calculation');
+        } else {
+          console.log('✅ Significant balance changes detected after USD calculation');
+        }
+      }
       
       // Mark initial load as complete
       if (isInitialLoad) {

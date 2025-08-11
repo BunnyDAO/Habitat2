@@ -402,8 +402,28 @@ export class DriftPerpWorker extends BaseWorker {
         currentPrice: currentPrice
       });
       
+      // Check if we have collateral before attempting to trade
+      if (accountInfo.freeCollateral <= 0) {
+        console.error('[DriftPerp] Cannot open position: No free collateral available');
+        return {
+          success: false,
+          action: 'opened',
+          error: 'No free collateral available'
+        };
+      }
+      
       const maxPositionValue = accountInfo.freeCollateral * job.leverage;
       const positionSize = maxPositionValue / currentPrice;
+      
+      // Ensure position size is valid
+      if (positionSize <= 0 || !isFinite(positionSize)) {
+        console.error(`[DriftPerp] Invalid position size calculated: ${positionSize}`);
+        return {
+          success: false,
+          action: 'opened',
+          error: `Invalid position size: ${positionSize}`
+        };
+      }
       
       console.log(`[DriftPerp] Opening ${job.direction} position: ${positionSize} units at $${currentPrice}`);
       

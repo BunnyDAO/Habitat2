@@ -82,6 +82,9 @@ export class DriftService {
     this.wallet = wallet;
 
     try {
+      // Ensure wSOL account exists before initializing Drift
+      await this.ensureWrappedSOLAccount(wallet);
+      
       // Create wallet adapter for Drift SDK
       const walletAdapter = new Wallet(wallet);
 
@@ -502,6 +505,57 @@ export class DriftService {
   }
 
   /**
+   * Ensure wrapped SOL account exists for the wallet
+   */
+  private async ensureWrappedSOLAccount(wallet: Keypair): Promise<void> {
+    try {
+      const userPublicKey = wallet.publicKey;
+      
+      // Get the wSOL associated token account
+      const wsolAccount = await getAssociatedTokenAddress(
+        NATIVE_MINT,
+        userPublicKey
+      );
+      
+      // Check if wSOL account exists
+      const accountInfo = await this.connection.getAccountInfo(wsolAccount);
+      if (!accountInfo) {
+        console.log(`[DriftService] Creating wSOL associated token account for ${userPublicKey.toString()}`);
+        
+        const transaction = new Transaction();
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            userPublicKey,     // payer
+            wsolAccount,       // associatedToken
+            userPublicKey,     // owner
+            NATIVE_MINT        // mint
+          )
+        );
+        
+        // Send the transaction to create wSOL account
+        const { blockhash } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = userPublicKey;
+        
+        // Sign and send the transaction
+        transaction.sign(wallet);
+        const txSig = await this.connection.sendRawTransaction(transaction.serialize());
+        
+        console.log(`[DriftService] wSOL account creation transaction: ${txSig}`);
+        
+        // Wait for confirmation
+        await this.connection.confirmTransaction(txSig);
+        console.log(`[DriftService] wSOL account created successfully at ${wsolAccount.toString()}`);
+      } else {
+        console.log(`[DriftService] wSOL account already exists at ${wsolAccount.toString()}`);
+      }
+    } catch (error) {
+      console.error('[DriftService] Error ensuring wSOL account:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Deposit SOL as collateral by handling wSOL wrapping
    */
   private async depositSOLAsCollateral(amount: number): Promise<DriftOrderResult> {
@@ -521,13 +575,13 @@ export class DriftService {
       
       console.log(`[DriftService] Creating/using wSOL account: ${wsolAccount.toString()}`);
       
-      // Create transaction with wSOL account creation and deposit
+      // Create transaction to fund the wSOL account
       const transaction = new Transaction();
       
-      // Check if wSOL account exists, if not create it
+      // wSOL account should already exist from initialization, but double-check
       const accountInfo = await this.connection.getAccountInfo(wsolAccount);
       if (!accountInfo) {
-        console.log(`[DriftService] Creating wSOL associated token account`);
+        console.log(`[DriftService] wSOL account not found during deposit, creating it`);
         transaction.add(
           createAssociatedTokenAccountInstruction(
             userPublicKey,     // payer
@@ -569,6 +623,10 @@ export class DriftService {
       const spotMarketIndex = 1; // wSOL market index
       
       console.log(`[DriftService] Depositing ${amount} wSOL to Drift`);
+      console.log(`[DriftService] Amount in lamports: ${amountLamports}`);
+      console.log(`[DriftService] User account: ${this.driftClient.getUser().getUserAccountPublicKey().toString()}`);
+      console.log(`[DriftService] wSOL account: ${wsolAccount.toString()}`);
+      
       const driftTxSig = await this.driftClient.deposit(
         amountBN, 
         spotMarketIndex, 
