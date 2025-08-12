@@ -658,7 +658,7 @@ export class DriftService {
   }
 
   /**
-   * Withdraw USDC collateral
+   * Withdraw SOL collateral
    */
   async withdrawCollateral(amount: number): Promise<DriftOrderResult> {
     if (!this.driftClient || !this.wallet) {
@@ -666,27 +666,29 @@ export class DriftService {
     }
 
     try {
-      const amountBN = new BN(amount * 1e6); // USDC has 6 decimals
-      const spotMarketIndex = 0; // USDC spot market index
+      // For SOL withdrawal, use wSOL (market index 1)
+      const amountBN = new BN(amount * 1e9); // SOL has 9 decimals
+      const spotMarketIndex = 1; // wSOL spot market index
       
-      // Get USDC mint address (mainnet)
-      const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-      
-      // Get the user's USDC token account
-      const userUSDCAccount = await getAssociatedTokenAddress(
-        USDC_MINT,
+      // Get the wSOL associated token account
+      const wsolAccount = await getAssociatedTokenAddress(
+        NATIVE_MINT,
         this.wallet.publicKey
       );
       
-      console.log(`[DriftService] Withdrawing ${amount} USDC collateral`);
-      const txSig = await this.driftClient.withdraw(amountBN, spotMarketIndex, userUSDCAccount);
+      console.log(`[DriftService] Withdrawing ${amount} SOL from collateral`);
+      console.log(`[DriftService] wSOL account: ${wsolAccount.toString()}`);
+      
+      const txSig = await this.driftClient.withdraw(amountBN, spotMarketIndex, wsolAccount);
 
+      console.log(`[DriftService] Withdrawal transaction: ${txSig}`);
+      
       return {
         success: true,
         signature: txSig
       };
     } catch (error) {
-      console.error('[DriftService] Error withdrawing collateral:', error);
+      console.error('[DriftService] Error withdrawing SOL collateral:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'

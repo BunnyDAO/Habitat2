@@ -39,4 +39,11 @@ router.post('/reduce-position', authMiddleware, DriftController.reducePosition);
  */
 router.get('/position/:jobId', authMiddleware, DriftController.getPosition);
 
+/**
+ * @route POST /api/drift/withdraw-collateral
+ * @desc Withdraw collateral from Drift account
+ * @access Private
+ */
+router.post('/withdraw-collateral', authMiddleware, DriftController.withdrawCollateral);
+
 export default router;

@@ -346,19 +346,69 @@ export class DriftController {
         return;
       }
 
-      // Get the worker instance
-      const worker = await WorkerManager.getWorker(jobId);
+      // Try to get the worker instance, but handle failure gracefully
+      let worker;
+      try {
+        worker = await WorkerManager.getWorker(jobId);
+      } catch (error) {
+        console.warn('[DriftController] Failed to get worker, will use direct DriftService approach:', error);
+        worker = null;
+      }
       
       if (!worker) {
-        // If no worker, return position info from database
-        res.json({
-          success: true,
-          position: {
-            isPositionOpen: strategy.is_position_open || false,
-            currentPosition: strategy.current_position || null,
-            lastUpdated: strategy.position_last_updated || null
-          }
-        });
+        // If no worker, create a temporary DriftService to get account info
+        try {
+          const walletSecretKey = new Uint8Array(strategy.trading_wallets.secret_key);
+          const wallet = Keypair.fromSecretKey(walletSecretKey);
+          
+          const driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+          await driftService.initialize(wallet);
+          
+          // Get account info and current market price
+          const accountInfo = await driftService.getAccountInfo();
+          const currentPrice = await driftService.getMarketPrice(strategy.config.marketIndex || 0);
+          
+          // Clean up
+          await driftService.cleanup();
+          
+          res.json({
+            success: true,
+            position: {
+              isPositionOpen: strategy.is_position_open || false,
+              currentPosition: strategy.current_position || null,
+              lastUpdated: strategy.position_last_updated || null,
+              currentPrice: currentPrice,
+              accountInfo: accountInfo,
+              marketSymbol: strategy.config.marketSymbol || 'SOL-PERP',
+              entryPrice: strategy.config.entryPrice || 0,
+              exitPrice: strategy.config.exitPrice || 0,
+              isProcessingOrder: false
+            }
+          });
+        } catch (driftError) {
+          console.error('[DriftController] Error creating temporary DriftService:', driftError);
+          // Return database info with fallback values
+          res.json({
+            success: true,
+            position: {
+              isPositionOpen: strategy.is_position_open || false,
+              currentPosition: strategy.current_position || null,
+              lastUpdated: strategy.position_last_updated || null,
+              currentPrice: 0,
+              accountInfo: {
+                totalCollateral: 0,
+                freeCollateral: 0,
+                marginRatio: 0,
+                leverage: 0,
+                unrealizedPnl: 0
+              },
+              marketSymbol: strategy.config.marketSymbol || 'SOL-PERP',
+              entryPrice: strategy.config.entryPrice || 0,
+              exitPrice: strategy.config.exitPrice || 0,
+              isProcessingOrder: false
+            }
+          });
+        }
         return;
       }
 
@@ -383,6 +433,122 @@ export class DriftController {
       res.status(500).json({
         success: false,
         error: 'Failed to get position status',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Withdraw collateral from Drift account
+   */
+  static async withdrawCollateral(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { jobId, amount } = req.body;
+      
+      if (!jobId) {
+        res.status(400).json({
+          success: false,
+          error: 'Missing required parameter: jobId'
+        });
+        return;
+      }
+
+      // Get the strategy from database
+      const supabase = createSupabaseClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*, trading_wallets!inner(*)')
+        .eq('id', jobId)
+        .eq('main_wallet_pubkey', req.user!.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        res.status(404).json({
+          success: false,
+          error: 'Strategy not found or access denied'
+        });
+        return;
+      }
+
+      // Try to get the worker instance first
+      let driftService;
+      let isTemporaryService = false;
+      
+      try {
+        const worker = await WorkerManager.getWorker(jobId);
+        if (worker) {
+          driftService = (worker as any).driftService;
+        }
+      } catch (error) {
+        console.warn('[DriftController] Failed to get worker for withdrawal, will create temporary DriftService');
+      }
+
+      // If no worker or no driftService, create a temporary one
+      if (!driftService) {
+        try {
+          const walletSecretKey = new Uint8Array(strategy.trading_wallets.secret_key);
+          const wallet = Keypair.fromSecretKey(walletSecretKey);
+          
+          driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+          await driftService.initialize(wallet);
+          isTemporaryService = true;
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            error: 'Failed to initialize DriftService for withdrawal'
+          });
+          return;
+        }
+      }
+
+      let withdrawAmount: number;
+      if (amount === null || amount === undefined) {
+        // Withdraw all available collateral
+        const accountInfo = await driftService.getAccountInfo();
+        withdrawAmount = accountInfo.freeCollateral;
+      } else {
+        withdrawAmount = Number(amount);
+        if (isNaN(withdrawAmount) || withdrawAmount <= 0) {
+          res.status(400).json({
+            success: false,
+            error: 'Invalid withdrawal amount'
+          });
+          return;
+        }
+      }
+
+      const result = await driftService.withdrawCollateral(withdrawAmount);
+      
+      // Clean up temporary DriftService if we created one
+      if (isTemporaryService) {
+        try {
+          await driftService.cleanup();
+        } catch (cleanupError) {
+          console.warn('[DriftController] Error cleaning up temporary DriftService:', cleanupError);
+        }
+      }
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          signature: result.signature,
+          amount: withdrawAmount,
+          message: `Successfully withdrew ${withdrawAmount} SOL from collateral`
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error || 'Failed to withdraw collateral'
+        });
+      }
+    } catch (error) {
+      console.error('[DriftController] Error withdrawing collateral:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to withdraw collateral',
         details: error instanceof Error ? error.message : 'Unknown error'
       });
     }

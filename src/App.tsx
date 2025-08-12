@@ -4960,7 +4960,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                                     </div>
                                                   );
                                                 } else {
-                                                  return `${driftJob.marketSymbol} ${driftJob.direction.toUpperCase()} ${driftJob.leverage}x (${driftJob.allocationPercentage}%) - No Position`;
+                                                  return (
+                                                    <div style={{ lineHeight: '1.2' }}>
+                                                      <div style={{ color: '#e2e8f0' }}>
+                                                        {driftJob.marketSymbol} {driftJob.direction.toUpperCase()} {driftJob.leverage}x ({driftJob.allocationPercentage}%)
+                                                      </div>
+                                                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>
+                                                        📍 Entry: ${driftJob.entryPrice?.toFixed(2) || 'N/A'} | 
+                                                        🎯 Exit: ${driftJob.exitPrice?.toFixed(2) || 'N/A'} | 
+                                                        Current: ${solPrice?.toFixed(2) || 'Loading...'}
+                                                      </div>
+                                                      <div style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '1px' }}>
+                                                        ⏳ Waiting for entry price - Position not opened yet
+                                                      </div>
+                                                    </div>
+                                                  );
                                                 }
                                               })()
                                             : `Unknown (type: ${job.type})`}
@@ -5100,6 +5114,113 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                           onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
                                         >
                                           Reduce
+                                        </button>
+                                      </>
+                                    )}
+                                    
+                                    {/* Drift Perp collateral management buttons - show always for drift-perp strategies */}
+                                    {job.type === JobType.DRIFT_PERP && (
+                                      <>
+                                        <button
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const driftJob = job as DriftPerpJob;
+                                            const withdrawAmount = prompt('How much SOL to withdraw from collateral? (leave empty to withdraw all available)', '');
+                                            
+                                            if (withdrawAmount !== null) {
+                                              try {
+                                                const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/withdraw-collateral`, {
+                                                  method: 'POST',
+                                                  headers: {
+                                                    'Content-Type': 'application/json',
+                                                    'Authorization': `Bearer ${authService.getToken()}`
+                                                  },
+                                                  body: JSON.stringify({
+                                                    jobId: job.id,
+                                                    amount: withdrawAmount === '' ? null : Number(withdrawAmount)
+                                                  })
+                                                });
+                                                
+                                                if (response.ok) {
+                                                  const result = await response.json();
+                                                  setNotification({ type: 'success', message: `Withdrew ${result.amount || 'available'} SOL from collateral!` });
+                                                  await loadActiveJobs();
+                                                } else {
+                                                  const error = await response.text();
+                                                  setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
+                                                }
+                                              } catch (error) {
+                                                setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
+                                              }
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '0.25rem 0.5rem',
+                                            backgroundColor: '#10b981',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.25rem',
+                                            cursor: 'pointer',
+                                            fontSize: '0.75rem',
+                                            opacity: 0.8,
+                                            transition: 'opacity 0.2s'
+                                          }}
+                                          onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                          onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+                                        >
+                                          Withdraw
+                                        </button>
+                                        <button
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const driftJob = job as DriftPerpJob;
+                                            try {
+                                              const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/position/${job.id}`, {
+                                                method: 'GET',
+                                                headers: {
+                                                  'Content-Type': 'application/json',
+                                                  'Authorization': `Bearer ${authService.getToken()}`
+                                                }
+                                              });
+                                              
+                                              if (response.ok) {
+                                                const result = await response.json();
+                                                const pos = result.position;
+                                                const accountInfo = pos.accountInfo || {};
+                                                
+                                                const info = [
+                                                  `Total Collateral: ${accountInfo.totalCollateral?.toFixed(4) || 'N/A'} SOL`,
+                                                  `Free Collateral: ${accountInfo.freeCollateral?.toFixed(4) || 'N/A'} SOL`,
+                                                  `Margin Ratio: ${((accountInfo.marginRatio || 0) * 100).toFixed(1)}%`,
+                                                  `Position: ${pos.isPositionOpen ? 'OPEN' : 'CLOSED'}`,
+                                                  pos.currentPosition ? `Entry: $${pos.currentPosition.entryPrice?.toFixed(2)}` : '',
+                                                  `Current Price: $${pos.currentPrice?.toFixed(2) || 'N/A'}`
+                                                ].filter(Boolean).join('\n');
+                                                
+                                                alert(`Drift Account Status:\n\n${info}`);
+                                              } else {
+                                                const error = await response.text();
+                                                setNotification({ type: 'error', message: `Failed to get status: ${error}` });
+                                              }
+                                            } catch (error) {
+                                              setNotification({ type: 'error', message: `Failed to get status: ${error}` });
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '0.25rem 0.5rem',
+                                            backgroundColor: '#6b7280',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '0.25rem',
+                                            cursor: 'pointer',
+                                            fontSize: '0.75rem',
+                                            opacity: 0.8,
+                                            transition: 'opacity 0.2s'
+                                          }}
+                                          onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                          onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+                                        >
+                                          Status
                                         </button>
                                       </>
                                     )}
