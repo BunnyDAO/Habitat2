@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { TradingWallet } from '../../src/types/wallet';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { WalletService } from '../services/wallet.service';
+import { EncryptionService } from '../services/encryption.service';
+import { AuthSecurityService } from '../services/auth-security.service';
 
 const router = express.Router();
 
@@ -13,8 +15,10 @@ export function createTradingWalletsRouter() {
     process.env.SUPABASE_ANON_KEY!
   );
 
-  // Initialize WalletService
+  // Initialize services
   const walletService = WalletService.getInstance();
+  const encryptionService = EncryptionService.getInstance();
+  const authSecurityService = new AuthSecurityService();
 
   // Test database connection on router creation
   (async () => {
@@ -162,6 +166,170 @@ export function createTradingWalletsRouter() {
     } catch (error) {
       console.error('Error fetching trading wallet ID:', error);
       res.status(500).json({ error: 'Failed to fetch trading wallet ID' });
+    }
+  });
+
+  // Secure private key reveal endpoint
+  router.post('/:walletPubkey/reveal-private-key', authMiddleware, async (req: AuthenticatedRequest, res) => {
+    console.log('Received request to reveal private key');
+    const { walletPubkey } = req.params;
+    const { challenge, signature, timestamp } = req.body;
+    const mainWallet = req.user!.main_wallet_pubkey;
+    const ipAddress = req.ip;
+    const userAgent = req.get('User-Agent');
+
+    // Validation
+    if (!challenge || !signature || !timestamp) {
+      return res.status(400).json({ error: 'Missing required fields: challenge, signature, timestamp' });
+    }
+
+    try {
+      // 1. Rate limiting check (5 per hour)
+      const { data: rateLimitResult, error: rateLimitError } = await supabase
+        .rpc('check_rate_limit', {
+          p_identifier: mainWallet,
+          p_endpoint: '/reveal-private-key',
+          p_max_requests: 5,
+          p_window_minutes: 60
+        });
+
+      if (rateLimitError) {
+        console.error('Rate limit check error:', rateLimitError);
+        throw rateLimitError;
+      }
+
+      if (!rateLimitResult) {
+        // Log rate limit exceeded
+        await supabase.rpc('log_audit_event', {
+          p_wallet_address: mainWallet,
+          p_action: 'PRIVATE_KEY_REVEAL_RATE_LIMITED',
+          p_resource_type: 'trading_wallet',
+          p_resource_id: walletPubkey,
+          p_details: { rate_limit_exceeded: true },
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_success: false
+        });
+        
+        return res.status(429).json({ error: 'Rate limit exceeded. Maximum 5 requests per hour.' });
+      }
+
+      // 2. Verify wallet signature and message format
+      const isValidSignature = await authSecurityService.verifyWalletSignature(
+        mainWallet,
+        challenge,
+        signature
+      );
+
+      const isValidMessage = authSecurityService.validatePrivateKeyRequestMessage(challenge, walletPubkey);
+
+      if (!isValidSignature || !isValidMessage) {
+        // Log failed signature verification
+        const failureReason = !isValidSignature ? 'invalid_signature' : 'invalid_message_format';
+        await supabase.rpc('log_audit_event', {
+          p_wallet_address: mainWallet,
+          p_action: 'PRIVATE_KEY_REVEAL_FAILED',
+          p_resource_type: 'trading_wallet',
+          p_resource_id: walletPubkey,
+          p_details: { reason: failureReason, timestamp: timestamp },
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_success: false
+        });
+
+        return res.status(401).json({ error: 'Invalid signature or message format' });
+      }
+
+      // 3. Verify trading wallet ownership
+      const { data: ownershipData, error: ownershipError } = await supabase
+        .from('trading_wallets')
+        .select('main_wallet_pubkey, id')
+        .eq('wallet_pubkey', walletPubkey)
+        .single();
+
+      if (ownershipError || !ownershipData) {
+        await supabase.rpc('log_audit_event', {
+          p_wallet_address: mainWallet,
+          p_action: 'PRIVATE_KEY_REVEAL_FAILED',
+          p_resource_type: 'trading_wallet',
+          p_resource_id: walletPubkey,
+          p_details: { reason: 'wallet_not_found' },
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_success: false
+        });
+
+        return res.status(404).json({ error: 'Trading wallet not found' });
+      }
+
+      if (ownershipData.main_wallet_pubkey !== mainWallet) {
+        await supabase.rpc('log_audit_event', {
+          p_wallet_address: mainWallet,
+          p_action: 'PRIVATE_KEY_REVEAL_UNAUTHORIZED',
+          p_resource_type: 'trading_wallet',
+          p_resource_id: walletPubkey,
+          p_details: { reason: 'wallet_not_owned', actual_owner: ownershipData.main_wallet_pubkey },
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_success: false
+        });
+
+        return res.status(403).json({ error: 'Unauthorized: You do not own this trading wallet' });
+      }
+
+      // 4. Decrypt and return private key
+      const privateKey = await encryptionService.getWalletPrivateKey(ownershipData.id);
+      
+      if (!privateKey) {
+        await supabase.rpc('log_audit_event', {
+          p_wallet_address: mainWallet,
+          p_action: 'PRIVATE_KEY_REVEAL_FAILED',
+          p_resource_type: 'trading_wallet',
+          p_resource_id: walletPubkey,
+          p_details: { reason: 'decryption_failed' },
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_success: false
+        });
+
+        return res.status(500).json({ error: 'Failed to decrypt private key' });
+      }
+
+      // 5. Log successful private key access
+      await supabase.rpc('log_audit_event', {
+        p_wallet_address: mainWallet,
+        p_action: 'PRIVATE_KEY_REVEALED',
+        p_resource_type: 'trading_wallet',
+        p_resource_id: walletPubkey,
+        p_details: { 
+          signature_verified: true, 
+          challenge_timestamp: timestamp,
+          wallet_id: ownershipData.id
+        },
+        p_ip_address: ipAddress,
+        p_user_agent: userAgent,
+        p_success: true
+      });
+
+      console.log('Successfully revealed private key for wallet:', walletPubkey);
+      res.json({ privateKey });
+
+    } catch (error) {
+      console.error('Error revealing private key:', error);
+      
+      // Log error
+      await supabase.rpc('log_audit_event', {
+        p_wallet_address: mainWallet,
+        p_action: 'PRIVATE_KEY_REVEAL_ERROR',
+        p_resource_type: 'trading_wallet',
+        p_resource_id: walletPubkey,
+        p_details: { error: error instanceof Error ? error.message : 'Unknown error' },
+        p_ip_address: ipAddress,
+        p_user_agent: userAgent,
+        p_success: false
+      });
+
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

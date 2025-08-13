@@ -4,6 +4,7 @@ import { Keypair } from '@solana/web3.js';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { WorkerManager } from '../services/WorkerManager';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { EncryptionService } from '../services/encryption.service';
 
 /**
  * Controller for Drift Protocol related operations
@@ -358,8 +359,22 @@ export class DriftController {
       if (!worker) {
         // If no worker, create a temporary DriftService to get account info
         try {
-          const walletSecretKey = new Uint8Array(strategy.trading_wallets.secret_key);
+          // Get the encrypted private key using EncryptionService
+          const encryptionService = EncryptionService.getInstance();
+          console.log(`[DriftController] Retrieving private key for trading wallet ID: ${strategy.trading_wallets.id}`);
+          const walletPrivateKeyString = await encryptionService.getWalletPrivateKey(strategy.trading_wallets.id);
+          console.log(`[DriftController] Private key string length: ${walletPrivateKeyString?.length}`);
+          
+          // Convert base64 private key to Keypair
+          const walletSecretKey = Uint8Array.from(Buffer.from(walletPrivateKeyString, 'base64'));
+          console.log(`[DriftController] Secret key length: ${walletSecretKey?.length}`);
+          
+          if (!walletSecretKey || walletSecretKey.length !== 64) {
+            throw new Error(`Invalid secret key size: expected 64 bytes, got ${walletSecretKey ? walletSecretKey.length : 0}`);
+          }
+          
           const wallet = Keypair.fromSecretKey(walletSecretKey);
+          console.log(`[DriftController] Successfully created wallet with public key: ${wallet.publicKey.toString()}`);
           
           const driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
           await driftService.initialize(wallet);
@@ -387,6 +402,7 @@ export class DriftController {
           });
         } catch (driftError) {
           console.error('[DriftController] Error creating temporary DriftService:', driftError);
+          console.error('[DriftController] Strategy ID:', strategy.id, 'Trading Wallet ID:', strategy.trading_wallets?.id);
           // Return database info with fallback values
           res.json({
             success: true,
@@ -489,8 +505,22 @@ export class DriftController {
       // If no worker or no driftService, create a temporary one
       if (!driftService) {
         try {
-          const walletSecretKey = new Uint8Array(strategy.trading_wallets.secret_key);
+          // Get the encrypted private key using EncryptionService
+          const encryptionService = EncryptionService.getInstance();
+          console.log(`[DriftController] Retrieving private key for trading wallet ID: ${strategy.trading_wallets.id}`);
+          const walletPrivateKeyString = await encryptionService.getWalletPrivateKey(strategy.trading_wallets.id);
+          console.log(`[DriftController] Private key string length: ${walletPrivateKeyString?.length}`);
+          
+          // Convert base64 private key to Keypair
+          const walletSecretKey = Uint8Array.from(Buffer.from(walletPrivateKeyString, 'base64'));
+          console.log(`[DriftController] Secret key length: ${walletSecretKey?.length}`);
+          
+          if (!walletSecretKey || walletSecretKey.length !== 64) {
+            throw new Error(`Invalid secret key size: expected 64 bytes, got ${walletSecretKey ? walletSecretKey.length : 0}`);
+          }
+          
           const wallet = Keypair.fromSecretKey(walletSecretKey);
+          console.log(`[DriftController] Successfully created wallet with public key: ${wallet.publicKey.toString()}`);
           
           driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
           await driftService.initialize(wallet);

@@ -82,6 +82,12 @@ export class WorkerManager {
     const worker = this.workers.get(jobId);
     
     if (!worker) {
+      // Check if WorkerManager is initialized
+      if (!this.pool) {
+        console.warn('[WorkerManager] WorkerManager not initialized, cannot create worker');
+        return null;
+      }
+      
       // Try to load the job from database and create worker
       try {
         const result = await this.pool.query(

@@ -19,19 +19,48 @@ export interface AuthToken {
 }
 
 export class AuthSecurityService {
-  private db: Pool;
+  private db?: Pool;
   private jwtSecret: string;
   private tokenExpiration: number = 24 * 60 * 60 * 1000; // 24 hours
 
-  constructor(db: Pool, jwtSecret: string) {
+  constructor(db?: Pool, jwtSecret?: string) {
     this.db = db;
-    this.jwtSecret = jwtSecret;
+    this.jwtSecret = jwtSecret || process.env.JWT_SECRET || '';
+  }
+
+  /**
+   * Verify wallet signature for authentication (overloaded method)
+   */
+  async verifyWalletSignature(publicKey: string, message: string, signature: string): Promise<boolean>;
+  async verifyWalletSignature(verification: WalletSignatureVerification): Promise<boolean>;
+  async verifyWalletSignature(
+    publicKeyOrVerification: string | WalletSignatureVerification, 
+    message?: string, 
+    signature?: string
+  ): Promise<boolean> {
+    // Handle overloaded calls
+    let verification: WalletSignatureVerification;
+    
+    if (typeof publicKeyOrVerification === 'string' && message && signature) {
+      verification = {
+        publicKey: publicKeyOrVerification,
+        message: message,
+        signature: signature
+      };
+    } else if (typeof publicKeyOrVerification === 'object') {
+      verification = publicKeyOrVerification;
+    } else {
+      console.error('Invalid arguments for verifyWalletSignature');
+      return false;
+    }
+
+    return this.verifyWalletSignatureInternal(verification);
   }
 
   /**
    * Verify wallet signature for authentication
    */
-  async verifyWalletSignature(verification: WalletSignatureVerification): Promise<boolean> {
+  private async verifyWalletSignatureInternal(verification: WalletSignatureVerification): Promise<boolean> {
     try {
       // Validate public key format
       const publicKey = new PublicKey(verification.publicKey);
@@ -52,16 +81,47 @@ export class AuthSecurityService {
         return false;
       }
 
-      // Additional security: Check message content and timestamp
-      const messageContent = verification.message;
-      if (!this.validateAuthMessage(messageContent)) {
-        console.log('Invalid message content for wallet:', verification.publicKey);
+      return true;
+    } catch (error) {
+      console.error('Signature verification error:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Validate private key request message format
+   */
+  validatePrivateKeyRequestMessage(message: string, walletPubkey: string): boolean {
+    try {
+      // Expected format: "Reveal private key for wallet {walletPubkey} at {timestamp}"
+      const expectedPrefix = `Reveal private key for wallet ${walletPubkey} at `;
+      
+      if (!message.startsWith(expectedPrefix)) {
+        console.log('Invalid private key request message format');
+        return false;
+      }
+
+      // Extract timestamp
+      const timestampStr = message.substring(expectedPrefix.length);
+      const timestamp = parseInt(timestampStr);
+      
+      if (isNaN(timestamp)) {
+        console.log('Invalid timestamp in private key request message');
+        return false;
+      }
+
+      // Check timestamp (should be within last 5 minutes)
+      const now = Date.now();
+      const fiveMinutes = 5 * 60 * 1000;
+
+      if (Math.abs(now - timestamp) > fiveMinutes) {
+        console.log('Private key request message timestamp too old:', timestamp, 'vs', now);
         return false;
       }
 
       return true;
     } catch (error) {
-      console.error('Signature verification error:', error);
+      console.error('Private key request message validation error:', error);
       return false;
     }
   }
@@ -158,6 +218,10 @@ export class AuthSecurityService {
    * Store session in database
    */
   private async storeSession(sessionId: string, walletAddress: string, expiresAt: number): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database connection not available');
+    }
+    
     const query = `
       INSERT INTO auth_sessions (session_id, wallet_address, expires_at, created_at)
       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
@@ -174,6 +238,10 @@ export class AuthSecurityService {
    * Validate session exists and is not expired
    */
   private async validateSession(sessionId: string, walletAddress: string): Promise<boolean> {
+    if (!this.db) {
+      return false;
+    }
+    
     const query = `
       SELECT expires_at 
       FROM auth_sessions 
@@ -188,6 +256,10 @@ export class AuthSecurityService {
    * Invalidate session
    */
   async invalidateSession(sessionId: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database connection not available');
+    }
+    
     const query = `
       DELETE FROM auth_sessions 
       WHERE session_id = $1
@@ -200,6 +272,10 @@ export class AuthSecurityService {
    * Invalidate all sessions for a wallet
    */
   async invalidateAllSessions(walletAddress: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database connection not available');
+    }
+    
     const query = `
       DELETE FROM auth_sessions 
       WHERE wallet_address = $1
@@ -224,6 +300,11 @@ export class AuthSecurityService {
    * Clean up expired sessions
    */
   async cleanupExpiredSessions(): Promise<void> {
+    if (!this.db) {
+      console.log('Database connection not available for cleanup');
+      return;
+    }
+    
     const query = `
       DELETE FROM auth_sessions 
       WHERE expires_at < CURRENT_TIMESTAMP
@@ -237,6 +318,11 @@ export class AuthSecurityService {
    * Rate limiting check for authentication attempts
    */
   async checkAuthRateLimit(walletAddress: string, maxAttempts: number = 5, windowMinutes: number = 15): Promise<boolean> {
+    if (!this.db) {
+      console.log('Database connection not available for rate limiting');
+      return true; // Allow when DB not available
+    }
+    
     const query = `
       SELECT COUNT(*) as attempt_count
       FROM auth_attempts 
@@ -259,6 +345,11 @@ export class AuthSecurityService {
    * Record authentication attempt
    */
   async recordAuthAttempt(walletAddress: string, success: boolean): Promise<void> {
+    if (!this.db) {
+      console.log('Database connection not available for recording auth attempt');
+      return;
+    }
+    
     const query = `
       INSERT INTO auth_attempts (wallet_address, success, created_at)
       VALUES ($1, $2, CURRENT_TIMESTAMP)
@@ -308,6 +399,10 @@ export class AuthSecurityService {
   }
 
   private async validateStrategyAccess(walletAddress: string, strategyId: string): Promise<boolean> {
+    if (!this.db) {
+      return false;
+    }
+    
     const query = `
       SELECT 1 FROM strategies s
       JOIN trading_wallets tw ON s.trading_wallet_id = tw.id
@@ -319,6 +414,10 @@ export class AuthSecurityService {
   }
 
   private async validateTradingWalletAccess(walletAddress: string, walletId: string): Promise<boolean> {
+    if (!this.db) {
+      return false;
+    }
+    
     const query = `
       SELECT 1 FROM trading_wallets
       WHERE id = $1 AND main_wallet_pubkey = $2
@@ -329,6 +428,10 @@ export class AuthSecurityService {
   }
 
   private async validatePublishedStrategyAccess(walletAddress: string, publishedStrategyId: string): Promise<boolean> {
+    if (!this.db) {
+      return false;
+    }
+    
     const query = `
       SELECT 1 FROM published_strategies
       WHERE id = $1 AND publisher_wallet = $2

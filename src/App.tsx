@@ -728,6 +728,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   };
   const [expandedWalletId, setExpandedWalletId] = useState<string | 'all' | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState<string | null>(null);
+  const [revealedPrivateKeys, setRevealedPrivateKeys] = useState<Record<string, string>>({});
+  const [isRevealingPrivateKey, setIsRevealingPrivateKey] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [tradingWalletBalances, setTradingWalletBalances] = useState<Record<string, number>>({});
@@ -1383,6 +1385,82 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         message: error instanceof Error ? error.message : 'Failed to create trading wallet'
       });
       console.error('Error generating trading wallet:', error);
+    }
+  };
+
+  // Secure private key reveal function
+  const secureRevealPrivateKey = async (walletAddress: string) => {
+    if (!wallet.publicKey || !wallet.signMessage) {
+      setNotification({
+        type: 'error',
+        message: 'Wallet not connected or does not support message signing'
+      });
+      return;
+    }
+
+    setIsRevealingPrivateKey(walletAddress);
+    
+    try {
+      // Generate challenge message
+      const timestamp = Date.now();
+      const challengeMessage = `Reveal private key for wallet ${walletAddress} at ${timestamp}`;
+      
+      // Sign the challenge with the main wallet
+      const messageBuffer = new TextEncoder().encode(challengeMessage);
+      const signatureUint8Array = await wallet.signMessage(messageBuffer);
+      const signature = bs58.encode(signatureUint8Array);
+      
+      // Send request to backend
+      const response = await apiClient.post(`/trading-wallets/${walletAddress}/reveal-private-key`, {
+        challenge: challengeMessage,
+        signature: signature,
+        timestamp: timestamp
+      });
+
+      if (response.data && response.data.privateKey) {
+        // Store the revealed private key temporarily
+        setRevealedPrivateKeys(prev => ({
+          ...prev,
+          [walletAddress]: response.data.privateKey
+        }));
+        
+        // Auto-hide after 30 seconds for security
+        setTimeout(() => {
+          setRevealedPrivateKeys(prev => {
+            const updated = { ...prev };
+            delete updated[walletAddress];
+            return updated;
+          });
+          if (showPrivateKey === walletAddress) {
+            setShowPrivateKey(null);
+          }
+        }, 30000);
+
+        setNotification({
+          type: 'success',
+          message: 'Private key revealed successfully. It will be hidden automatically in 30 seconds.'
+        });
+      }
+    } catch (error: any) {
+      console.error('Error revealing private key:', error);
+      let errorMessage = 'Failed to reveal private key';
+      
+      if (error.response?.status === 429) {
+        errorMessage = 'Rate limit exceeded. Maximum 5 requests per hour.';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Invalid signature or message format';
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not own this trading wallet';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      
+      setNotification({
+        type: 'error',
+        message: errorMessage
+      });
+    } finally {
+      setIsRevealingPrivateKey(null);
     }
   };
 
@@ -2199,10 +2277,32 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       Copy Public Key
                     </button>
                     <button
-                      onClick={() => setShowPrivateKey(showPrivateKey === tw.publicKey ? null : tw.publicKey)}
+                      onClick={async () => {
+                        if (showPrivateKey === tw.publicKey) {
+                          // Hide private key
+                          setShowPrivateKey(null);
+                          setRevealedPrivateKeys(prev => {
+                            const updated = { ...prev };
+                            delete updated[tw.publicKey];
+                            return updated;
+                          });
+                        } else {
+                          // Show private key securely
+                          if (!revealedPrivateKeys[tw.publicKey]) {
+                            await secureRevealPrivateKey(tw.publicKey);
+                          }
+                          setShowPrivateKey(tw.publicKey);
+                        }
+                      }}
+                      disabled={isRevealingPrivateKey === tw.publicKey}
                       className={`${walletStyles.button} ${showPrivateKey === tw.publicKey ? walletStyles.danger : ''}`}
                     >
-                      {showPrivateKey === tw.publicKey ? 'Hide Private Key' : 'Show Private Key'}
+                      {isRevealingPrivateKey === tw.publicKey 
+                        ? 'Verifying...' 
+                        : showPrivateKey === tw.publicKey 
+                          ? 'Hide Private Key' 
+                          : 'Show Private Key'
+                      }
                     </button>
                     <button
                       onClick={async () => {
@@ -2367,7 +2467,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         alignItems: 'center',
                         gap: '0.25rem'
                       }}>
-                        ⚠️ Never share your private key
+                        ⚠️ Never share your private key • Auto-hides in 30 seconds
                       </div>
                       <div style={{
                         backgroundColor: '#1e293b',
@@ -2380,22 +2480,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         fontSize: '0.75rem',
                         border: '1px solid #4b5563'
                       }}>
-                        {(() => {
-                          const privateKeyStr = localStorage.getItem(`wallet_${tw.publicKey}`);
-                          if (!privateKeyStr) return '';
-                          // Convert from base64 to Uint8Array directly
-                          const privateKeyBytes = new Uint8Array(Buffer.from(privateKeyStr, 'base64'));
-                          return bs58.encode(privateKeyBytes);
-                        })()}
+                        {revealedPrivateKeys[tw.publicKey] || 'Private key not available - please try revealing again'}
                       </div>
                       <button
                         onClick={() => {
-                          const privateKeyStr = localStorage.getItem(`wallet_${tw.publicKey}`);
-                          if (!privateKeyStr) return;
-                          // Convert from base64 to Uint8Array directly
-                          const privateKeyBytes = new Uint8Array(Buffer.from(privateKeyStr, 'base64'));
-                          navigator.clipboard.writeText(bs58.encode(privateKeyBytes));
+                          const privateKey = revealedPrivateKeys[tw.publicKey];
+                          if (privateKey) {
+                            navigator.clipboard.writeText(privateKey);
+                            setNotification({
+                              type: 'success',
+                              message: 'Private key copied to clipboard'
+                            });
+                          }
                         }}
+                        disabled={!revealedPrivateKeys[tw.publicKey]}
                         className={walletStyles.button}
                       >
                         Copy Private Key

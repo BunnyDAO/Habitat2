@@ -460,6 +460,25 @@ export class WalletMonitorWorker extends BaseWorker {
       console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}`);
       console.log(`[Mirror] UI amounts - input: ${inputAmount}, output: ${outputAmount}`);
       
+      // ===== MANUAL PERCENTAGE ANALYSIS (SEPARATE FROM WORKFLOW) =====
+      try {
+        const result = await this.calculateWalletSwapPercentage(signature, inputToken, outputToken, inputAmount);
+        if (result.success && result.data) {
+          console.log(`[SwapPercentage] *** MANUAL ANALYSIS ***`);
+          console.log(`[SwapPercentage] Monitored wallet used ${result.data.percentageUsed.toFixed(2)}% of their ${inputToken} balance`);
+          console.log(`[SwapPercentage] Pre-swap: ${result.data.preSwapBalance}, Post-swap: ${result.data.postSwapBalance}`);
+          console.log(`[SwapPercentage] Amount swapped: ${result.data.swapAmount}`);
+          
+          // You could store this data or use it for logic here
+          // For example: if (result.data.percentageUsed > 50) { /* do something */ }
+        } else {
+          console.log(`[SwapPercentage] Could not calculate percentage: ${result.error}`);
+        }
+      } catch (error) {
+        console.error(`[SwapPercentage] Error in manual analysis:`, error);
+      }
+      // ===== END MANUAL ANALYSIS =====
+      
       // Pass UI amounts directly to mirrorSwap - SwapService will handle the scaling
       await this.mirrorSwap(inputToken, outputToken, inputAmount);
       this.updateJobActivity();
@@ -932,6 +951,273 @@ export class WalletMonitorWorker extends BaseWorker {
   protected updateJobActivity() {
     if (this.job) {
       this.job.lastActivity = new Date().toISOString();
+    }
+  }
+
+  /**
+   * SEPARATE FUNCTION FOR WALLET BALANCE PERCENTAGE CALCULATION
+   * This function calculates what percentage of a wallet's balance was used in a swap
+   * It does NOT interfere with the existing swap workflow - it's purely for analysis
+   */
+  public async calculateWalletSwapPercentage(
+    signature: string,
+    inputToken: string,
+    outputToken: string,
+    inputAmount: number
+  ): Promise<{
+    success: boolean;
+    data?: {
+      preSwapBalance: number;
+      postSwapBalance: number;
+      swapAmount: number;
+      percentageUsed: number;
+      tokenMint: string;
+      timestamp: number;
+    };
+    error?: string;
+  }> {
+    try {
+      console.log(`[SwapPercentage] Analyzing swap percentage for transaction: ${signature}`);
+      console.log(`[SwapPercentage] Input token: ${inputToken}, Amount: ${inputAmount}`);
+
+      // Get the transaction details
+      const tx = await this.connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+
+      if (!tx || !tx.meta) {
+        return {
+          success: false,
+          error: 'Transaction not found or missing metadata'
+        };
+      }
+
+      // Extract pre and post balances for the monitored wallet
+      const preSwapBalance = await this.getWalletTokenBalance(inputToken, tx.meta.preTokenBalances || null, tx.meta.preBalances || null);
+      const postSwapBalance = await this.getWalletTokenBalance(inputToken, tx.meta.postTokenBalances || null, tx.meta.postBalances || null);
+
+      if (preSwapBalance === null || postSwapBalance === null) {
+        return {
+          success: false,
+          error: `Could not determine wallet balance for token ${inputToken}`
+        };
+      }
+
+      // Calculate the actual swap amount (difference between pre and post)
+      const actualSwapAmount = preSwapBalance - postSwapBalance;
+      
+      // Calculate percentage used
+      const percentageUsed = preSwapBalance > 0 ? (actualSwapAmount / preSwapBalance) * 100 : 0;
+
+      const result = {
+        preSwapBalance,
+        postSwapBalance,
+        swapAmount: actualSwapAmount,
+        percentageUsed,
+        tokenMint: inputToken,
+        timestamp: tx.blockTime || Date.now() / 1000
+      };
+
+      console.log(`[SwapPercentage] Analysis complete:`, result);
+      console.log(`[SwapPercentage] Monitored wallet used ${percentageUsed.toFixed(2)}% of their ${inputToken} balance`);
+
+      return {
+        success: true,
+        data: result
+      };
+
+    } catch (error) {
+      console.error(`[SwapPercentage] Error calculating swap percentage:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Helper function to get wallet token balance from transaction metadata
+   * Handles both SOL (native) and SPL tokens
+   */
+  private async getWalletTokenBalance(
+    tokenMint: string,
+    tokenBalances: any[] | null,
+    solBalances: number[] | null
+  ): Promise<number | null> {
+    try {
+      // Handle SOL (native token)
+      if (tokenMint === 'So11111111111111111111111111111111111111112') {
+        if (!solBalances) return null;
+
+        // Find the monitored wallet's SOL balance
+        const tx = await this.connection.getTransaction(this.lastProcessedSignature || '', {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
+        });
+
+        if (!tx) return null;
+
+        const message = tx.transaction.message;
+        let accountKeys: string[] = [];
+
+        if ('accountKeys' in message) {
+          accountKeys = message.accountKeys.map(key => key.toString());
+        } else if ('version' in message && message.staticAccountKeys) {
+          accountKeys = [...message.staticAccountKeys.map(key => key.toString())];
+          if (tx.meta?.loadedAddresses) {
+            if (tx.meta.loadedAddresses.readonly) {
+              accountKeys.push(...tx.meta.loadedAddresses.readonly.map(key => key.toString()));
+            }
+            if (tx.meta.loadedAddresses.writable) {
+              accountKeys.push(...tx.meta.loadedAddresses.writable.map(key => key.toString()));
+            }
+          }
+        }
+
+        const walletIndex = accountKeys.indexOf(this.walletPubkey.toString());
+        if (walletIndex !== -1 && walletIndex < solBalances.length) {
+          return solBalances[walletIndex] / 1e9; // Convert lamports to SOL
+        }
+        return null;
+      }
+
+      // Handle SPL tokens
+      if (!tokenBalances) return null;
+
+      const walletTokenBalance = tokenBalances.find(
+        balance => 
+          balance.owner === this.walletPubkey.toString() && 
+          balance.mint === tokenMint
+      );
+
+      if (walletTokenBalance) {
+        return Number(walletTokenBalance.uiTokenAmount.uiAmount);
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`[SwapPercentage] Error getting wallet token balance for ${tokenMint}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Convenience method to analyze the last processed transaction's swap percentage
+   * This can be called manually for testing
+   */
+  public async analyzeLastSwapPercentage(): Promise<{
+    success: boolean;
+    data?: {
+      signature: string;
+      preSwapBalance: number;
+      postSwapBalance: number;
+      swapAmount: number;
+      percentageUsed: number;
+      tokenMint: string;
+      timestamp: number;
+    };
+    error?: string;
+  }> {
+    if (!this.lastProcessedSignature) {
+      return {
+        success: false,
+        error: 'No recent transactions to analyze'
+      };
+    }
+
+    try {
+      // Get the last transaction details to extract token info
+      const tx = await this.connection.getTransaction(this.lastProcessedSignature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+
+      if (!tx || !tx.meta) {
+        return {
+          success: false,
+          error: 'Could not retrieve last transaction'
+        };
+      }
+
+      // Extract token changes to determine input token
+      const preTokenBalances = tx.meta.preTokenBalances || [];
+      const postTokenBalances = tx.meta.postTokenBalances || [];
+      
+      let inputToken = '';
+      let inputAmount = 0;
+
+      // Find the token that decreased (input token)
+      const tokenChanges = new Map<string, { pre: number; post: number }>();
+      
+      preTokenBalances.forEach(balance => {
+        if (balance.owner === this.walletPubkey.toString()) {
+          tokenChanges.set(balance.mint, {
+            pre: Number(balance.uiTokenAmount.uiAmount),
+            post: 0
+          });
+        }
+      });
+
+      postTokenBalances.forEach(balance => {
+        if (balance.owner === this.walletPubkey.toString()) {
+          const existing = tokenChanges.get(balance.mint);
+          if (existing) {
+            existing.post = Number(balance.uiTokenAmount.uiAmount);
+          } else {
+            tokenChanges.set(balance.mint, {
+              pre: 0,
+              post: Number(balance.uiTokenAmount.uiAmount)
+            });
+          }
+        }
+      });
+
+      // Find input token (the one that decreased)
+      tokenChanges.forEach((change, mint) => {
+        const difference = change.post - change.pre;
+        if (difference < 0) {
+          inputToken = mint;
+          inputAmount = Math.abs(difference);
+        }
+      });
+
+      if (!inputToken) {
+        return {
+          success: false,
+          error: 'Could not determine input token from last transaction'
+        };
+      }
+
+      // Now calculate the percentage
+      const result = await this.calculateWalletSwapPercentage(
+        this.lastProcessedSignature,
+        inputToken,
+        '', // outputToken not needed for percentage calculation
+        inputAmount
+      );
+
+      if (result.success && result.data) {
+        return {
+          success: true,
+          data: {
+            signature: this.lastProcessedSignature,
+            ...result.data
+          }
+        };
+      }
+
+      return {
+        success: false,
+        error: result.error || 'Failed to get percentage calculation result'
+      };
+
+    } catch (error) {
+      console.error(`[SwapPercentage] Error analyzing last swap:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 
