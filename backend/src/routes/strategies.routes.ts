@@ -398,7 +398,8 @@ router.get('/',
             name
           )
         `)
-        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey);
+        .eq('main_wallet_pubkey', req.user.main_wallet_pubkey)
+        .order('created_at', { ascending: true }); // Order by creation date (oldest first)
 
       if (trading_wallet_id) {
         query.eq('trading_wallet_id', trading_wallet_id);

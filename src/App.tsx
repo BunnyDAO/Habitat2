@@ -1152,13 +1152,21 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const convertedStrategies = await Promise.all(validStrategies.map(convertBackendStrategyToJob));
       console.log('✅ Converted', convertedStrategies.length, 'strategies to jobs');
       
+      // Ensure consistent ordering by creation date (oldest first)
+      const sortedConvertedStrategies = convertedStrategies.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateA - dateB; // Ascending order (oldest first)
+      });
+      console.log('📅 Sorted strategies by creation date (oldest first)');
+      
       // Convert saved wallets to jobs
       const savedWalletJobs = mapSavedWalletsToJobs(savedWallets);
       console.log('✅ Converted', savedWalletJobs.length, 'saved wallets to jobs');
       
-      // Merge both types of jobs
-      const allJobs = [...convertedStrategies, ...savedWalletJobs];
-      console.log('✅ Total jobs loaded:', allJobs.length, '(', convertedStrategies.length, 'strategies +', savedWalletJobs.length, 'saved wallets)');
+      // Merge both types of jobs (strategies first, then saved wallets)
+      const allJobs = [...sortedConvertedStrategies, ...savedWalletJobs];
+      console.log('✅ Total jobs loaded:', allJobs.length, '(', sortedConvertedStrategies.length, 'strategies +', savedWalletJobs.length, 'saved wallets)');
       
       setJobs(allJobs);
       
@@ -1182,7 +1190,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
       
       // Get strategy wallet addresses for comparison
-      const strategyJobs = convertedStrategies;
+      const strategyJobs = sortedConvertedStrategies;
       const strategyWalletAddresses = new Set(strategyJobs.map(job => job.tradingWalletPublicKey));
       console.log('🔍 IMPROVED: Strategy wallet addresses:', Array.from(strategyWalletAddresses));
       
@@ -4512,10 +4520,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         const backendStrategies = await strategyApiService.getStrategies();
         const convertedStrategies = await Promise.all(backendStrategies.map(convertBackendStrategyToJob));
         
+        // Ensure consistent ordering by creation date (oldest first)
+        const sortedConvertedStrategies = convertedStrategies.sort((a, b) => {
+          const dateA = new Date(a.createdAt).getTime();
+          const dateB = new Date(b.createdAt).getTime();
+          return dateA - dateB; // Ascending order (oldest first)
+        });
+        console.log('📅 Sorted strategies by creation date (oldest first)');
+        
         // Update only the strategy jobs, keep saved wallet jobs intact
         setJobs(prevJobs => {
           const savedWalletJobs = prevJobs.filter(job => job.type === JobType.SAVED_WALLET);
-          const newAllJobs = [...convertedStrategies, ...savedWalletJobs];
+          const newAllJobs = [...sortedConvertedStrategies, ...savedWalletJobs];
           
           // Sync pausedJobs Set with is_active field from database
           const inactiveJobIds = new Set(
@@ -4877,45 +4893,47 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                       </span>
                                       <span style={{ color: '#94a3b8' }}>|</span>
                                       <span>
-                                        {job.type === JobType.WALLET_MONITOR ? (
-                                          <span>
-                                            <span style={{ color: '#e2e8f0' }}>{(job as WalletMonitoringJob).name || 'Unnamed Wallet'}</span>
-                                            <span style={{ color: '#94a3b8' }}> - </span>
-                                            <span 
-                                              className={walletStyles.copyAddress}
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigator.clipboard.writeText((job as WalletMonitoringJob).walletAddress);
-                                                setNotification({
-                                                  message: 'Address copied to clipboard',
-                                                  type: 'success'
-                                                });
-                                              }}
-                                              title="Click to copy address"
-                                            >
-                                              {(job as WalletMonitoringJob).walletAddress.slice(0, 4)}...{(job as WalletMonitoringJob).walletAddress.slice(-4)}
+                                        {job.type === JobType.WALLET_MONITOR
+                                          ? (
+                                            <span>
+                                              <span style={{ color: '#e2e8f0' }}>{(job as WalletMonitoringJob).name || 'Unnamed Wallet'}</span>
+                                              <span style={{ color: '#94a3b8' }}> - </span>
+                                              <span 
+                                                className={walletStyles.copyAddress}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  navigator.clipboard.writeText((job as WalletMonitoringJob).walletAddress);
+                                                  setNotification({
+                                                    message: 'Address copied to clipboard',
+                                                    type: 'success'
+                                                  });
+                                                }}
+                                                title="Click to copy address"
+                                              >
+                                                {(job as WalletMonitoringJob).walletAddress.slice(0, 4)}...{(job as WalletMonitoringJob).walletAddress.slice(-4)}
+                                              </span>
                                             </span>
-                                          </span>
-                                        ) : (
-                                          <span>
-                                            <span style={{ color: '#e2e8f0' }}>{tw.name || `Trading Wallet ${tradingWallets.indexOf(tw) + 1}`}</span>
-                                            <span style={{ color: '#94a3b8' }}> - </span>
-                                            <span 
-                                              className={walletStyles.copyAddress}
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigator.clipboard.writeText(tw.publicKey);
-                                                setNotification({
-                                                  message: 'Address copied to clipboard',
-                                                  type: 'success'
-                                                });
-                                              }}
-                                              title="Click to copy address"
-                                            >
-                                              {tw.publicKey.slice(0, 4)}...{tw.publicKey.slice(-4)}
+                                          )
+                                          : (
+                                            <span>
+                                              <span style={{ color: '#e2e8f0' }}>{tw.name || `Trading Wallet ${tradingWallets.indexOf(tw) + 1}`}</span>
+                                              <span style={{ color: '#94a3b8' }}> - </span>
+                                              <span 
+                                                className={walletStyles.copyAddress}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  navigator.clipboard.writeText(tw.publicKey);
+                                                  setNotification({
+                                                    message: 'Address copied to clipboard',
+                                                    type: 'success'
+                                                  });
+                                                }}
+                                                title="Click to copy address"
+                                              >
+                                                {tw.publicKey.slice(0, 4)}...{tw.publicKey.slice(-4)}
+                                              </span>
                                             </span>
-                                          </span>
-                                        )}
+                                          )}
                                       </span>
                                       <span style={{ color: '#94a3b8' }}>|</span>
                                       <span>
@@ -4936,20 +4954,20 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                                   return `${typeLabel}: $${level.price} (${amountInfo})`;
                                                 }).join(' | ') || 'No levels';
                                               })()
-                                          : job.type === JobType.PAIR_TRADE
-                                            ? `${(job as PairTradeJob).tokenASymbol} ↔ ${(job as PairTradeJob).tokenBSymbol} (${(job as PairTradeJob).allocationPercentage}%)`
-                                          : job.type === JobType.DRIFT_PERP
-                                            ? (() => {
-                                                const driftJob = job as DriftPerpJob;
-                                                const pos = driftJob.currentPosition;
-                                                if (pos) {
-                                                  const pnlColor = pos.unrealizedPnl >= 0 ? '#22c55e' : '#ef4444';
-                                                  const pnlSign = pos.unrealizedPnl >= 0 ? '+' : '';
-                                                  const distanceToLiq = ((pos.currentPrice - pos.liquidationPrice) / pos.currentPrice * 100);
-                                                  const liquidationWarning = distanceToLiq < 15 ? '⚠️' : distanceToLiq < 30 ? '⚡' : '';
-                                                  
-                                                  return (
-                                                    <div style={{ lineHeight: '1.2' }}>
+                                            : job.type === JobType.PAIR_TRADE
+                                              ? `${(job as PairTradeJob).tokenASymbol} ↔ ${(job as PairTradeJob).tokenBSymbol} (${(job as PairTradeJob).allocationPercentage}%)`
+                                            : job.type === JobType.DRIFT_PERP
+                                              ? (() => {
+                                                  const driftJob = job as DriftPerpJob;
+                                                  const pos = driftJob.currentPosition;
+                                                  if (pos) {
+                                                    const pnlColor = pos.unrealizedPnl >= 0 ? '#22c55e' : '#ef4444';
+                                                    const pnlSign = pos.unrealizedPnl >= 0 ? '+' : '';
+                                                    const distanceToLiq = ((pos.currentPrice - pos.liquidationPrice) / pos.currentPrice * 100);
+                                                    const liquidationWarning = distanceToLiq < 15 ? '⚠️' : distanceToLiq < 30 ? '⚡' : '';
+                                                    
+                                                    return (
+                                                      <div style={{ lineHeight: '1.2' }}>
                                                       <div>{driftJob.marketSymbol} {driftJob.direction.toUpperCase()} {driftJob.leverage}x ({driftJob.allocationPercentage}%)</div>
                                                       <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>
                                                         Entry: ${pos.entryPrice.toFixed(2)} | Current: ${pos.currentPrice.toFixed(2)} | Liq: ${pos.liquidationPrice.toFixed(2)} {liquidationWarning}
