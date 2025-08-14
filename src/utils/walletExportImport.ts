@@ -8,6 +8,8 @@ import {
   SecureExportMetadata,
   EncryptedWallet
 } from './secureKeyManagement';
+import apiClient from '../services/api/api-client';
+import bs58 from 'bs58';
 
 // Use the types from App.tsx
 interface TradingWallet {
@@ -101,11 +103,47 @@ export async function exportWallets(
     const signature = await wallet.signMessage(messageBytes);
     console.log('Generated signature length:', signature.length);
     
-    // Convert TradingWallet array to format needed by prepareWalletsForExport
-    const walletsForExport = wallets.map(w => ({
-      publicKey: w.publicKey,
-      secretKey: new Uint8Array(w.secretKey)
-    }));
+    // Fetch private keys from backend for each wallet
+    const walletsForExport = await Promise.all(
+      wallets.map(async (w) => {
+        try {
+          // Generate challenge message for this wallet
+          const timestamp = Date.now();
+          const challengeMessage = `Reveal private key for wallet ${w.publicKey} at ${timestamp}`;
+          
+          // Sign the challenge with the main wallet
+          const challengeBuffer = new TextEncoder().encode(challengeMessage);
+          const challengeSignatureUint8Array = await wallet.signMessage(challengeBuffer);
+          const challengeSignature = bs58.encode(challengeSignatureUint8Array);
+          
+          console.log(`Fetching private key for wallet: ${w.publicKey}`);
+          
+          // Make request to backend to get private key using apiClient
+          const response = await apiClient.post(`/trading-wallets/${w.publicKey}/reveal-private-key`, {
+            challenge: challengeMessage,
+            signature: challengeSignature,
+            timestamp: timestamp
+          });
+          
+          const data = response.data;
+          if (!data.privateKey) {
+            throw new Error(`No private key returned for ${w.publicKey}`);
+          }
+          
+          // Convert base64 private key to Uint8Array
+          const secretKey = new Uint8Array(Buffer.from(data.privateKey, 'base64'));
+          console.log(`Retrieved private key for ${w.publicKey}, length: ${secretKey.length}`);
+          
+          return {
+            publicKey: w.publicKey,
+            secretKey: secretKey
+          };
+        } catch (error) {
+          console.error(`Failed to get private key for wallet ${w.publicKey}:`, error);
+          throw new Error(`Failed to retrieve private key for wallet ${w.publicKey}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      })
+    );
     
     // Prepare wallets for secure export
     const { metadata, encryptedWallets } = await prepareWalletsForExport(

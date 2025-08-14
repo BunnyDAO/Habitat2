@@ -132,11 +132,22 @@ export async function encryptPrivateKey(
         // Generate IV
         const iv = crypto.getRandomValues(new Uint8Array(12));
         
-        // Log input data sizes
+        // Log input data sizes and validate key format
         console.log('Encrypting private key:', {
             keyLength: privateKey.length,
-            ivLength: iv.length
+            ivLength: iv.length,
+            keyBytes: Array.from(privateKey.slice(0, 8)) // Log first 8 bytes for debugging
         });
+        
+        // Validate private key length
+        if (privateKey.length !== 64 && privateKey.length !== 32) {
+            console.error('❌ Invalid private key length:', privateKey.length);
+            console.error('❌ Expected 64 bytes (full keypair) or 32 bytes (seed)');
+            throw new Error(`Invalid private key length: ${privateKey.length} bytes. Expected 64 or 32 bytes.`);
+        }
+        
+        // Log key type for debugging
+        console.log('🔑 Private key type:', privateKey.length === 64 ? 'Full keypair (64 bytes)' : 'Seed (32 bytes)');
         
         // Encrypt the data
         const encryptedData = await crypto.subtle.encrypt(
@@ -186,8 +197,9 @@ export async function decryptPrivateKey(
         console.log('Decrypting data:', {
             base64Length: encryptedPrivateKey.length,
             totalLength: encryptedData.length,
-            expectedTotalLength: 92, // 12 (IV) + 64 (key) + 16 (auth tag)
-            base64String: encryptedPrivateKey // Log the actual base64 string
+            expectedTotalLengthFor64ByteKey: 92, // 12 (IV) + 64 (key) + 16 (auth tag)
+            expectedTotalLengthFor32ByteKey: 60, // 12 (IV) + 32 (seed) + 16 (auth tag)
+            base64String: encryptedPrivateKey.substring(0, 40) + '...' // Log first part for debugging
         });
         
         // Validate minimum length (IV + some data + auth tag)
@@ -238,12 +250,15 @@ export async function decryptPrivateKey(
         const result = new Uint8Array(decryptedData);
         console.log('Decrypted result:', {
             length: result.length,
-            bytes: Array.from(result)
+            keyType: result.length === 64 ? 'Full keypair' : result.length === 32 ? 'Seed' : 'Unknown',
+            bytes: Array.from(result.slice(0, 8)) // Log first 8 bytes for debugging
         });
         
-        if (result.length !== 64) {
-            console.error('Decrypted data has invalid length:', result.length);
-            throw new Error('Decrypted data has invalid format');
+        // Validate decrypted data length (can be 32 or 64 bytes)
+        if (result.length !== 64 && result.length !== 32) {
+            console.error('❌ Decrypted data has invalid length:', result.length);
+            console.error('❌ Expected 64 bytes (full keypair) or 32 bytes (seed)');
+            throw new Error(`Decrypted data has invalid length: ${result.length} bytes. Expected 64 or 32 bytes.`);
         }
         
         return result;

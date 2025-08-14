@@ -376,7 +376,10 @@ export class DriftController {
           const wallet = Keypair.fromSecretKey(walletSecretKey);
           console.log(`[DriftController] Successfully created wallet with public key: ${wallet.publicKey.toString()}`);
           
-          const driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+          // Use the same RPC URL as the main server, with Helius as fallback
+          const rpcUrl = process.env.RPC_URL || process.env.RPC_ENDPOINT || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` || 'https://api.mainnet-beta.solana.com';
+          console.log(`[DriftController] Using RPC URL: ${rpcUrl.replace(/api-key=[^&]+/, 'api-key=***')}`);
+          const driftService = new DriftService(rpcUrl);
           await driftService.initialize(wallet);
           
           // Get account info and current market price
@@ -522,7 +525,10 @@ export class DriftController {
           const wallet = Keypair.fromSecretKey(walletSecretKey);
           console.log(`[DriftController] Successfully created wallet with public key: ${wallet.publicKey.toString()}`);
           
-          driftService = new DriftService(process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+          // Use the same RPC URL as the main server, with Helius as fallback
+          const rpcUrl = process.env.RPC_URL || process.env.RPC_ENDPOINT || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` || 'https://api.mainnet-beta.solana.com';
+          console.log(`[DriftController] Using RPC URL: ${rpcUrl.replace(/api-key=[^&]+/, 'api-key=***')}`);
+          driftService = new DriftService(rpcUrl);
           await driftService.initialize(wallet);
           isTemporaryService = true;
         } catch (error) {
@@ -579,6 +585,123 @@ export class DriftController {
       res.status(500).json({
         success: false,
         error: 'Failed to withdraw collateral',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Settle unsettled PnL for a Drift strategy
+   */
+  static async settlePnL(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const { jobId } = req.params;
+      
+      if (!jobId) {
+        res.status(400).json({
+          success: false,
+          error: 'Missing required parameter: jobId'
+        });
+        return;
+      }
+
+      // Get the strategy from database
+      const supabase = createSupabaseClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_ANON_KEY!
+      );
+      const { data: strategy, error: strategyError } = await supabase
+        .from('strategies')
+        .select('*, trading_wallets!inner(*)')
+        .eq('id', jobId)
+        .eq('main_wallet_pubkey', req.user!.main_wallet_pubkey)
+        .single();
+
+      if (strategyError || !strategy) {
+        res.status(404).json({
+          success: false,
+          error: 'Strategy not found or access denied'
+        });
+        return;
+      }
+
+      // Try to get the worker instance first
+      let driftService;
+      let isTemporaryService = false;
+      
+      try {
+        const worker = await WorkerManager.getWorker(jobId);
+        if (worker) {
+          driftService = (worker as any).driftService;
+        }
+      } catch (error) {
+        console.warn('[DriftController] Failed to get worker for settlement, will create temporary DriftService');
+      }
+
+      // If no worker or no driftService, create a temporary one
+      if (!driftService) {
+        try {
+          // Get the encrypted private key using EncryptionService
+          const encryptionService = EncryptionService.getInstance();
+          console.log(`[DriftController] Retrieving private key for trading wallet ID: ${strategy.trading_wallets.id}`);
+          const walletPrivateKeyString = await encryptionService.getWalletPrivateKey(strategy.trading_wallets.id);
+          console.log(`[DriftController] Private key string length: ${walletPrivateKeyString?.length}`);
+          
+          // Convert base64 private key to Keypair
+          const walletSecretKey = Uint8Array.from(Buffer.from(walletPrivateKeyString, 'base64'));
+          console.log(`[DriftController] Secret key length: ${walletSecretKey?.length}`);
+          
+          if (!walletSecretKey || walletSecretKey.length !== 64) {
+            throw new Error(`Invalid secret key size: expected 64 bytes, got ${walletSecretKey ? walletSecretKey.length : 0}`);
+          }
+          
+          const wallet = Keypair.fromSecretKey(walletSecretKey);
+          console.log(`[DriftController] Successfully created wallet with public key: ${wallet.publicKey.toString()}`);
+          
+          // Use the same RPC URL as the main server, with Helius as fallback
+          const rpcUrl = process.env.RPC_URL || process.env.RPC_ENDPOINT || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` || 'https://api.mainnet-beta.solana.com';
+          console.log(`[DriftController] Using RPC URL: ${rpcUrl.replace(/api-key=[^&]+/, 'api-key=***')}`);
+          driftService = new DriftService(rpcUrl);
+          await driftService.initialize(wallet);
+          isTemporaryService = true;
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            error: 'Failed to initialize DriftService for settlement'
+          });
+          return;
+        }
+      }
+
+      // Attempt to settle PnL
+      const result = await driftService.settlePnL();
+
+      // Clean up temporary service
+      if (isTemporaryService && driftService) {
+        try {
+          await driftService.cleanup();
+        } catch (cleanupError) {
+          console.warn('[DriftController] Error cleaning up temporary DriftService:', cleanupError);
+        }
+      }
+
+      if (result.success) {
+        res.json({
+          success: true,
+          message: 'PnL settlement completed',
+          signature: result.signature
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: result.error || 'Failed to settle PnL'
+        });
+      }
+    } catch (error) {
+      console.error('[DriftController] Error settling PnL:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to settle PnL',
         details: error instanceof Error ? error.message : 'Unknown error'
       });
     }

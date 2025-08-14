@@ -1222,10 +1222,13 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
           walletName = `Trading Wallet ${index + 1} (${address.slice(0, 4)}...${address.slice(-4)})`;
         }
         
+        // Load secret key from localStorage for export functionality
+        const secretKey = getWalletSecretKey(address);
+        
         return {
           publicKey: address,
           name: walletName,
-          secretKey: new Uint8Array(), // Will be loaded when needed
+          secretKey: secretKey || new Uint8Array(), // Load from localStorage or empty if not found
           strategies: [],
           hasStrategies: strategyWalletAddresses.has(address) // Track which ones have strategies
         };
@@ -1367,14 +1370,16 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       }
 
       // Update localStorage and state with backendWallet
+      // Load the secret key that was stored in localStorage by tradingWalletService
+      const secretKey = getWalletSecretKey(backendWallet.publicKey);
       const walletForStorage = {
         ...backendWallet,
-        secretKey: undefined,
+        secretKey: secretKey || new Uint8Array(),
         mnemonic: '', // if needed
       };
       allWallets[mainWalletAddress] = [...existingWallets, walletForStorage];
       localStorage.setItem('tradingWallets', JSON.stringify(allWallets));
-      setTradingWallets([...existingWallets, walletForStorage]);
+      setTradingWallets(prevWallets => [...prevWallets, walletForStorage]);
       setNotification({
         type: 'success',
         message: 'Trading wallet created successfully!'

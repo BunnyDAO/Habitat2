@@ -46,4 +46,11 @@ router.get('/position/:jobId', authMiddleware, DriftController.getPosition);
  */
 router.post('/withdraw-collateral', authMiddleware, DriftController.withdrawCollateral);
 
+/**
+ * @route POST /api/drift/settle-pnl/:jobId
+ * @desc Settle unsettled PnL for a Drift strategy
+ * @access Private
+ */
+router.post('/settle-pnl/:jobId', authMiddleware, DriftController.settlePnL);
+
 export default router;

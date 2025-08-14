@@ -434,6 +434,7 @@ export class DriftService {
   async getAccountInfo(): Promise<{
     totalCollateral: number;
     freeCollateral: number;
+    unsettledPnl: number;
     marginRatio: number;
     leverage: number;
     unrealizedPnl: number;
@@ -450,9 +451,16 @@ export class DriftService {
       const leverage = user.getLeverage();
       const unrealizedPnl = user.getUnrealizedPNL(true);
 
+      const totalCollateralNum = this.safeConvertToNumber(totalCollateral, 6);
+      const freeCollateralNum = this.safeConvertToNumber(freeCollateral, 6);
+      const unsettledPnl = totalCollateralNum - freeCollateralNum;
+
+      console.log(`[DriftService] Account info - Total: ${totalCollateralNum}, Free: ${freeCollateralNum}, Unsettled: ${unsettledPnl}`);
+
       return {
-        totalCollateral: this.safeConvertToNumber(totalCollateral, 6),
-        freeCollateral: this.safeConvertToNumber(freeCollateral, 6),
+        totalCollateral: totalCollateralNum,
+        freeCollateral: freeCollateralNum,
+        unsettledPnl: unsettledPnl,
         marginRatio: this.safeConvertToNumber(marginRatio, 4),
         leverage: this.safeConvertToNumber(leverage, 2),
         unrealizedPnl: this.safeConvertToNumber(unrealizedPnl, 6)
@@ -460,6 +468,54 @@ export class DriftService {
     } catch (error) {
       console.error('[DriftService] Error getting account info:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Settle unsettled PnL 
+   */
+  async settlePnL(): Promise<{ success: boolean; signature?: string; error?: string }> {
+    if (!this.driftClient) {
+      throw new Error('Drift client not initialized');
+    }
+
+    try {
+      console.log('[DriftService] Attempting to settle PnL...');
+      
+      const user = this.driftClient.getUser();
+      
+      // Check if there's unsettled PnL to settle
+      const totalCollateral = user.getTotalCollateral();
+      const freeCollateral = user.getFreeCollateral();
+      const unsettledAmount = this.safeConvertToNumber(totalCollateral, 6) - this.safeConvertToNumber(freeCollateral, 6);
+      
+      if (Math.abs(unsettledAmount) < 0.001) {
+        console.log('[DriftService] No significant unsettled PnL to settle');
+        return {
+          success: true,
+          error: 'No unsettled PnL to settle'
+        };
+      }
+
+      console.log(`[DriftService] Unsettled PnL amount: ${unsettledAmount} SOL`);
+      
+      // TODO: Check if Drift SDK has settlement methods like:
+      // - await this.driftClient.settlePnl()
+      // - await user.settlePnl() 
+      // - await this.driftClient.settlePosition()
+      // For now, return info about manual settlement needed
+      
+      return {
+        success: false,
+        error: `Settlement method not implemented. You have ${unsettledAmount.toFixed(4)} SOL unsettled PnL. Please settle manually on app.drift.trade`
+      };
+      
+    } catch (error) {
+      console.error('[DriftService] Error settling PnL:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown settlement error'
+      };
     }
   }
 
