@@ -797,6 +797,44 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [walletToDelete, setWalletToDelete] = useState<TradingWallet | null>(null);
 
+  // Helper methods for Drift status display
+  const getRiskEmoji = (riskLevel: string | undefined): string => {
+    switch (riskLevel) {
+      case 'LOW': return '🟢';
+      case 'MEDIUM': return '🟡';
+      case 'HIGH': return '🟠';
+      case 'CRITICAL': return '🔴';
+      default: return '⚪';
+    }
+  };
+
+  const getActionRecommendations = (riskLevel: string | undefined, accountHealth: number | undefined): string[] => {
+    const recommendations: string[] = [];
+    
+    if (riskLevel === 'CRITICAL' || (accountHealth && accountHealth < 30)) {
+      recommendations.push('├── IMMEDIATE ACTION REQUIRED');
+      recommendations.push('├── Close positions or add collateral');
+      recommendations.push('├── Account at risk of liquidation');
+    } else if (riskLevel === 'HIGH' || (accountHealth && accountHealth < 50)) {
+      recommendations.push('├── Reduce position size immediately');
+      recommendations.push('├── Consider adding collateral');
+      recommendations.push('├── Monitor closely - high risk');
+    } else if (riskLevel === 'MEDIUM' || (accountHealth && accountHealth < 70)) {
+      recommendations.push('├── Consider reducing position size');
+      recommendations.push('├── Monitor SOL price movement');
+      recommendations.push('├── Health below 70% - moderate risk');
+    } else if (riskLevel === 'LOW' || (accountHealth && accountHealth >= 80)) {
+      recommendations.push('├── Account healthy - normal operations');
+      recommendations.push('├── Monitor for opportunities');
+      recommendations.push('├── Low risk level');
+    } else {
+      recommendations.push('├── Monitor account status');
+      recommendations.push('├── Check position details');
+    }
+    
+    return recommendations;
+  };
+
   // Add state for wallet name editing
   const [editingWalletId, setEditingWalletId] = useState<string | null>(null);
   const [editedWalletName, setEditedWalletName] = useState('');
@@ -5310,12 +5348,27 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                                 const accountInfo = pos.accountInfo || {};
                                                 
                                                 const info = [
-                                                  `Total Collateral: ${accountInfo.totalCollateral?.toFixed(4) || 'N/A'} SOL`,
-                                                  `Free Collateral: ${accountInfo.freeCollateral?.toFixed(4) || 'N/A'} SOL`,
-                                                  `Margin Ratio: ${((accountInfo.marginRatio || 0) * 100).toFixed(1)}%`,
-                                                  `Position: ${pos.isPositionOpen ? 'OPEN' : 'CLOSED'}`,
-                                                  pos.currentPosition ? `Entry: $${pos.currentPosition.entryPrice?.toFixed(2)}` : '',
-                                                  `Current Price: $${pos.currentPrice?.toFixed(2) || 'N/A'}`
+                                                  `🔴 ACCOUNT STATUS (${accountInfo.riskLevel || 'UNKNOWN'} RISK)`,
+                                                  `├── Health: ${(accountInfo.accountHealth || 0).toFixed(1)}% (${getRiskEmoji(accountInfo.riskLevel)} ${accountInfo.riskLevel || 'UNKNOWN'})`,
+                                                  `├── Free Collateral: $${(accountInfo.freeCollateral || 0).toFixed(2)} USD`,
+                                                  `├── Max Position Size: $${(accountInfo.maxPositionSize || 0).toFixed(2)} (${accountInfo.maxLeverage || 10}x leverage)`,
+                                                  ``,
+                                                  ` POSITION DETAILS`,
+                                                  `├── Status: ${pos.isPositionOpen ? 'OPEN' : 'CLOSED'}`,
+                                                  pos.currentPosition ? [
+                                                    `├── SOL-PERP: ${pos.currentPosition.baseAssetAmount?.toFixed(2) || 'N/A'} ${pos.currentPosition.direction || 'UNKNOWN'}`,
+                                                    `├── Entry: $${pos.currentPosition.entryPrice?.toFixed(2) || 'N/A'} | Current: $${pos.currentPrice?.toFixed(2) || 'N/A'}`,
+                                                    `├── P&L: $${pos.currentPosition.unrealizedPnl?.toFixed(2) || 'N/A'} (${pos.currentPosition.pnlPercentage?.toFixed(2) || 'N/A'}%)`,
+                                                    `├── Position Value: $${pos.currentPosition.positionValue?.toFixed(2) || 'N/A'}`,
+                                                    `├── Distance to Liquidation: ${pos.currentPosition.distanceToLiquidation?.toFixed(2) || 'N/A'}%`
+                                                  ].join('\n') : '',
+                                                  ``,
+                                                  `⚡ TRADING POWER`,
+                                                  `├── Current Leverage: ${(accountInfo.leverage || 0).toFixed(2)}x`,
+                                                  `├── Available: $${(accountInfo.freeCollateral || 0).toFixed(2)} USD`,
+                                                  ``,
+                                                  `⚠️  ACTIONS NEEDED`,
+                                                  ...getActionRecommendations(accountInfo.riskLevel, accountInfo.accountHealth)
                                                 ].filter(Boolean).join('\n');
                                                 
                                                 alert(`Drift Account Status:\n\n${info}`);

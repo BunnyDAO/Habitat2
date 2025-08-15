@@ -191,6 +191,9 @@ export interface DriftPerpPosition {
   leverage: number;
   liquidationPrice: number;
   marginRatio: number;
+  pnlPercentage: number;    // P&L as percentage
+  distanceToLiquidation: number; // Distance to liquidation as percentage
+  positionValue: number;    // Position value in USD
 }
 
 export interface DriftPerpJob extends BaseJob {

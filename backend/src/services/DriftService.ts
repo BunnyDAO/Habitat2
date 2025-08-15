@@ -42,11 +42,15 @@ export interface DriftPositionInfo {
   baseAssetAmount: BN;
   quoteAssetAmount: BN;
   direction: PositionDirection;
-  entryPrice: BN;
+  entryPrice: number;
+  currentPrice: number;
   unrealizedPnl: BN;
   liquidationPrice: BN;
   marginRatio: number;
   leverage: number;
+  pnlPercentage: number;
+  distanceToLiquidation: number;
+  positionValue: number;
 }
 
 export interface DriftOrderResult {
@@ -228,16 +232,39 @@ export class DriftService {
       const marginRatio = user.getMarginRatio();
       const leverage = user.getLeverage();
 
+      // Calculate current price from oracle
+      const currentPrice = this.safeConvertToNumber(oraclePrice.price, 6);
+      
+      // Calculate entry price
+      const entryPrice = this.safeConvertToNumber(position.quoteEntryAmount.abs().div(position.baseAssetAmount.abs()), 6);
+      
+      // Calculate P&L percentage
+      const pnlPercentage = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+      
+      // Calculate distance to liquidation
+      const distanceToLiquidation = liquidationPrice.gt(ZERO) ? 
+        ((currentPrice - this.safeConvertToNumber(liquidationPrice, 6)) / currentPrice) * 100 : 0;
+      
+      // Determine position direction
+      const direction = position.baseAssetAmount.gt(ZERO) ? PositionDirection.LONG : PositionDirection.SHORT;
+      
+      // Calculate position value in USD
+      const positionValue = this.safeConvertToNumber(position.baseAssetAmount.abs(), 6) * currentPrice;
+
       return {
         marketIndex,
         baseAssetAmount: position.baseAssetAmount,
         quoteAssetAmount: position.quoteAssetAmount,
-        direction: position.baseAssetAmount.gt(ZERO) ? PositionDirection.LONG : PositionDirection.SHORT,
-        entryPrice: position.quoteEntryAmount.abs().div(position.baseAssetAmount.abs()),
+        direction,
+        entryPrice,
+        currentPrice,
         unrealizedPnl,
         liquidationPrice: liquidationPrice || ZERO,
         marginRatio: this.safeConvertToNumber(marginRatio, 4),
-        leverage: this.safeConvertToNumber(leverage, 2)
+        leverage: this.safeConvertToNumber(leverage, 2),
+        pnlPercentage: Math.round(pnlPercentage * 100) / 100,
+        distanceToLiquidation: Math.round(distanceToLiquidation * 100) / 100,
+        positionValue: Math.round(positionValue * 100) / 100
       };
     } catch (error) {
       console.error('[DriftService] Error getting current position:', error);
@@ -438,6 +465,10 @@ export class DriftService {
     marginRatio: number;
     leverage: number;
     unrealizedPnl: number;
+    accountHealth: number;
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    maxPositionSize: number;
+    maxLeverage: number;
   }> {
     if (!this.driftClient) {
       throw new Error('Drift client not initialized');
@@ -451,23 +482,93 @@ export class DriftService {
       const leverage = user.getLeverage();
       const unrealizedPnl = user.getUnrealizedPNL(true);
 
+      // Debug logging to see raw SDK values
+      console.log(`[DriftService] Raw SDK values:`, {
+        totalCollateral: totalCollateral?.toString(),
+        freeCollateral: freeCollateral?.toString(),
+        marginRatio: marginRatio?.toString(),
+        leverage: leverage?.toString(),
+        unrealizedPnl: unrealizedPnl?.toString()
+      });
+      
+      // Force restart comment - nodemon should pick this up
+
       const totalCollateralNum = this.safeConvertToNumber(totalCollateral, 6);
       const freeCollateralNum = this.safeConvertToNumber(freeCollateral, 6);
       const unsettledPnl = totalCollateralNum - freeCollateralNum;
+      
+      // Check if there are any open positions
+      const hasOpenPositions = this.hasOpenPositions();
+      
+      // Calculate account health based on whether there are positions
+      let accountHealth: number;
+      let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      
+      if (!hasOpenPositions) {
+        // No positions = 100% health, no risk
+        accountHealth = 100;
+        riskLevel = 'LOW';
+      } else {
+        // Calculate health based on margin ratio
+        const marginRatioNum = this.safeConvertToNumber(marginRatio, 4);
+        accountHealth = Math.max(0, (1 - marginRatioNum) * 100);
+        
+        // Determine risk level based on account health
+        if (accountHealth >= 80) {
+          riskLevel = 'LOW';
+        } else if (accountHealth >= 60) {
+          riskLevel = 'MEDIUM';
+        } else if (accountHealth >= 40) {
+          riskLevel = 'HIGH';
+        } else {
+          riskLevel = 'CRITICAL';
+        }
+      }
+      
+      // Calculate actual leverage based on positions
+      let actualLeverage = 0;
+      if (hasOpenPositions) {
+        actualLeverage = this.safeConvertToNumber(leverage, 2);
+      }
+      
+      // Get max leverage from market (default to 10x for SOL-PERP)
+      const maxLeverage = 10;
+      const maxPositionSize = freeCollateralNum * maxLeverage;
 
-      console.log(`[DriftService] Account info - Total: ${totalCollateralNum}, Free: ${freeCollateralNum}, Unsettled: ${unsettledPnl}`);
+      console.log(`[DriftService] Account info - Total: ${totalCollateralNum}, Free: ${freeCollateralNum}, Health: ${accountHealth.toFixed(1)}%, Risk: ${riskLevel}, Has Positions: ${hasOpenPositions}, Leverage: ${actualLeverage}`);
 
       return {
         totalCollateral: totalCollateralNum,
         freeCollateral: freeCollateralNum,
         unsettledPnl: unsettledPnl,
         marginRatio: this.safeConvertToNumber(marginRatio, 4),
-        leverage: this.safeConvertToNumber(leverage, 2),
-        unrealizedPnl: this.safeConvertToNumber(unrealizedPnl, 6)
+        leverage: actualLeverage,
+        unrealizedPnl: this.safeConvertToNumber(unrealizedPnl, 6),
+        accountHealth: Math.round(accountHealth * 100) / 100, // Round to 2 decimal places
+        riskLevel,
+        maxPositionSize: Math.round(maxPositionSize * 100) / 100,
+        maxLeverage
       };
     } catch (error) {
       console.error('[DriftService] Error getting account info:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Check if there are any open positions
+   */
+  private hasOpenPositions(): boolean {
+    if (!this.driftClient) return false;
+    
+    try {
+      const user = this.driftClient.getUser();
+      // Check SOL-PERP market (index 0) for positions
+      const position = user.getPerpPosition(0);
+      return position && position.baseAssetAmount && !position.baseAssetAmount.isZero();
+    } catch (error) {
+      console.error('[DriftService] Error checking for open positions:', error);
+      return false;
     }
   }
 
@@ -722,6 +823,23 @@ export class DriftService {
     }
 
     try {
+      // Check account info before attempting withdrawal
+      const accountInfo = await this.getAccountInfo();
+      
+      if (accountInfo.freeCollateral <= 0) {
+        return {
+          success: false,
+          error: `No collateral available to withdraw. Total: ${accountInfo.totalCollateral}, Free: ${accountInfo.freeCollateral}`
+        };
+      }
+      
+      if (amount > accountInfo.freeCollateral) {
+        return {
+          success: false,
+          error: `Insufficient collateral. Requested: ${amount}, Available: ${accountInfo.freeCollateral}`
+        };
+      }
+
       // For SOL withdrawal, use wSOL (market index 1)
       const amountBN = new BN(amount * 1e9); // SOL has 9 decimals
       const spotMarketIndex = 1; // wSOL spot market index
@@ -734,6 +852,7 @@ export class DriftService {
       
       console.log(`[DriftService] Withdrawing ${amount} SOL from collateral`);
       console.log(`[DriftService] wSOL account: ${wsolAccount.toString()}`);
+      console.log(`[DriftService] Account status - Total: ${accountInfo.totalCollateral}, Free: ${accountInfo.freeCollateral}, Margin: ${accountInfo.marginRatio}`);
       
       const txSig = await this.driftClient.withdraw(amountBN, spotMarketIndex, wsolAccount);
 
@@ -745,9 +864,22 @@ export class DriftService {
       };
     } catch (error) {
       console.error('[DriftService] Error withdrawing SOL collateral:', error);
+      
+      // Provide more specific error messages for common Drift errors
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        if (error.message.includes('Insufficient collateral')) {
+          errorMessage = 'Insufficient collateral in Drift account';
+        } else if (error.message.includes('0x1773')) {
+          errorMessage = 'Insufficient collateral - account below margin requirements';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       };
     }
   }

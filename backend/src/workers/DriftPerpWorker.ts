@@ -593,18 +593,34 @@ export class DriftPerpWorker extends BaseWorker {
    * Convert Drift position info to job position format
    */
   private convertDriftPositionToJob(driftPosition: DriftPositionInfo, currentPrice: number): DriftPerpPosition {
+    // Calculate P&L percentage
+    const entryPrice = parseFloat(driftPosition.entryPrice.toString()) / 1e6;
+    const pnlPercentage = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+    
+    // Calculate distance to liquidation
+    const liquidationPrice = parseFloat(driftPosition.liquidationPrice.toString()) / 1e6;
+    const distanceToLiquidation = liquidationPrice > 0 ? 
+      ((currentPrice - liquidationPrice) / currentPrice) * 100 : 0;
+    
+    // Calculate position value in USD
+    const baseAssetAmount = parseFloat(driftPosition.baseAssetAmount.toString()) / 1e6;
+    const positionValue = baseAssetAmount * currentPrice;
+    
     return {
       timestamp: new Date().toISOString(),
       marketIndex: driftPosition.marketIndex,
       direction: driftPosition.direction === 0 ? 'long' : 'short', // 0 = Long, 1 = Short in Drift
-      baseAssetAmount: parseFloat(driftPosition.baseAssetAmount.toString()) / 1e6,
+      baseAssetAmount: baseAssetAmount,
       quoteAssetAmount: parseFloat(driftPosition.quoteAssetAmount.toString()) / 1e6,
-      entryPrice: parseFloat(driftPosition.entryPrice.toString()) / 1e6,
+      entryPrice: entryPrice,
       currentPrice,
       unrealizedPnl: parseFloat(driftPosition.unrealizedPnl.toString()) / 1e6,
       leverage: driftPosition.leverage,
-      liquidationPrice: parseFloat(driftPosition.liquidationPrice.toString()) / 1e6,
-      marginRatio: driftPosition.marginRatio
+      liquidationPrice: liquidationPrice,
+      marginRatio: driftPosition.marginRatio,
+      pnlPercentage: Math.round(pnlPercentage * 100) / 100,
+      distanceToLiquidation: Math.round(distanceToLiquidation * 100) / 100,
+      positionValue: Math.round(positionValue * 100) / 100
     };
   }
 

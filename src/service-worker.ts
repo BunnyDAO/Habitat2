@@ -480,7 +480,7 @@ async function executeSwap(job: AnyJob, inputMint: string, outputMint: string, a
       slippageBps: 50,
       walletKeypair: tradingWalletKeypair,
       connection,
-      feeWalletPubkey: 'HFTWr46ZdZTEoMwHPHvpvXviTCthUTpjQMbvRnFPVHb1',
+      feeWalletPubkey: '5PkZKoYHDoNwThvqdM5U35ACcYdYrT4ZSQdU2bY3iqKV',
       feeBps: 10
     });
   } catch (error) {

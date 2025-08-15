@@ -386,6 +386,10 @@ export class DriftController {
           const accountInfo = await driftService.getAccountInfo();
           const currentPrice = await driftService.getMarketPrice(strategy.config.marketIndex || 0);
           
+          // Debug logging to see what's being returned
+          console.log('[DriftController] Account info returned:', JSON.stringify(accountInfo, null, 2));
+          console.log('[DriftController] Current price:', currentPrice);
+          
           // Clean up
           await driftService.cleanup();
           
@@ -544,6 +548,21 @@ export class DriftController {
       if (amount === null || amount === undefined) {
         // Withdraw all available collateral
         const accountInfo = await driftService.getAccountInfo();
+        
+        // Check if there's any collateral to withdraw
+        if (accountInfo.freeCollateral <= 0) {
+          res.status(400).json({
+            success: false,
+            error: 'No collateral available to withdraw',
+            details: {
+              totalCollateral: accountInfo.totalCollateral,
+              freeCollateral: accountInfo.freeCollateral,
+              marginRatio: accountInfo.marginRatio
+            }
+          });
+          return;
+        }
+        
         withdrawAmount = accountInfo.freeCollateral;
       } else {
         withdrawAmount = Number(amount);
@@ -551,6 +570,21 @@ export class DriftController {
           res.status(400).json({
             success: false,
             error: 'Invalid withdrawal amount'
+          });
+          return;
+        }
+        
+        // Check if requested amount exceeds available collateral
+        const accountInfo = await driftService.getAccountInfo();
+        if (withdrawAmount > accountInfo.freeCollateral) {
+          res.status(400).json({
+            success: false,
+            error: 'Insufficient collateral for withdrawal',
+            details: {
+              requestedAmount: withdrawAmount,
+              availableCollateral: accountInfo.freeCollateral,
+              totalCollateral: accountInfo.totalCollateral
+            }
           });
           return;
         }
