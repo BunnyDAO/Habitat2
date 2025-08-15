@@ -57,5 +57,86 @@ h1 {
 
 p {
   color: white;
-  word-break: break-all;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Global text wrapping rules to prevent word breaking */
+* {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Specific elements that should never break words */
+h1, h2, h3, h4, h5, h6, 
+.strategy-title, 
+.strategy-description,
+.card-body p,
+.modal-content p,
+.tooltipContent,
+.walletItem,
+.strategyBadge {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Additional text elements that need proper wrapping */
+.token-symbol,
+.token-name,
+.wallet-address,
+.public-key,
+.private-key,
+.strategy-name,
+.strategy-description,
+.token-balance,
+.price-value,
+.percentage-change,
+.metric-value,
+.tag,
+.badge,
+.button-text,
+.nav-item,
+.menu-item,
+.tooltip-text,
+.notification-message,
+.error-message,
+.success-message,
+.info-message {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  word-break: keep-all;
+}
+
+/* Table cells should wrap properly */
+td, th {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Form inputs and labels */
+input, label, textarea, select {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Modal content */
+.modal-content *,
+.modal-header *,
+.modal-body *,
+.modal-footer * {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Card content */
+.card *,
+.card-header *,
+.card-body *,
+.card-footer * {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }

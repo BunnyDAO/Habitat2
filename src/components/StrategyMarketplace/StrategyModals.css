@@ -832,6 +832,38 @@
   font-size: 0.9rem;
 }
 
+/* Text wrapping rules for modal content */
+.modal-content *,
+.modal-header *,
+.modal-body *,
+.modal-footer *,
+.strategy-overview *,
+.strategy-meta *,
+.strategy-description *,
+.tags *,
+.requirements-list *,
+.performance-metrics *,
+.reviews-list * {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Specific elements that need proper wrapping */
+.strategy-title,
+.strategy-description,
+.tag,
+.requirement-description,
+.review-text,
+.metric-value,
+.strategy-meta .category,
+.strategy-meta .type,
+.strategy-meta .price {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.4;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .modal-content {

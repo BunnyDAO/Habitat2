@@ -26,6 +26,7 @@ import { WalletMonitorIcon } from './components/WalletMonitorIcon';
 import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon, PairTradeIcon, DriftPerpIcon } from './components/StrategyIcons';
 import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
+import DriftStatusModal from './components/DriftStatusModal';
 import { WalletButton } from './components/WalletButton';
 import { TokenDropdown } from './components/TokenDropdown';
 import bs58 from 'bs58';
@@ -730,6 +731,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [showPrivateKey, setShowPrivateKey] = useState<string | null>(null);
   const [revealedPrivateKeys, setRevealedPrivateKeys] = useState<Record<string, string>>({});
   const [isRevealingPrivateKey, setIsRevealingPrivateKey] = useState<string | null>(null);
+  // Ref to store timer IDs for auto-hiding private keys
+  const privateKeyTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
   const [withdrawAddress, setWithdrawAddress] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [tradingWalletBalances, setTradingWalletBalances] = useState<Record<string, number>>({});
@@ -796,6 +799,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [showWalletLimitDialog, setShowWalletLimitDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [walletToDelete, setWalletToDelete] = useState<TradingWallet | null>(null);
+  
+  // Drift Status Modal state
+  const [showDriftStatusModal, setShowDriftStatusModal] = useState(false);
+  const [driftStatusData, setDriftStatusData] = useState<any>(null);
+  const [driftStatusLoading, setDriftStatusLoading] = useState(false);
+  const [driftStatusError, setDriftStatusError] = useState<string | null>(null);
 
   // Helper methods for Drift status display
   const getRiskEmoji = (riskLevel: string | undefined): string => {
@@ -833,6 +842,36 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
     
     return recommendations;
+  };
+
+  // Handle Drift Status button click
+  const handleDriftStatusClick = async (job: DriftPerpJob) => {
+    setDriftStatusLoading(true);
+    setDriftStatusError(null);
+    setShowDriftStatusModal(true);
+    
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/position/${job.id}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authService.getToken()}`
+        }
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setDriftStatusData(result);
+        setDriftStatusLoading(false);
+      } else {
+        const error = await response.text();
+        setDriftStatusError(`Failed to get status: ${error}`);
+        setDriftStatusLoading(false);
+      }
+    } catch (error) {
+      setDriftStatusError(`Failed to get status: ${error}`);
+      setDriftStatusLoading(false);
+    }
   };
 
   // Add state for wallet name editing
@@ -1321,6 +1360,29 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     }
   }, [wallet.publicKey]);
 
+  // Cleanup effect for private key timers
+  useEffect(() => {
+    return () => {
+      // Clear all pending timers when component unmounts
+      Object.values(privateKeyTimersRef.current).forEach(timerId => {
+        clearTimeout(timerId);
+      });
+      privateKeyTimersRef.current = {};
+    };
+  }, []);
+
+  // Clear private key timers when wallet changes
+  useEffect(() => {
+    // Clear all pending timers when wallet changes
+    Object.values(privateKeyTimersRef.current).forEach(timerId => {
+      clearTimeout(timerId);
+    });
+    privateKeyTimersRef.current = {};
+    // Reset private key states
+    setShowPrivateKey(null);
+    setRevealedPrivateKeys({});
+  }, [wallet.publicKey]);
+
   // Add function to generate unique wallet name
   const generateUniqueWalletName = (baseName: string, existingWallets: TradingWallet[]): string => {
     if (!existingWallets.some(w => w.name === baseName)) {
@@ -1468,16 +1530,22 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         }));
         
         // Auto-hide after 30 seconds for security
-        setTimeout(() => {
+        const timerId = setTimeout(() => {
+          console.log(`Auto-hiding private key for wallet ${walletAddress} after 30 seconds`);
           setRevealedPrivateKeys(prev => {
             const updated = { ...prev };
             delete updated[walletAddress];
             return updated;
           });
-          if (showPrivateKey === walletAddress) {
-            setShowPrivateKey(null);
-          }
+          setShowPrivateKey(null); // Always reset showPrivateKey to ensure UI updates
+          // Clean up the timer reference
+          delete privateKeyTimersRef.current[walletAddress];
+          console.log(`Private key hidden for wallet ${walletAddress}, timer cleaned up`);
         }, 30000);
+        
+        // Store the timer ID for cleanup
+        privateKeyTimersRef.current[walletAddress] = timerId;
+        console.log(`Timer set for wallet ${walletAddress}, will auto-hide in 30 seconds`);
 
         setNotification({
           type: 'success',
@@ -2294,7 +2362,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <div style={{ 
                       color: '#e2e8f0',
                       fontFamily: 'monospace',
-                      wordBreak: 'break-all',
+                      wordWrap: 'break-word',
+                      overflowWrap: 'break-word',
                       backgroundColor: '#1e293b',
                       padding: '0.5rem',
                       borderRadius: '0.25rem',
@@ -2322,13 +2391,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                     <button
                       onClick={async () => {
                         if (showPrivateKey === tw.publicKey) {
-                          // Hide private key
+                          // Hide private key manually
                           setShowPrivateKey(null);
                           setRevealedPrivateKeys(prev => {
                             const updated = { ...prev };
                             delete updated[tw.publicKey];
                             return updated;
                           });
+                          // Clear any existing timer
+                          if (privateKeyTimersRef.current[tw.publicKey]) {
+                            clearTimeout(privateKeyTimersRef.current[tw.publicKey]);
+                            delete privateKeyTimersRef.current[tw.publicKey];
+                          }
                         } else {
                           // Show private key securely
                           if (!revealedPrivateKeys[tw.publicKey]) {
@@ -2518,7 +2592,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                         borderRadius: '0.25rem',
                         color: '#e2e8f0',
                         fontFamily: 'monospace',
-                        wordBreak: 'break-all',
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
                         marginBottom: '0.5rem',
                         fontSize: '0.75rem',
                         border: '1px solid #4b5563'
@@ -5330,55 +5405,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                           Withdraw
                                         </button>
                                         <button
-                                          onClick={async (e) => {
+                                          onClick={(e) => {
                                             e.stopPropagation();
                                             const driftJob = job as DriftPerpJob;
-                                            try {
-                                              const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/position/${job.id}`, {
-                                                method: 'GET',
-                                                headers: {
-                                                  'Content-Type': 'application/json',
-                                                  'Authorization': `Bearer ${authService.getToken()}`
-                                                }
-                                              });
-                                              
-                                              if (response.ok) {
-                                                const result = await response.json();
-                                                const pos = result.position;
-                                                const accountInfo = pos.accountInfo || {};
-                                                
-                                                const info = [
-                                                  `🔴 ACCOUNT STATUS (${accountInfo.riskLevel || 'UNKNOWN'} RISK)`,
-                                                  `├── Health: ${(accountInfo.accountHealth || 0).toFixed(1)}% (${getRiskEmoji(accountInfo.riskLevel)} ${accountInfo.riskLevel || 'UNKNOWN'})`,
-                                                  `├── Free Collateral: $${(accountInfo.freeCollateral || 0).toFixed(2)} USD`,
-                                                  `├── Max Position Size: $${(accountInfo.maxPositionSize || 0).toFixed(2)} (${accountInfo.maxLeverage || 10}x leverage)`,
-                                                  ``,
-                                                  ` POSITION DETAILS`,
-                                                  `├── Status: ${pos.isPositionOpen ? 'OPEN' : 'CLOSED'}`,
-                                                  pos.currentPosition ? [
-                                                    `├── SOL-PERP: ${pos.currentPosition.baseAssetAmount?.toFixed(2) || 'N/A'} ${pos.currentPosition.direction || 'UNKNOWN'}`,
-                                                    `├── Entry: $${pos.currentPosition.entryPrice?.toFixed(2) || 'N/A'} | Current: $${pos.currentPrice?.toFixed(2) || 'N/A'}`,
-                                                    `├── P&L: $${pos.currentPosition.unrealizedPnl?.toFixed(2) || 'N/A'} (${pos.currentPosition.pnlPercentage?.toFixed(2) || 'N/A'}%)`,
-                                                    `├── Position Value: $${pos.currentPosition.positionValue?.toFixed(2) || 'N/A'}`,
-                                                    `├── Distance to Liquidation: ${pos.currentPosition.distanceToLiquidation?.toFixed(2) || 'N/A'}%`
-                                                  ].join('\n') : '',
-                                                  ``,
-                                                  `⚡ TRADING POWER`,
-                                                  `├── Current Leverage: ${(accountInfo.leverage || 0).toFixed(2)}x`,
-                                                  `├── Available: $${(accountInfo.freeCollateral || 0).toFixed(2)} USD`,
-                                                  ``,
-                                                  `⚠️  ACTIONS NEEDED`,
-                                                  ...getActionRecommendations(accountInfo.riskLevel, accountInfo.accountHealth)
-                                                ].filter(Boolean).join('\n');
-                                                
-                                                alert(`Drift Account Status:\n\n${info}`);
-                                              } else {
-                                                const error = await response.text();
-                                                setNotification({ type: 'error', message: `Failed to get status: ${error}` });
-                                              }
-                                            } catch (error) {
-                                              setNotification({ type: 'error', message: `Failed to get status: ${error}` });
-                                            }
+                                            handleDriftStatusClick(driftJob);
                                           }}
                                           style={{
                                             padding: '0.25rem 0.5rem',
@@ -6540,6 +6570,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           padding: '0.75rem',
                           gap: '0.25rem'
                         }}>
+                          {levelsOrderType === 'limit_buy' && (
+                            <span style={{ 
+                              color: '#94a3b8', 
+                              fontSize: '0.875rem',
+                              minWidth: '12px',
+                              textAlign: 'center',
+                              display: 'inline-block'
+                            }}>
+                              $
+                            </span>
+                          )}
                           <input
                             type="number"
                             value={levelsPercentage}
@@ -6570,15 +6611,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             max={levelsOrderType === 'limit_buy' ? undefined : '100'}
                             placeholder={levelsOrderType === 'limit_buy' ? '100' : '25'}
                           />
-                          <span style={{ 
-                            color: '#94a3b8', 
-                            fontSize: '0.875rem',
-                            minWidth: '12px',
-                            textAlign: 'center',
-                            display: 'inline-block'
-                          }}>
-                            {levelsOrderType === 'limit_buy' ? '$' : '%'}
-                          </span>
+                          {levelsOrderType !== 'limit_buy' && (
+                            <span style={{ 
+                              color: '#94a3b8', 
+                              fontSize: '0.875rem',
+                              minWidth: '12px',
+                              textAlign: 'center',
+                              display: 'inline-block'
+                            }}>
+                              %
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -7816,6 +7859,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         }}
         onConfirm={confirmDeleteLackey}
         lackeyName={lackeyToDelete?.name}
+      />
+      <DriftStatusModal
+        isOpen={showDriftStatusModal}
+        onClose={() => {
+          setShowDriftStatusModal(false);
+          setDriftStatusData(null);
+          setDriftStatusError(null);
+        }}
+        statusData={driftStatusData}
+        loading={driftStatusLoading}
+        error={driftStatusError}
       />
       {showDeleteSavedWalletDialog && (
         <div style={{
