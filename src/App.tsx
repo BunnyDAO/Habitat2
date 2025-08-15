@@ -27,6 +27,7 @@ import { TradingWalletIcon, LackeyIcon, PriceMonitorIcon, VaultIcon, LevelsIcon,
 import { StrategyMarketplace } from './components/StrategyMarketplace/StrategyMarketplace';
 import OverrideLackeyModal from './components/OverrideLackeyModal';
 import DriftStatusModal from './components/DriftStatusModal';
+import DriftWithdrawModal from './components/DriftWithdrawModal';
 import { WalletButton } from './components/WalletButton';
 import { TokenDropdown } from './components/TokenDropdown';
 import bs58 from 'bs58';
@@ -805,6 +806,11 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [driftStatusData, setDriftStatusData] = useState<any>(null);
   const [driftStatusLoading, setDriftStatusLoading] = useState(false);
   const [driftStatusError, setDriftStatusError] = useState<string | null>(null);
+  
+  // Drift Withdraw Modal state
+  const [showDriftWithdrawModal, setShowDriftWithdrawModal] = useState(false);
+  const [driftWithdrawJobId, setDriftWithdrawJobId] = useState<string | null>(null);
+  const [driftFreeCollateral, setDriftFreeCollateral] = useState<number>(0);
 
   // Helper methods for Drift status display
   const getRiskEmoji = (riskLevel: string | undefined): string => {
@@ -871,6 +877,63 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
     } catch (error) {
       setDriftStatusError(`Failed to get status: ${error}`);
       setDriftStatusLoading(false);
+    }
+  };
+
+  // Handle Drift Withdraw button click
+  const handleDriftWithdrawClick = async (job: DriftPerpJob) => {
+    try {
+      // First get the current position status to get free collateral
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/position/${job.id}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authService.getToken()}`
+        }
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        const freeCollateral = result.position?.accountInfo?.freeCollateral || 0;
+        setDriftFreeCollateral(freeCollateral);
+        setDriftWithdrawJobId(job.id);
+        setShowDriftWithdrawModal(true);
+      } else {
+        const error = await response.text();
+        setNotification({ type: 'error', message: `Failed to get collateral info: ${error}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', message: `Failed to get collateral info: ${error}` });
+    }
+  };
+
+  // Handle Drift Withdraw confirmation
+  const handleDriftWithdrawConfirm = async (amount: number | null) => {
+    if (!driftWithdrawJobId) return;
+    
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/withdraw-collateral`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authService.getToken()}`
+        },
+        body: JSON.stringify({
+          jobId: driftWithdrawJobId,
+          amount: amount
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setNotification({ type: 'success', message: `Withdrew ${result.amount || 'available'} SOL from collateral!` });
+        await loadActiveJobs();
+      } else {
+        const error = await response.text();
+        setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
     }
   };
 
@@ -5356,37 +5419,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                     {job.type === JobType.DRIFT_PERP && (
                                       <>
                                         <button
-                                          onClick={async (e) => {
+                                          onClick={(e) => {
                                             e.stopPropagation();
                                             const driftJob = job as DriftPerpJob;
-                                            const withdrawAmount = prompt('How much SOL to withdraw from collateral? (leave empty to withdraw all available)', '');
-                                            
-                                            if (withdrawAmount !== null) {
-                                              try {
-                                                const response = await fetch(`${API_CONFIG.BASE_URL}/api/v1/drift/withdraw-collateral`, {
-                                                  method: 'POST',
-                                                  headers: {
-                                                    'Content-Type': 'application/json',
-                                                    'Authorization': `Bearer ${authService.getToken()}`
-                                                  },
-                                                  body: JSON.stringify({
-                                                    jobId: job.id,
-                                                    amount: withdrawAmount === '' ? null : Number(withdrawAmount)
-                                                  })
-                                                });
-                                                
-                                                if (response.ok) {
-                                                  const result = await response.json();
-                                                  setNotification({ type: 'success', message: `Withdrew ${result.amount || 'available'} SOL from collateral!` });
-                                                  await loadActiveJobs();
-                                                } else {
-                                                  const error = await response.text();
-                                                  setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
-                                                }
-                                              } catch (error) {
-                                                setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
-                                              }
-                                            }
+                                            handleDriftWithdrawClick(driftJob);
                                           }}
                                           style={{
                                             padding: '0.25rem 0.5rem',
@@ -5574,7 +5610,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       margin: '0 0 1.125rem 0',
                       fontSize: '0.75rem'
                 }}>
-                  Mirror trades from any Solana wallet with your specified percentage
+                  Automatically mirror trades from any Trading Wallet using a percentage of your SOL allocation. Save wallets to your watchlist for continuous monitoring and future trades.
                 </p>
 
                 <div style={{ marginBottom: '1rem' }}>
@@ -6082,7 +6118,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       margin: '0 0 1.125rem 0',
                       fontSize: '0.75rem'
                     }}>
-                      Monitor token prices and execute trades when conditions are met
+                      Monitor Solana token price and execute trades when conditions are met
                     </p>
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={{ 
@@ -7870,6 +7906,17 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         statusData={driftStatusData}
         loading={driftStatusLoading}
         error={driftStatusError}
+      />
+      <DriftWithdrawModal
+        isOpen={showDriftWithdrawModal}
+        onClose={() => {
+          setShowDriftWithdrawModal(false);
+          setDriftWithdrawJobId(null);
+          setDriftFreeCollateral(0);
+        }}
+        onConfirm={handleDriftWithdrawConfirm}
+        jobId={driftWithdrawJobId || ''}
+        freeCollateral={driftFreeCollateral}
       />
       {showDeleteSavedWalletDialog && (
         <div style={{
