@@ -411,23 +411,10 @@ const WhaleTrackerPage: React.FC<{ onRpcError: () => void; currentEndpoint: stri
 };
 
 // Navigation Bar Component
-const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) => void }> = ({ currentPage, onPageChange }) => {
-  const [solPrice, setSolPrice] = useState<number>(0);
+const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) => void; solPrice: number }> = ({ currentPage, onPageChange, solPrice }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
-    const priceFeed = PriceFeedService.getInstance();
-    const handlePriceUpdate = (prices: { sol: number }) => {
-      setSolPrice(prices.sol);
-    };
 
-    priceFeed.on('price_update', handlePriceUpdate);
-    priceFeed.start();
-
-    return () => {
-      priceFeed.removeListener('price_update', handlePriceUpdate);
-    };
-  }, []);
 
   return (
     <div className={navigationStyles.navigationBar}>
@@ -477,9 +464,9 @@ const NavigationBar: React.FC<{ currentPage: Page; onPageChange: (page: Page) =>
             className={navigationStyles.solanaLogo}
           />
           <span className={navigationStyles.priceText}>
-            ${solPrice.toFixed(2)}
+            ${solPrice > 0 ? solPrice.toFixed(2) : '...'}
           </span>
-      </div>
+        </div>
       <WalletButton />
       </div>
 
@@ -792,6 +779,10 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [availableDriftMarkets, setAvailableDriftMarkets] = useState<any[]>([]);
   const [isDriftMarketsLoading, setIsDriftMarketsLoading] = useState(false);
   
+  // Add state for tracking current asset price based on selected market
+  const [currentAssetPrice, setCurrentAssetPrice] = useState<number>(0);
+  const [currentAssetSymbol, setCurrentAssetSymbol] = useState<string>('SOL');
+  
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
@@ -929,8 +920,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         setNotification({ type: 'success', message: `Withdrew ${result.amount || 'available'} SOL from collateral!` });
         await loadActiveJobs();
       } else {
-        const error = await response.text();
-        setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
+        try {
+          const errorResult = await response.json();
+          setNotification({ type: 'error', message: `Failed to withdraw collateral: ${errorResult.error || 'Unknown error'}` });
+        } catch (parseError) {
+          setNotification({ type: 'error', message: `Failed to withdraw collateral: Server returned invalid response` });
+        }
       }
     } catch (error) {
       setNotification({ type: 'error', message: `Failed to withdraw collateral: ${error}` });
@@ -3283,8 +3278,12 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   // Add price feed subscription
   useEffect(() => {
     const priceFeed = PriceFeedService.getInstance();
-    const handlePriceUpdate = (prices: { sol: number }) => {
-      setSolPrice(prices.sol);
+    const handlePriceUpdate = (prices: { [symbol: string]: number }) => {
+      console.log('📊 Price update received:', prices);
+      // Update SOL price for backward compatibility
+      const solPriceValue = prices.SOL || 0;
+      setSolPrice(solPriceValue);
+      console.log('💰 Updated SOL price:', solPriceValue);
     };
 
     priceFeed.on('price_update', handlePriceUpdate);
@@ -3294,6 +3293,79 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       priceFeed.removeListener('price_update', handlePriceUpdate);
     };
   }, []);
+
+  // Set reasonable default values for Drift Perp form when current asset price changes
+  useEffect(() => {
+    if (currentAssetPrice > 0) {
+      // Only set defaults if the fields are currently empty
+      if (!driftEntryPrice) {
+        setDriftEntryPrice(currentAssetPrice.toFixed(2));
+      }
+      if (!driftExitPrice) {
+        setDriftExitPrice((currentAssetPrice * 1.05).toFixed(2));
+      }
+      if (!driftStopLoss) {
+        setDriftStopLoss((currentAssetPrice * 0.95).toFixed(2));
+      }
+      if (!driftTakeProfit) {
+        setDriftTakeProfit((currentAssetPrice * 1.10).toFixed(2));
+      }
+    }
+  }, [currentAssetPrice, driftEntryPrice, driftExitPrice, driftStopLoss, driftTakeProfit]);
+
+  // Update current asset price when market selection changes
+  useEffect(() => {
+    const priceFeed = PriceFeedService.getInstance();
+    let assetPrice = priceFeed.getAssetPriceFromMarket(driftMarketSymbol);
+    const baseAsset = driftMarketSymbol.replace('-PERP', '');
+    
+    console.log(`🔄 Updating asset price for ${driftMarketSymbol}: ${assetPrice} (${baseAsset})`);
+    console.log(`🔄 Available prices:`, priceFeed.getAllPrices());
+    
+    // For SOL, always wait for the real price - never use fallback
+    if (baseAsset === 'SOL') {
+      if (assetPrice === 0) {
+        // If SOL price isn't available yet, don't set anything - wait for it to load
+        console.log(`🔄 Waiting for real SOL price to load...`);
+        setCurrentAssetPrice(0);
+        setCurrentAssetSymbol(baseAsset);
+        return;
+      }
+    } else {
+      // For other assets, use fallback if no real price available
+      if (assetPrice === 0) {
+        const fallbackPrices: { [key: string]: number } = {
+          'BTC': 45000,
+          'ETH': 3000,
+          'AVAX': 40,
+          'BNB': 300
+        };
+        assetPrice = fallbackPrices[baseAsset] || 100;
+        console.log(`🔄 Using fallback price for ${baseAsset}: ${assetPrice}`);
+      }
+    }
+    
+    setCurrentAssetPrice(assetPrice);
+    setCurrentAssetSymbol(baseAsset);
+    
+    console.log(`✅ Set currentAssetPrice: ${assetPrice}, currentAssetSymbol: ${baseAsset}`);
+  }, [driftMarketSymbol]);
+
+  // Update current asset price when price feed updates (for real-time updates)
+  useEffect(() => {
+    if (currentAssetSymbol && currentAssetSymbol !== 'SOL') {
+      // For non-SOL assets, we can use fallbacks, so no need to update here
+      return;
+    }
+    
+    const priceFeed = PriceFeedService.getInstance();
+    const assetPrice = priceFeed.getAssetPriceFromMarket(driftMarketSymbol);
+    
+    if (assetPrice > 0 && assetPrice !== currentAssetPrice) {
+      console.log(`🔄 Real-time update: ${currentAssetSymbol} price changed from ${currentAssetPrice} to ${assetPrice}`);
+      setCurrentAssetPrice(assetPrice);
+    }
+  }, [solPrice]); // This will trigger when SOL price updates
 
   const JUPITER_TOKEN_LIST_URL = 'https://token.jup.ag/strict';
 
@@ -3894,8 +3966,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         { marketIndex: 1, symbol: 'BTC-PERP', baseAssetSymbol: 'BTC', maxLeverage: 15 },
         { marketIndex: 2, symbol: 'ETH-PERP', baseAssetSymbol: 'ETH', maxLeverage: 18 },
         { marketIndex: 3, symbol: 'AVAX-PERP', baseAssetSymbol: 'AVAX', maxLeverage: 12 },
-        { marketIndex: 4, symbol: 'BNB-PERP', baseAssetSymbol: 'BNB', maxLeverage: 10 },
-        { marketIndex: 5, symbol: 'MATIC-PERP', baseAssetSymbol: 'MATIC', maxLeverage: 8 }
+        { marketIndex: 4, symbol: 'BNB-PERP', baseAssetSymbol: 'BNB', maxLeverage: 10 }
       ];
       setAvailableDriftMarkets(fallbackMarkets);
     } finally {
@@ -4018,6 +4089,18 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       return;
     }
 
+    // Validate that entry price is within reasonable range of current asset price
+    if (currentAssetPrice > 0) {
+      const priceDeviation = Math.abs(entryPrice - currentAssetPrice) / currentAssetPrice;
+      if (priceDeviation > 0.5) { // Allow up to 50% deviation
+        setNotification({
+          message: `Entry price $${entryPrice} is very different from current ${currentAssetSymbol} price $${currentAssetPrice.toFixed(2)}. Please verify this is correct.`,
+          type: 'error'
+        });
+        return;
+      }
+    }
+
     // Dynamic leverage validation based on selected market
     const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
     const maxLeverage = selectedMarket?.maxLeverage || 10;
@@ -4047,7 +4130,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
       const newJob = await strategyInstance.createDriftPerpStrategy({
           tradingWallet: selectedTradingWallet,
           initialBalance,
-          solPrice: 150, // TODO: Get actual SOL price
+          solPrice: currentAssetPrice > 0 ? currentAssetPrice : 150, // Use current asset price or fallback
           marketSymbol: driftMarketSymbol,
           marketIndex: driftMarketIndex,
           direction: driftDirection,
@@ -4972,7 +5055,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
 
   return (
     <div className={walletStyles.container}>
-      <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} />
+              <NavigationBar currentPage={currentPage} onPageChange={setCurrentPage} solPrice={solPrice} />
       {currentPage === 'dashboard' ? (
         <div style={{ padding: '2rem' }}>
           <div className={walletStyles.dashboardLayout}>
@@ -7207,6 +7290,45 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       Open long or short positions on perpetual futures contracts with leverage
                     </p>
 
+                    {/* Current Asset Price Display */}
+                    <div style={{
+                      backgroundColor: '#374151',
+                      border: '1px solid #4b5563',
+                      borderRadius: '0.5rem',
+                      padding: '0.75rem',
+                      marginBottom: '1rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <span style={{ 
+                        color: '#94a3b8', 
+                        fontSize: '0.875rem',
+                        fontWeight: '500'
+                      }}>
+                        Current {currentAssetSymbol} Price:
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {currentAssetPrice > 0 ? (
+                          <span style={{ 
+                            color: '#10b981', 
+                            fontSize: '1rem',
+                            fontWeight: '600'
+                          }}>
+                            ${currentAssetPrice.toFixed(2)}
+                          </span>
+                        ) : (
+                          <span style={{ 
+                            color: '#94a3b8', 
+                            fontSize: '1rem',
+                            fontStyle: 'italic'
+                          }}>
+                            Loading...
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Market Selection */}
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={{ 
@@ -7257,9 +7379,251 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                           <option disabled>No markets available</option>
                         )}
                       </select>
-                    </div>
+                                          </div>
 
-                    {/* Direction Selection */}
+                      {/* Leverage Slider */}
+                      <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ 
+                          display: 'block',
+                          marginBottom: '0.5rem',
+                          color: '#e2e8f0',
+                          fontSize: '0.875rem'
+                        }}>
+                          Leverage: {driftLeverage}x
+                        </label>
+                        <div style={{ position: 'relative', padding: '0.5rem 0' }}>
+                          {/* Slider Track */}
+                          <div style={{
+                            width: '100%',
+                            height: '8px',
+                            backgroundColor: '#374151',
+                            borderRadius: '4px',
+                            position: 'relative',
+                            cursor: 'grab'
+                          }}>
+                            {/* Active Track (up to current leverage) */}
+                            <div style={{
+                              position: 'absolute',
+                              left: '0',
+                              top: '0',
+                              height: '100%',
+                              width: `${(parseFloat(String(driftLeverage)) / 100) * 100}%`,
+                              backgroundColor: '#3b82f6',
+                              borderRadius: '4px',
+                              transition: 'width 0.2s ease'
+                            }} />
+                            
+                            {/* Disabled Track (above max leverage) */}
+                            {(() => {
+                              const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                              const maxLeverage = selectedMarket?.maxLeverage || 10;
+                              if (maxLeverage < 100) {
+                                return (
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: `${(maxLeverage / 100) * 100}%`,
+                                    top: '0',
+                                    height: '100%',
+                                    width: `${100 - (maxLeverage / 100) * 100}%`,
+                                    backgroundColor: '#6b7280',
+                                    borderRadius: '0 4px 4px 0',
+                                    opacity: 0.4
+                                  }} />
+                                );
+                              }
+                              return null;
+                            })()}
+                            
+                            {/* Percentage Marks/Dots */}
+                            <div style={{
+                              position: 'absolute',
+                              left: '0%',
+                              top: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              width: '6px',
+                              height: '6px',
+                              backgroundColor: '#6b7280',
+                              borderRadius: '50%',
+                              zIndex: 1
+                            }} />
+                            <div style={{
+                              position: 'absolute',
+                              left: '25%',
+                              top: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              width: '6px',
+                              height: '6px',
+                              backgroundColor: '#6b7280',
+                              borderRadius: '50%',
+                              zIndex: 1
+                            }} />
+                            <div style={{
+                              position: 'absolute',
+                              left: '50%',
+                              top: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              width: '6px',
+                              height: '6px',
+                              backgroundColor: '#6b7280',
+                              borderRadius: '50%',
+                              zIndex: 1
+                            }} />
+                            <div style={{
+                              position: 'absolute',
+                              left: '75%',
+                              top: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              width: '6px',
+                              height: '6px',
+                              backgroundColor: '#6b7280',
+                              borderRadius: '50%',
+                              zIndex: 1
+                            }} />
+                            <div style={{
+                              position: 'absolute',
+                              left: '100%',
+                              top: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              width: '6px',
+                              height: '6px',
+                              backgroundColor: '#6b7280',
+                              borderRadius: '50%',
+                              zIndex: 1
+                            }} />
+                          </div>
+                          
+                          {/* Slider Thumb */}
+                          <input
+                            type="range"
+                            min="1"
+                            max="100"
+                            value={driftLeverage}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value);
+                              const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                              const maxLeverage = selectedMarket?.maxLeverage || 10;
+                              
+                              // Prevent setting leverage above the market's max allowed
+                              if (value <= maxLeverage) {
+                                setDriftLeverage(value.toString());
+                              } else {
+                                // If user tries to go above max, clamp to max allowed
+                                setDriftLeverage(maxLeverage.toString());
+                              }
+                            }}
+                            style={{
+                              position: 'absolute',
+                              top: '-3px',
+                              left: '0',
+                              width: '100%',
+                              height: '22px',
+                              opacity: '0',
+                              cursor: 'grab',
+                              zIndex: 4
+                            }}
+                          />
+                          
+                          {/* Visual Slider Thumb */}
+                          <div 
+                            style={{
+                              position: 'absolute',
+                              left: `${(parseFloat(String(driftLeverage)) / 100) * 100}%`,
+                              top: '4px',
+                              width: '15px',
+                              height: '15px',
+                              backgroundColor: '#3b82f6',
+                              border: '2px solid #ffffff',
+                              borderRadius: '50%',
+                              boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
+                              cursor: 'grab',
+                              zIndex: 3,
+                              transition: 'all 0.2s ease',
+                              userSelect: 'none',
+                              pointerEvents: 'none'
+                            }}
+                          />
+                          
+                          {/* Percentage Labels */}
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            marginTop: '0.5rem',
+                            fontSize: '0.75rem',
+                            color: '#94a3b8'
+                          }}>
+                            <span>0%</span>
+                            <span>25%</span>
+                            <span>50%</span>
+                            <span>75%</span>
+                            <span>100%</span>
+                          </div>
+                          
+                          {/* Max Leverage Indicator */}
+                          {(() => {
+                            const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                            const maxLeverage = selectedMarket?.maxLeverage || 10;
+                            return (
+                              <div style={{
+                                marginTop: '0.5rem',
+                                fontSize: '0.75rem',
+                                color: '#f59e0b',
+                                textAlign: 'center'
+                              }}>
+                                Max allowed: {maxLeverage}x
+                              </div>
+                            );
+                          })()}
+                          
+                          {/* Quick Leverage Presets */}
+                          <div style={{
+                            display: 'flex',
+                            gap: '0.5rem',
+                            marginTop: '1rem',
+                            justifyContent: 'center',
+                            position: 'relative',
+                            zIndex: 4
+                          }}>
+                            {(() => {
+                              const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                              const maxLeverage = selectedMarket?.maxLeverage || 10;
+                              const presets = [1, 2, 5, 10, 20, 50, 100].filter(p => p <= maxLeverage);
+                              
+                              return presets.map(preset => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => {
+                                    const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
+                                    const maxLeverage = selectedMarket?.maxLeverage || 10;
+                                    
+                                    // Only allow presets that don't exceed max leverage
+                                    if (preset <= maxLeverage) {
+                                      setDriftLeverage(preset.toString());
+                                    }
+                                  }}
+                                  style={{
+                                    padding: '0.25rem 0.5rem',
+                                    backgroundColor: parseFloat(String(driftLeverage)) === preset ? '#10b981' : '#374151',
+                                    border: '1px solid #4b5563',
+                                    borderRadius: '0.25rem',
+                                    color: '#e5e7eb',
+                                    fontSize: '0.75rem',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    position: 'relative',
+                                    zIndex: 4
+                                  }}
+                                  title={`Set leverage to ${preset}x`}
+                                >
+                                  {preset}x
+                                </button>
+                              ));
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Direction Selection */}
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={{ 
                         display: 'block',
@@ -7328,8 +7692,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             color: '#e2e8f0',
                             fontSize: '0.875rem'
                           }}
-                          placeholder="e.g., 150.00"
-                          step="0.01"
+                          placeholder={currentAssetPrice > 0 ? `e.g., ${currentAssetPrice.toFixed(2)}` : "e.g., 195.00"}
+                          step="0.1"
+                          min="0"
                         />
                       </div>
                       <div style={{ flex: 1 }}>
@@ -7355,100 +7720,121 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             color: '#e2e8f0',
                             fontSize: '0.875rem'
                           }}
-                          placeholder="e.g., 180.00"
-                          step="0.01"
+                          placeholder={currentAssetPrice > 0 ? `e.g., ${(currentAssetPrice * 1.1).toFixed(2)}` : "e.g., 214.50"}
+                          step="0.1"
+                          min="0"
                         />
                       </div>
                     </div>
 
-                    {/* Allocation and Leverage */}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ 
-                          display: 'block',
-                          marginBottom: '0.5rem',
+                    {/* Price Suggestion Buttons */}
+                    {currentAssetPrice > 0 && (
+                      <div style={{ marginBottom: '1rem' }}>
+                        <div style={{ 
+                          display: 'flex', 
+                          gap: '0.5rem', 
+                          flexWrap: 'wrap',
+                          alignItems: 'center'
+                        }}>
+                          <span style={{ 
+                            color: '#94a3b8', 
+                            fontSize: '0.75rem',
+                            marginRight: '0.5rem'
+                          }}>
+                            Quick Set:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDriftEntryPrice(currentAssetPrice.toFixed(2));
+                              setDriftExitPrice((currentAssetPrice * 1.05).toFixed(2));
+                            }}
+                            style={{
+                              background: '#374151',
+                              border: '1px solid #4b5563',
+                              color: '#e5e7eb',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '0.25rem',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            title={`Set entry to current ${currentAssetSymbol} price, exit to +5%`}
+                          >
+                            Current +5%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDriftEntryPrice((currentAssetPrice * 0.95).toFixed(2));
+                              setDriftExitPrice(currentAssetPrice.toFixed(2));
+                            }}
+                            style={{
+                              background: '#374151',
+                              border: '1px solid #4b5563',
+                              color: '#e5e7eb',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '0.25rem',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            title={`Set entry to -5% ${currentAssetSymbol} price, exit to current`}
+                          >
+                            -5% Current
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDriftEntryPrice((currentAssetPrice * 0.90).toFixed(2));
+                              setDriftExitPrice((currentAssetPrice * 1.10).toFixed(2));
+                            }}
+                            style={{
+                              background: '#374151',
+                              border: '1px solid #4b5563',
+                              color: '#e5e7eb',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '0.25rem',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            title={`Set entry to -10% ${currentAssetSymbol} price, exit to +10%`}
+                          >
+                            ±10% Range
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Allocation */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ 
+                        display: 'block',
+                        marginBottom: '0.5rem',
+                        color: '#e2e8f0',
+                        fontSize: '0.875rem'
+                      }}>
+                        Allocation (% of {currentAssetSymbol})
+                      </label>
+                      <input
+                        type="number"
+                        value={driftAllocationPercentage}
+                        onChange={(e) => setDriftAllocationPercentage(e.target.value)}
+                        style={{
+                          width: '100px',
+                          maxWidth: '100%',
+                          padding: '0.75rem',
+                          backgroundColor: '#1e293b',
+                          border: '1px solid #4b5563',
+                          borderRadius: '0.375rem',
                           color: '#e2e8f0',
                           fontSize: '0.875rem'
-                        }}>
-                          Allocation (% of SOL)
-                        </label>
-                        <input
-                          type="number"
-                          value={driftAllocationPercentage}
-                          onChange={(e) => setDriftAllocationPercentage(e.target.value)}
-                          style={{
-                            width: '100px',
-                            maxWidth: '100%',
-                            padding: '0.75rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '0.875rem'
-                          }}
-                          placeholder="25"
-                          min="1"
-                          max="100"
-                        />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ 
-                          display: 'block',
-                          marginBottom: '0.5rem',
-                          color: '#e2e8f0',
-                          fontSize: '0.875rem'
-                        }}>
-                          Leverage (1-{availableDriftMarkets.find(m => m.symbol === driftMarketSymbol)?.maxLeverage || 10}x)
-                        </label>
-                        <input
-                          type="number"
-                          value={driftLeverage}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            const numericValue = parseFloat(value);
-                            const selectedMarket = availableDriftMarkets.find(m => m.symbol === driftMarketSymbol);
-                            const maxLeverage = selectedMarket?.maxLeverage || 10;
-                            
-                            // Allow empty string for clearing the field
-                            if (value === '') {
-                              setDriftLeverage('');
-                              return;
-                            }
-                            
-                            // Only allow valid numbers
-                            if (isNaN(numericValue)) {
-                              return;
-                            }
-                            
-                            // Prevent values higher than max leverage
-                            if (numericValue > maxLeverage) {
-                              setDriftLeverage(maxLeverage.toString());
-                              return;
-                            }
-                            
-                            // Prevent negative values
-                            if (numericValue < 0) {
-                              return;
-                            }
-                            
-                            setDriftLeverage(value);
-                          }}
-                          style={{
-                            width: '80px',
-                            maxWidth: '100%',
-                            padding: '0.75rem',
-                            backgroundColor: '#1e293b',
-                            border: '1px solid #4b5563',
-                            borderRadius: '0.375rem',
-                            color: '#e2e8f0',
-                            fontSize: '0.875rem'
-                          }}
-                          placeholder="1"
-                          min="1"
-                          max={availableDriftMarkets.find(m => m.symbol === driftMarketSymbol)?.maxLeverage || 10}
-                          step="0.1"
-                        />
-                      </div>
+                        }}
+                        placeholder="25"
+                        min="1"
+                        max="100"
+                      />
                     </div>
 
                     {/* Optional: Stop Loss and Take Profit */}
@@ -7476,8 +7862,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             color: '#e2e8f0',
                             fontSize: '0.875rem'
                           }}
-                          placeholder="e.g., 140.00"
-                          step="0.01"
+                          placeholder={currentAssetPrice > 0 ? `e.g., ${(currentAssetPrice * 0.8).toFixed(2)}` : "e.g., 156.00"}
+                          step="0.1"
+                          min="0"
                         />
                       </div>
                       <div style={{ flex: 1 }}>
@@ -7503,8 +7890,9 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                             color: '#e2e8f0',
                             fontSize: '0.875rem'
                           }}
-                          placeholder="e.g., 200.00"
-                          step="0.01"
+                          placeholder={currentAssetPrice > 0 ? `e.g., ${(currentAssetPrice * 1.2).toFixed(2)}` : "e.g., 234.00"}
+                          step="0.1"
+                          min="0"
                         />
                       </div>
                     </div>
@@ -7916,7 +8304,8 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
         }}
         onConfirm={handleDriftWithdrawConfirm}
         jobId={driftWithdrawJobId || ''}
-        freeCollateral={driftFreeCollateral}
+        freeCollateralUsd={driftFreeCollateral}
+        solPrice={solPrice}
       />
       {showDeleteSavedWalletDialog && (
         <div style={{

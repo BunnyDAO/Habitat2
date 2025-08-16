@@ -6,7 +6,8 @@ interface DriftWithdrawModalProps {
   onClose: () => void;
   onConfirm: (amount: number | null) => Promise<void>;
   jobId: string;
-  freeCollateral?: number;
+  freeCollateralUsd?: number;
+  solPrice?: number;
 }
 
 const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
@@ -14,10 +15,14 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
   onClose,
   onConfirm,
   jobId,
-  freeCollateral = 0
+  freeCollateralUsd = 0,
+  solPrice = 0
 }) => {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Convert USD free collateral to SOL equivalent
+  const freeCollateralSol = solPrice > 0 ? freeCollateralUsd / solPrice : 0;
 
   // Reset form when modal opens
   useEffect(() => {
@@ -101,18 +106,27 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
                 fontWeight: '600',
                 fontSize: '1rem'
               }}>
-                {freeCollateral.toFixed(4)} SOL
+                {freeCollateralSol.toFixed(4)} SOL
               </span>
+              {freeCollateralUsd > 0 && (
+                <span style={{ 
+                  color: '#94a3b8', 
+                  fontSize: '0.75rem',
+                  marginLeft: '0.5rem'
+                }}>
+                  (${freeCollateralUsd.toFixed(2)})
+                </span>
+              )}
             </div>
           </div>
-          {freeCollateral > 0 && (
+          {freeCollateralSol > 0 && (
             <div style={{ 
               marginTop: '0.5rem',
               display: 'flex',
               gap: '0.5rem'
             }}>
               <button
-                onClick={() => setWithdrawAmount((freeCollateral * 0.25).toFixed(4))}
+                onClick={() => setWithdrawAmount((freeCollateralSol * 0.25).toFixed(4))}
                 style={{
                   background: '#4b5563',
                   border: '1px solid #6b7280',
@@ -126,7 +140,7 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
                 25%
               </button>
               <button
-                onClick={() => setWithdrawAmount((freeCollateral * 0.5).toFixed(4))}
+                onClick={() => setWithdrawAmount((freeCollateralSol * 0.5).toFixed(4))}
                 style={{
                   background: '#4b5563',
                   border: '1px solid #6b7280',
@@ -140,7 +154,7 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
                 50%
               </button>
               <button
-                onClick={() => setWithdrawAmount((freeCollateral * 0.75).toFixed(4))}
+                onClick={() => setWithdrawAmount((freeCollateralSol * 0.75).toFixed(4))}
                 style={{
                   background: '#4b5563',
                   border: '1px solid #6b7280',
@@ -154,7 +168,7 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
                 75%
               </button>
               <button
-                onClick={() => setWithdrawAmount(freeCollateral.toFixed(4))}
+                onClick={() => setWithdrawAmount(freeCollateralSol.toFixed(4))}
                 style={{
                   background: '#4b5563',
                   border: '1px solid #6b7280',
@@ -187,7 +201,7 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
             placeholder="0.0 (empty = withdraw all)"
             step="0.1"
             min="0"
-            max={freeCollateral}
+            max={freeCollateralSol}
             style={{
               width: '100%',
               padding: '0.5rem',
@@ -197,7 +211,7 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
               color: '#e2e8f0'
             }}
           />
-          {withdrawAmount && Number(withdrawAmount) > freeCollateral && (
+          {withdrawAmount && Number(withdrawAmount) > freeCollateralSol && (
             <div style={{ 
               color: '#ef4444', 
               fontSize: '0.75rem', 
@@ -226,19 +240,19 @@ const DriftWithdrawModal: React.FC<DriftWithdrawModalProps> = ({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateral) || freeCollateral === 0}
+            disabled={isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateralSol) || freeCollateralSol === 0}
             className={walletStyles.button}
             style={{
               backgroundColor: isProcessing ? '#6b7280' : '#10b981',
-              opacity: (isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateral) || freeCollateral === 0) ? 0.5 : 1,
-              cursor: (isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateral) || freeCollateral === 0) ? 'not-allowed' : 'pointer'
+              opacity: (isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateralSol) || freeCollateralSol === 0) ? 0.5 : 1,
+              cursor: (isProcessing || (withdrawAmount && Number(withdrawAmount) > freeCollateralSol) || freeCollateralSol === 0) ? 'not-allowed' : 'pointer'
             }}
           >
             {isProcessing ? 'Processing...' : 'Withdraw'}
           </button>
         </div>
 
-        {freeCollateral === 0 && (
+        {freeCollateralSol === 0 && (
           <div style={{
             marginTop: '1rem',
             padding: '0.75rem',
