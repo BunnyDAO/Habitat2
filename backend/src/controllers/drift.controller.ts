@@ -69,16 +69,6 @@ export class DriftController {
           tickSize: 0.01,
           marginRatioInitial: 0.1,
           marginRatioMaintenance: 0.06
-        },
-        { 
-          marketIndex: 5, 
-          symbol: 'MATIC-PERP', 
-          baseAssetSymbol: 'MATIC', 
-          maxLeverage: 8,
-          minOrderSize: 1,
-          tickSize: 0.0001,
-          marginRatioInitial: 0.125,
-          marginRatioMaintenance: 0.075
         }
       ];
 

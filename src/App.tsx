@@ -5693,7 +5693,7 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                       margin: '0 0 1.125rem 0',
                       fontSize: '0.75rem'
                 }}>
-                  Automatically mirror trades from any Trading Wallet using a percentage of your SOL allocation. Save wallets to your watchlist for continuous monitoring and future trades.
+                  Automatically mirror trades from any Trading Wallet using a percentage of your SOL allocation, matching the conviction level of the monitored wallet's trades. Save wallets to your watchlist for continuous monitoring and future trades.
                 </p>
 
                 <div style={{ marginBottom: '1rem' }}>

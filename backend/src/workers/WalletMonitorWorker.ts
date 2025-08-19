@@ -181,6 +181,8 @@ export class WalletMonitorWorker extends BaseWorker {
       outputToken: string;
       inputAmount: number;
       outputAmount: number;
+      scaledInputAmount: number;
+      swapPercentage: number;
       timestamp: number;
     };
   }> {
@@ -460,27 +462,116 @@ export class WalletMonitorWorker extends BaseWorker {
       console.log(`[Mirror] Attempting to mirror swap: ${inputToken} -> ${outputToken}`);
       console.log(`[Mirror] UI amounts - input: ${inputAmount}, output: ${outputAmount}`);
       
-      // ===== MANUAL PERCENTAGE ANALYSIS (SEPARATE FROM WORKFLOW) =====
+      // ===== PERCENTAGE-BASED SCALING LOGIC =====
+      let scaledInputAmount = inputAmount;
+      let swapPercentage = 100; // Default to 100% if calculation fails
+      const isSOLInput = inputToken === 'So11111111111111111111111111111111111111112';
+      
       try {
         const result = await this.calculateWalletSwapPercentage(signature, inputToken, outputToken, inputAmount);
         if (result.success && result.data) {
-          console.log(`[SwapPercentage] *** MANUAL ANALYSIS ***`);
-          console.log(`[SwapPercentage] Monitored wallet used ${result.data.percentageUsed.toFixed(2)}% of their ${inputToken} balance`);
+          swapPercentage = result.data.percentageUsed;
+          console.log(`[SwapPercentage] *** PERCENTAGE ANALYSIS ***`);
+          console.log(`[SwapPercentage] Monitored wallet used ${swapPercentage.toFixed(2)}% of their ${inputToken} balance`);
           console.log(`[SwapPercentage] Pre-swap: ${result.data.preSwapBalance}, Post-swap: ${result.data.postSwapBalance}`);
           console.log(`[SwapPercentage] Amount swapped: ${result.data.swapAmount}`);
           
-          // You could store this data or use it for logic here
-          // For example: if (result.data.percentageUsed > 50) { /* do something */ }
+          // Apply different scaling logic based on swap type
+          if (isSOLInput) {
+            // SOL → TokenA: Scale by strategy percentage × their conviction
+            const strategyPercentage = this.percentage;
+            const scaledPercentage = (strategyPercentage * swapPercentage) / 100;
+            
+            // Get your trading wallet's SOL balance and calculate the amount to swap
+            try {
+              // Use the trading wallet keypair for the strategy, not the main wallet
+              if (!this.tradingWalletKeypair) {
+                console.log(`[SwapPercentage] ⚠️ No trading wallet keypair available, using fallback scaling`);
+                scaledInputAmount = inputAmount * (scaledPercentage / 100);
+              } else {
+                const yourSOLBalance = await this.connection.getBalance(this.tradingWalletKeypair.publicKey) / 1e9;
+                scaledInputAmount = yourSOLBalance * (scaledPercentage / 100);
+                
+                console.log(`[SwapPercentage] SOL input detected - ENTRY SCALING:`);
+                console.log(`[SwapPercentage] Strategy percentage: ${strategyPercentage}%, Their conviction: ${swapPercentage.toFixed(2)}%`);
+                console.log(`[SwapPercentage] Final scaling: ${scaledPercentage.toFixed(2)}% (${strategyPercentage}% × ${swapPercentage.toFixed(2)}%)`);
+                console.log(`[SwapPercentage] Your trading wallet SOL balance: ${yourSOLBalance.toFixed(6)} SOL`);
+                console.log(`[SwapPercentage] Amount to swap: ${scaledInputAmount.toFixed(6)} SOL (${scaledPercentage.toFixed(2)}% of your trading wallet balance)`);
+                
+                // Validate the calculated amount doesn't exceed available balance (minus fee buffer)
+                const maxSafeAmount = yourSOLBalance - 0.01; // Keep 0.01 SOL for fees
+                if (scaledInputAmount > maxSafeAmount) {
+                  console.log(`[SwapPercentage] ⚠️ Calculated amount exceeds safe balance, adjusting to ${maxSafeAmount.toFixed(6)} SOL`);
+                  scaledInputAmount = maxSafeAmount;
+                }
+              }
+            } catch (error) {
+              console.log(`[SwapPercentage] Error getting your trading wallet SOL balance, using fallback scaling:`, error);
+              // Fallback to original method if balance check fails
+              scaledInputAmount = inputAmount * (scaledPercentage / 100);
+              console.log(`[SwapPercentage] Fallback: ${inputAmount} × ${scaledPercentage.toFixed(2)}% = ${scaledInputAmount.toFixed(6)} SOL`);
+            }
+          } else {
+            // TokenA → TokenB or TokenA → SOL: Scale by their conviction on YOUR balance
+            try {
+              // Use the trading wallet keypair for the strategy, not the main wallet
+              if (!this.tradingWalletKeypair) {
+                console.log(`[SwapPercentage] ⚠️ No trading wallet keypair available, using fallback scaling`);
+                scaledInputAmount = inputAmount * (swapPercentage / 100);
+              } else {
+                const yourTokenBalance = await this.getTokenBalance(this.tradingWalletKeypair.publicKey, inputToken);
+                
+                if (yourTokenBalance !== null) {
+                  // Calculate amount based on your balance × their conviction percentage
+                  scaledInputAmount = yourTokenBalance * (swapPercentage / 100);
+                  
+                  console.log(`[SwapPercentage] Token input detected - CONVICTION SCALING:`);
+                  console.log(`[SwapPercentage] Their conviction: ${swapPercentage.toFixed(2)}%`);
+                  console.log(`[SwapPercentage] Your trading wallet ${inputToken} balance: ${yourTokenBalance.toFixed(6)}`);
+                  console.log(`[SwapPercentage] Amount to swap: ${scaledInputAmount.toFixed(6)} (${swapPercentage.toFixed(2)}% of your trading wallet balance)`);
+                  
+                  // Validate the calculated amount doesn't exceed available balance
+                  if (scaledInputAmount > yourTokenBalance) {
+                    console.log(`[SwapPercentage] ⚠️ Calculated amount exceeds your balance, adjusting to ${yourTokenBalance.toFixed(6)}`);
+                    scaledInputAmount = yourTokenBalance;
+                  }
+                } else {
+                  console.log(`[SwapPercentage] Could not get your trading wallet ${inputToken} balance, using fallback scaling`);
+                  scaledInputAmount = inputAmount * (swapPercentage / 100);
+                }
+              }
+            } catch (error) {
+              console.log(`[SwapPercentage] Error getting your trading wallet token balance, using fallback scaling:`, error);
+              scaledInputAmount = inputAmount * (swapPercentage / 100);
+            }
+          }
+          
         } else {
           console.log(`[SwapPercentage] Could not calculate percentage: ${result.error}`);
+          console.log(`[SwapPercentage] Using original amount without scaling`);
         }
       } catch (error) {
-        console.error(`[SwapPercentage] Error in manual analysis:`, error);
+        console.error(`[SwapPercentage] Error in percentage analysis:`, error);
+        console.log(`[SwapPercentage] Using original amount without scaling`);
       }
-      // ===== END MANUAL ANALYSIS =====
+      // ===== END PERCENTAGE-BASED SCALING =====
       
-      // Pass UI amounts directly to mirrorSwap - SwapService will handle the scaling
-      await this.mirrorSwap(inputToken, outputToken, inputAmount);
+      // Balance check is now handled in the scaling logic above
+      
+      // Execute swap with scaled amount
+      const scalingRatio = ((scaledInputAmount / inputAmount) * 100).toFixed(2);
+      console.log(`[Mirror] 🎯 FINAL SWAP EXECUTION:`);
+      console.log(`[Mirror] Original amount: ${inputAmount} ${inputToken}`);
+      console.log(`[Mirror] Scaled amount: ${scaledInputAmount.toFixed(6)} ${inputToken}`);
+      console.log(`[Mirror] Scaling ratio: ${scalingRatio}% of original`);
+      
+      if (isSOLInput) {
+        console.log(`[Mirror] Entry scaling: ${this.percentage}% × ${swapPercentage.toFixed(2)}% = ${scalingRatio}%`);
+      } else {
+        console.log(`[Mirror] Conviction scaling: ${swapPercentage.toFixed(2)}% of your ${inputToken} balance`);
+      }
+      
+      await this.mirrorSwap(inputToken, outputToken, scaledInputAmount);
       this.updateJobActivity();
 
       return {
@@ -490,6 +581,8 @@ export class WalletMonitorWorker extends BaseWorker {
           outputToken,
           inputAmount,
           outputAmount,
+          scaledInputAmount,
+          swapPercentage,
           timestamp: tx.blockTime || Date.now() / 1000
         }
       };
@@ -1033,6 +1126,38 @@ export class WalletMonitorWorker extends BaseWorker {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  }
+
+  /**
+   * Helper function to get your trading wallet's token balance
+   * Handles both SOL (native) and SPL tokens
+   */
+  private async getTokenBalance(walletPubkey: PublicKey, tokenMint: string): Promise<number | null> {
+    try {
+      // Handle SOL (native token)
+      if (tokenMint === 'So11111111111111111111111111111111111111112') {
+        const solBalance = await this.connection.getBalance(walletPubkey) / 1e9;
+        return solBalance;
+      }
+
+      // Handle SPL tokens
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(walletPubkey, {
+        programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+      });
+
+      const tokenAccount = tokenAccounts.value.find(account => 
+        account.account.data.parsed.info.mint === tokenMint
+      );
+
+      if (tokenAccount) {
+        return Number(tokenAccount.account.data.parsed.info.tokenAmount.uiAmount);
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`[SwapPercentage] Error getting token balance for ${tokenMint}:`, error);
+      return null;
     }
   }
 
