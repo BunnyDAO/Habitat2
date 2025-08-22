@@ -26,8 +26,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             autoConnect: false,
             env: 'mainnet-beta',
             metadata: {
-              name: 'Habitat',
-              description: 'Habitat is a comprehensive Solana trading platform that enables automated cryptocurrency trading through intelligent wallet management and strategy execution. The application allows users to create and manage multiple trading wallets, monitor real-time token balances, and deploy automated trading strategies like level-based buying/selling and vault management. With integrated Jupiter swap functionality, whale tracking capabilities, and a user-friendly dashboard, Habitat streamlines portfolio management while providing advanced tools for both manual and automated SOL and SPL token trading.',
+              name: 'Lackey',
+              description: 'Lackey is a comprehensive Solana trading platform that enables automated cryptocurrency trading through intelligent wallet management and strategy execution. The application allows users to create and manage multiple trading wallets, monitor real-time token balances, and deploy automated trading strategies like level-based buying/selling and vault management. With integrated Jupiter swap functionality, whale tracking capabilities, and a user-friendly dashboard, Habitat streamlines portfolio management while providing advanced tools for both manual and automated SOL and SPL token trading.',
               url: window.location.origin,
               iconUrls: [],
             },

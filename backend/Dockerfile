@@ -3,10 +3,8 @@ FROM node:20
 WORKDIR /app
 
 COPY package*.json ./
-# Install dependencies with legacy peer deps and force resolution
-RUN npm install --legacy-peer-deps && \
-    npm install rpc-websockets@7.5.1 --save --legacy-peer-deps && \
-    npm dedupe --legacy-peer-deps
+# Install dependencies with legacy peer deps for compatibility
+RUN npm install --legacy-peer-deps
 
 COPY . .
 

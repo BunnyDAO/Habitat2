@@ -32,6 +32,7 @@ import strategyReviewsRouter from './routes/strategy-reviews.routes';
 import { createValuationRoutes } from './routes/valuation.routes';
 import { createTriggersRoutes } from './routes/triggers.routes';
 import driftRouter from './routes/drift.routes';
+import { config, getEnvironmentName, getLogLevel } from './config/environment';
 
 // Load environment variables from the correct path
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -39,23 +40,56 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 export function createApp() {
   const app = express();
 
+  // Log environment information
+  console.log(`🚀 Starting Lackey backend in ${getEnvironmentName()} mode`);
+  console.log(`📊 Log level: ${getLogLevel()}`);
+  console.log(`🌐 CORS origins: ${config.corsOrigins.join(', ')}`);
+
   // Initialize Solana connection
   const connection = new Connection(
     process.env.RPC_URL || 'https://api.mainnet-beta.solana.com',
     'confirmed'
   );
 
-  // Initialize database connection
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  });
+  // Initialize database connection using the new pool
+  const pool = require('./database/pool').default;
 
-  // Initialize Redis client with fallback (simplified for testing)
+  // Initialize Redis client with environment-specific configuration
   let redisClient: ReturnType<typeof createClient> | null = null;
+  
+  if (config.redisEnabled) {
+    try {
+      redisClient = createClient({
+        url: config.redisUrl,
+        socket: {
+          connectTimeout: 10000,
+        },
+      });
+
+      redisClient.on('error', (err) => {
+        console.error('❌ Redis Client Error:', err);
+      });
+
+      redisClient.on('connect', () => {
+        console.log('✅ Redis Client Connected');
+      });
+
+      redisClient.on('ready', () => {
+        console.log('✅ Redis Client Ready');
+      });
+
+      // Connect to Redis
+      redisClient.connect().catch(console.error);
+    } catch (error) {
+      console.warn('⚠️ Redis not available, continuing without Redis');
+      redisClient = null;
+    }
+  } else {
+    console.log('⚠️ Redis disabled for this environment');
+  }
 
   // Initialize services
-  const heliusService = new HeliusService(process.env.HELIUS_API_KEY || '');
+  const heliusService = new HeliusService(config.heliusApiKey);
   const tokenService = new TokenService(pool);
   const pairTradeTokenService = new PairTradeTokenService(pool, redisClient);
 
@@ -70,9 +104,9 @@ export function createApp() {
     }
   }, 2000); // Wait 2 seconds for database connection to be ready
 
-  // Configure CORS
+  // Configure CORS based on environment
   app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'],
+    origin: config.corsOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH','OPTIONS', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'solana-client'],
     credentials: true
@@ -115,7 +149,10 @@ export function createApp() {
   app.get('/health', (req, res) => {
     res.json({ 
       status: 'ok',
-      redis: redisClient ? 'connected' : 'not connected'
+      environment: getEnvironmentName(),
+      redis: redisClient ? 'connected' : 'not connected',
+      database: 'connected', // Pool handles this
+      timestamp: new Date().toISOString()
     });
   });
 
