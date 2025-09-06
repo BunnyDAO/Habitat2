@@ -1,16 +1,13 @@
 version: '3.8'
 
 services:
-  # Development environment
-  daemon-dev:
+  daemon:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: habitat-daemon-dev
+    container_name: habitat-daemon
     environment:
       - SERVICE_MODE=daemon
-      - NODE_ENV=development
-      - APP_ENV=development
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - HELIUS_API_KEY=${HELIUS_API_KEY}
@@ -19,109 +16,4 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-    restart: unless-stopped
-    profiles:
-      - development
-
-  # Staging environment
-  daemon-staging:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: habitat-daemon-staging
-    environment:
-      - SERVICE_MODE=daemon
-      - NODE_ENV=staging
-      - APP_ENV=staging
-      - DATABASE_URL=${STAGING_DATABASE_URL}
-      - REDIS_URL=${STAGING_REDIS_URL}
-      - HELIUS_API_KEY=${STAGING_HELIUS_API_KEY}
-      - SUPABASE_URL=${STAGING_SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${STAGING_SUPABASE_ANON_KEY}
-    volumes:
-      - .:/app
-      - /app/node_modules
-    restart: unless-stopped
-    profiles:
-      - staging
-
-  # Production environment
-  daemon-prod:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: habitat-daemon-prod
-    environment:
-      - SERVICE_MODE=daemon
-      - NODE_ENV=production
-      - APP_ENV=production
-      - DATABASE_URL=${PRODUCTION_DATABASE_URL}
-      - REDIS_URL=${PRODUCTION_REDIS_URL}
-      - HELIUS_API_KEY=${PRODUCTION_HELIUS_API_KEY}
-      - SUPABASE_URL=${PRODUCTION_SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${PRODUCTION_SUPABASE_ANON_KEY}
-    volumes:
-      - .:/app
-      - /app/node_modules
-    restart: unless-stopped
-    profiles:
-      - production
-
-  # API server for development
-  api-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: habitat-api-dev
-    environment:
-      - SERVICE_MODE=api
-      - NODE_ENV=development
-      - APP_ENV=development
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL}
-      - HELIUS_API_KEY=${HELIUS_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-    ports:
-      - "3001:3001"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    restart: unless-stopped
-    profiles:
-      - development
-
-  # Local database for development
-  postgres-dev:
-    image: postgres:15
-    container_name: habitat-postgres-dev
-    environment:
-      POSTGRES_DB: habitat_dev
-      POSTGRES_USER: habitat
-      POSTGRES_PASSWORD: habitat123
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    profiles:
-      - development
-
-  # Local Redis for development
-  redis-dev:
-    image: redis:7-alpine
-    container_name: habitat-redis-dev
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    profiles:
-      - development
-
-volumes:
-  postgres_data:
-  redis_data:
-
-# Default profile (development)
-networks:
-  default:
-    name: habitat-network 
+    restart: unless-stopped 

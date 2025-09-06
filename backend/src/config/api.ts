@@ -1,88 +1,28 @@
 import { config } from './environment';
 
-// API Configuration based on environment
+// All API URLs use config.backendApiUrl, which is set via BACKEND_API_URL env var (http://backend:3001 in Docker Compose)
 export const API_CONFIG = {
   BASE_URL: config.backendApiUrl,
   API_VERSION: config.apiVersion,
   WS_BASE: config.wsUrl,
-  
-  // API endpoints
-  get API_BASE() {
-    return `${this.BASE_URL}/api/${this.API_VERSION}`;
-  },
-  
-  get WS_ENDPOINT() {
-    return `${this.WS_BASE}/api/${this.API_VERSION}/ws`;
-  },
-  
-  // Jupiter API endpoints
   JUPITER: {
     QUOTE: `${config.backendApiUrl}/api/${config.apiVersion}/jupiter/quote`,
     SWAP: `${config.backendApiUrl}/api/${config.apiVersion}/jupiter/swap`,
   },
-  
-  // Wallet API endpoints
   WALLET: {
-    BALANCES: `${config.backendApiUrl}/api/${config.apiVersion}/wallet-balances`,
-    TOKENS: `${config.backendApiUrl}/api/${config.apiVersion}/tokens`,
-    UPDATE: (address: string) => `${config.backendApiUrl}/api/${config.apiVersion}/wallet-balances/${address}/update`,
+    BALANCES: `${config.backendApiUrl}/api/${config.apiVersion}/wallet/balances`,
+    TOKENS: `${config.backendApiUrl}/api/${config.apiVersion}/wallet/tokens`,
   },
-  
-  // Chart API endpoints
   CHART: {
-    DATA: (tokenMint: string) => `${config.backendApiUrl}/api/${config.apiVersion}/chart-data/${tokenMint}`,
+    DATA: `${config.backendApiUrl}/api/${config.apiVersion}/chart/data`,
   },
-  
-  // Price API endpoints
   PRICE: {
-    DATA: `${config.backendApiUrl}/api/${config.apiVersion}/price`,
-    FEED: `${config.backendApiUrl}/api/${config.apiVersion}/price-feed`,
+    DATA: `${config.backendApiUrl}/api/${config.apiVersion}/price/data`,
   },
-  
-  // Whale tracking API endpoints
   WHALE: {
-    TRACKER: `${config.backendApiUrl}/api/${config.apiVersion}/whale-tracking`,
+    TRACKER: `${config.backendApiUrl}/api/${config.apiVersion}/whale/tracker`,
   },
-  
-  // Token API endpoints
   TOKENS: {
-    LIST: `${config.backendApiUrl}/api/${config.apiVersion}/tokens`,
-    BATCH: `${config.backendApiUrl}/api/${config.apiVersion}/tokens/batch`,
-    METADATA: `${config.backendApiUrl}/api/${config.apiVersion}/token-metadata`,
+    LIST: `${config.backendApiUrl}/api/${config.apiVersion}/tokens/list`,
   },
-  
-  // Strategy API endpoints
-  STRATEGIES: {
-    BASE: `${config.backendApiUrl}/api/${config.apiVersion}/strategies`,
-    CREATE: `${config.backendApiUrl}/api/strategies`,
-    PUBLISH: `${config.backendApiUrl}/api/strategies/publish`,
-  },
-  
-  // Trading wallet API endpoints
-  TRADING_WALLETS: {
-    BASE: `${config.backendApiUrl}/api/${config.apiVersion}/trading-wallets`,
-    CREATE: `${config.backendApiUrl}/api/trading-wallets`,
-    REVEAL_KEY: (address: string) => `${config.backendApiUrl}/api/trading-wallets/${address}/reveal-private-key`,
-  },
-  
-  // Drift API endpoints
-  DRIFT: {
-    BASE: `${config.backendApiUrl}/api/${config.apiVersion}/drift`,
-    POSITION: (jobId: string) => `${config.backendApiUrl}/api/${config.apiVersion}/drift/position/${jobId}`,
-    WITHDRAW: `${config.backendApiUrl}/api/${config.apiVersion}/drift/withdraw-collateral`,
-  },
-  
-  // Health check endpoint
-  HEALTH: `${config.backendApiUrl}/health`,
-} as const;
-
-// Environment-specific API configuration
-export const getApiConfig = () => {
-  return {
-    ...API_CONFIG,
-    environment: config.environment,
-    isDevelopment: config.isDevelopment,
-    isStaging: config.isStaging,
-    isProduction: config.isProduction,
-  };
-}; 
+} as const; 

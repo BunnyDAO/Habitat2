@@ -215,7 +215,7 @@ router.get('/my-adoptions', async (req: Request, res: Response) => {
  */
 router.get('/categories', async (req: Request, res: Response) => {
   try {
-    // Lackey automation strategy categories
+    // Habitat2 automation strategy categories
     const categories = [
       'Wallet Monitor',
       'Price Monitor',

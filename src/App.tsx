@@ -792,29 +792,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [walletToDelete, setWalletToDelete] = useState<TradingWallet | null>(null);
   
-  // Function to fetch wallet details from blockchain
-  const fetchWalletDetails = async (walletAddress: string) => {
-    try {
-      setWalletDetailsLoading(true);
-      setWalletDetailsError(null);
-      
-                      // Use the existing wallet balances endpoint
-                const response = await fetch(`${API_CONFIG.WALLET.BALANCES}/${walletAddress}`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch wallet balances: ${response.status}`);
-      }
-      
-      const balances = await response.json();
-      setWalletDetails(balances);
-    } catch (error) {
-      console.error('Error fetching wallet details:', error);
-      setWalletDetailsError(error instanceof Error ? error.message : 'Failed to fetch wallet details');
-    } finally {
-      setWalletDetailsLoading(false);
-    }
-  };
-  
   // Drift Status Modal state
   const [showDriftStatusModal, setShowDriftStatusModal] = useState(false);
   const [driftStatusData, setDriftStatusData] = useState<any>(null);
@@ -825,20 +802,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
   const [showDriftWithdrawModal, setShowDriftWithdrawModal] = useState(false);
   const [driftWithdrawJobId, setDriftWithdrawJobId] = useState<string | null>(null);
   const [driftFreeCollateral, setDriftFreeCollateral] = useState<number>(0);
-  
-  // Wallet Details Modal state
-  const [showWalletDetailsModal, setShowWalletDetailsModal] = useState(false);
-  const [selectedWalletForDetails, setSelectedWalletForDetails] = useState<WalletMonitoringJob | null>(null);
-  const [walletDetailsLoading, setWalletDetailsLoading] = useState(false);
-  const [walletDetails, setWalletDetails] = useState<TokenBalance[]>([]);
-  const [walletDetailsError, setWalletDetailsError] = useState<string | null>(null);
-  
-  // useEffect to fetch wallet details when modal opens
-  useEffect(() => {
-    if (showWalletDetailsModal && selectedWalletForDetails) {
-      fetchWalletDetails(selectedWalletForDetails.walletAddress);
-    }
-  }, [showWalletDetailsModal, selectedWalletForDetails]);
 
   // Helper methods for Drift status display
   const getRiskEmoji = (riskLevel: string | undefined): string => {
@@ -6125,66 +6088,34 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
                                 </div>
                               </div>
 
-                              {/* Details and Remove buttons */}
-                              <div style={{
-                                display: 'flex',
-                                gap: '0.5rem'
-                              }}>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedWalletForDetails(monitorJob);
-                                    setShowWalletDetailsModal(true);
-                                  }}
-                                  style={{
-                                    flex: 1,
-                                    padding: '0.5rem',
-                                    backgroundColor: '#3b82f6',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '0.25rem',
-                                    cursor: 'pointer',
-                                    fontSize: '0.75rem',
-                                    opacity: 0.9,
-                                    transition: 'opacity 0.2s ease-in-out'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.opacity = '1';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.opacity = '0.9';
-                                  }}
-                                >
-                                  Details
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSavedWalletToDelete({ id: job.id, name: job.name });
-                                    setShowDeleteSavedWalletDialog(true);
-                                  }}
-                                  style={{
-                                    flex: 1,
-                                    padding: '0.5rem',
-                                    backgroundColor: '#ef4444',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '0.25rem',
-                                    cursor: 'pointer',
-                                    fontSize: '0.75rem',
-                                    opacity: 0.9,
-                                    transition: 'opacity 0.2s ease-in-out'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.opacity = '1';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.opacity = '0.9';
-                                  }}
-                                >
-                                  Remove
-                                </button>
-                              </div>
+                              {/* Remove button */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSavedWalletToDelete({ id: job.id, name: job.name });
+                                  setShowDeleteSavedWalletDialog(true);
+                                }}
+                                style={{
+                                  width: '100%',
+                                  padding: '0.5rem',
+                                  backgroundColor: '#ef4444',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '0.25rem',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem',
+                                  opacity: 0.9,
+                                  transition: 'opacity 0.2s ease-in-out'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.opacity = '1';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.opacity = '0.9';
+                                }}
+                              >
+                                Remove
+                              </button>
                             </div>
                           </div>
                         );
@@ -8457,265 +8388,6 @@ const AppContent: React.FC<{ onRpcError: () => void; currentEndpoint: string }> 
               >
                 Delete
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Wallet Details Modal */}
-      {showWalletDetailsModal && selectedWalletForDetails && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: '#1e293b',
-            padding: '2rem',
-            borderRadius: '0.75rem',
-            maxWidth: '800px',
-            width: '90%',
-            maxHeight: '80vh',
-            overflow: 'hidden',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-            border: '1px solid #2d3748',
-            display: 'flex',
-            flexDirection: 'column'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '1.5rem'
-            }}>
-              <h3 style={{
-                color: '#e2e8f0',
-                margin: 0,
-                fontSize: '1.25rem',
-                fontWeight: '600'
-              }}>
-                Wallet Details: {selectedWalletForDetails.name || 'Unnamed Wallet'}
-              </h3>
-              <button
-                onClick={() => {
-                  setShowWalletDetailsModal(false);
-                  setSelectedWalletForDetails(null);
-                  setWalletDetails([]);
-                  setWalletDetailsError(null);
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#94a3b8',
-                  fontSize: '1.5rem',
-                  cursor: 'pointer',
-                  padding: '0.25rem',
-                  borderRadius: '0.25rem',
-                  transition: 'color 0.2s'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.color = '#e2e8f0'}
-                onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
-              >
-                ×
-              </button>
-            </div>
-            
-            <div style={{
-              color: '#64748b',
-              fontSize: '0.875rem',
-              marginBottom: '1rem',
-              fontFamily: 'monospace'
-            }}>
-              {selectedWalletForDetails.walletAddress}
-            </div>
-            
-            <div style={{
-              flex: 1,
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column'
-            }}>
-              {walletDetailsLoading ? (
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: '2rem',
-                  color: '#94a3b8'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                  }}>
-                    <div style={{
-                      width: '1rem',
-                      height: '1rem',
-                      border: '2px solid #3b82f6',
-                      borderTop: '2px solid transparent',
-                      borderRadius: '50%',
-                      animation: 'spin 1s linear infinite'
-                    }}></div>
-                    <span>Loading wallet balances...</span>
-                  </div>
-                </div>
-              ) : walletDetailsError ? (
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: '2rem',
-                  color: '#ef4444',
-                  textAlign: 'center'
-                }}>
-                  <div>
-                    <div style={{ marginBottom: '0.5rem' }}>⚠️ Error loading wallet details</div>
-                    <div style={{ fontSize: '0.875rem', color: '#94a3b8' }}>{walletDetailsError}</div>
-                    <button
-                      onClick={() => fetchWalletDetails(selectedWalletForDetails.walletAddress)}
-                      style={{
-                        marginTop: '1rem',
-                        padding: '0.5rem 1rem',
-                        backgroundColor: '#3b82f6',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '0.375rem',
-                        cursor: 'pointer',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      Retry
-                    </button>
-                  </div>
-                </div>
-              ) : walletDetails.length === 0 ? (
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: '2rem',
-                  color: '#94a3b8',
-                  textAlign: 'center'
-                }}>
-                  <div>
-                    <div style={{ marginBottom: '0.5rem' }}>📭 No tokens found</div>
-                    <div style={{ fontSize: '0.875rem', color: '#64748b' }}>
-                      This wallet doesn't have any tokens or the data couldn't be loaded.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div style={{
-                  flex: 1,
-                  overflow: 'auto',
-                  border: '1px solid #2d3748',
-                  borderRadius: '0.5rem',
-                  backgroundColor: '#0f172a'
-                }}>
-                  <div style={{
-                    padding: '1rem',
-                    borderBottom: '1px solid #2d3748',
-                    backgroundColor: '#1e293b'
-                  }}>
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: '2fr 1fr 1fr 1fr',
-                      gap: '1rem',
-                      fontSize: '0.875rem',
-                      fontWeight: '600',
-                      color: '#94a3b8'
-                    }}>
-                      <span>Token</span>
-                      <span>Balance</span>
-                      <span>USD Value</span>
-                      <span>Price</span>
-                    </div>
-                  </div>
-                  
-                  <div style={{ padding: '0.5rem' }}>
-                    {walletDetails.map((balance, index) => {
-                      const uiBalance = balance.balance / Math.pow(10, balance.decimals);
-                      const usdValue = balance.usdValue || 0;
-                      const price = balance.usdValue && uiBalance > 0 ? balance.usdValue / uiBalance : 0;
-                      
-                      return (
-                        <div
-                          key={`${balance.mint}_${index}`}
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: '2fr 1fr 1fr 1fr',
-                            gap: '1rem',
-                            padding: '0.75rem',
-                            borderBottom: index < walletDetails.length - 1 ? '1px solid #2d3748' : 'none',
-                            fontSize: '0.875rem',
-                            color: '#e2e8f0',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                          }}>
-                            {balance.logoURI ? (
-                              <img
-                                src={balance.logoURI}
-                                alt={balance.symbol || balance.name}
-                                style={{
-                                  width: '1.5rem',
-                                  height: '1.5rem',
-                                  borderRadius: '50%'
-                                }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: '1.5rem',
-                                height: '1.5rem',
-                                borderRadius: '50%',
-                                backgroundColor: '#3b82f6',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '0.75rem',
-                                color: 'white'
-                              }}>
-                                {balance.symbol?.charAt(0) || 'T'}
-                              </div>
-                            )}
-                                                         <div>
-                               <div style={{ fontWeight: '500' }}>
-                                 {balance.symbol || 'Unknown Token'}
-                               </div>
-                               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                 {balance.mint.slice(0, 4)}...{balance.mint.slice(-4)}
-                               </div>
-                             </div>
-                          </div>
-                          
-                          <div style={{ fontFamily: 'monospace' }}>
-                            {uiBalance.toFixed(6)}
-                          </div>
-                          
-                          <div style={{ fontFamily: 'monospace', color: '#10b981' }}>
-                            ${usdValue.toFixed(2)}
-                          </div>
-                          
-                          <div style={{ fontFamily: 'monospace', color: '#94a3b8' }}>
-                            ${price.toFixed(6)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
